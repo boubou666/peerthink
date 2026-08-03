@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 
 import { openApp } from '../helpers/browser.js';
 
-const KEY = 'peerthink:board';
+const LEGACY_KEY = 'peerthink:board';
+const KEY = 'peerthink:board:default';
+
+/** The envelope the repository stores a board in. */
+const record = (board, title = 'Untitled board') =>
+  JSON.stringify({ v: 1, id: 'default', title, updatedAt: 1, board });
 
 describe('app shell', () => {
   let page;
@@ -17,9 +22,10 @@ describe('app shell', () => {
     await page.close();
   });
 
-  /** Reload with a chosen localStorage state. */
-  async function boot(raw) {
-    await page.eval(raw === null ? `localStorage.removeItem(${JSON.stringify(KEY)})` : `localStorage.setItem(${JSON.stringify(KEY)}, ${JSON.stringify(raw)})`);
+  /** Reload with a chosen localStorage state, from a clean slate each time. */
+  async function boot(raw, { key = KEY } = {}) {
+    await page.eval('localStorage.clear()');
+    if (raw !== null) await page.eval(`localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(raw)})`);
     await page.goto();
   }
 
@@ -59,21 +65,49 @@ describe('app shell', () => {
       assert.equal(await page.eval(`app.store.get("${id}")?.text ?? null`), 'persisted');
     });
 
+    test('it saves under the board id, not a single global key', async () => {
+      await boot(null);
+      await page.eval(`app.board.add('card', { x: 0, y: 0, text: 'scoped' })`);
+      await page.sleep(600);
+
+      assert.equal(await page.eval('app.boardId'), 'default');
+      assert.ok(await page.eval(`(localStorage.getItem(${JSON.stringify(KEY)}) ?? '').includes('scoped')`));
+      assert.equal(await page.eval(`localStorage.getItem(${JSON.stringify(LEGACY_KEY)})`), null);
+    });
+
     test('corrupt storage falls back to the starter board', async () => {
       await boot('{not json');
       assert.equal(await page.eval('app.store.order.length'), 7);
     });
 
-    test('an empty board in storage falls back too', async () => {
-      await boot(JSON.stringify({ v: 1, order: [], objects: [] }));
+    test('a record whose board is the wrong shape falls back too', async () => {
+      await boot(JSON.stringify({ v: 1, id: 'default', board: { nope: true } }));
       assert.equal(await page.eval('app.store.order.length'), 7);
     });
 
-    test('a stored board is loaded verbatim', async () => {
+    test('an empty board is restored as empty, not re-seeded', async () => {
+      // the single-board version resurrected the starter board here, which
+      // meant clearing your canvas was undone by a refresh
+      await boot(record({ v: 1, order: [], objects: [] }));
+      assert.equal(await page.eval('app.store.order.length'), 0);
+    });
+
+    test('a stored board is loaded verbatim, title included', async () => {
       const board = { v: 1, order: ['solo'], objects: [{ id: 'solo', type: 'card', x: 0, y: 0, w: 200, h: 120, text: 'only me', color: 'white' }] };
-      await boot(JSON.stringify(board));
+      await boot(record(board, 'Q3 planning'));
       assert.equal(await page.eval('app.store.order.length'), 1);
       assert.equal(await page.eval(`app.store.get('solo').text`), 'only me');
+      assert.equal(await page.eval('app.title'), 'Q3 planning');
+    });
+
+    test('a board left by the single-board version is adopted', async () => {
+      const legacy = { v: 1, order: ['old'], objects: [{ id: 'old', type: 'card', x: 0, y: 0, w: 200, h: 120, text: 'from v1', color: 'yellow' }] };
+      await boot(JSON.stringify(legacy), { key: LEGACY_KEY });
+
+      assert.equal(await page.eval('app.store.order.length'), 1);
+      assert.equal(await page.eval(`app.store.get('old').text`), 'from v1');
+      assert.equal(await page.eval(`localStorage.getItem(${JSON.stringify(LEGACY_KEY)})`), null, 'the old key is cleared');
+      assert.ok(await page.eval(`(localStorage.getItem(${JSON.stringify(KEY)}) ?? '').includes('from v1')`));
     });
 
     test('a storage failure does not break the board', async () => {

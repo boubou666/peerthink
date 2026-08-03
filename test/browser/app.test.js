@@ -78,44 +78,83 @@ describe('createApp', () => {
     const result = await withSecondApp('storage: null', `({ second }) => ({
       seeded: second.store.order.length,
       restored: second.restoredFromStorage,
-      saved: second.repository.save({ v: 1, order: [], objects: [] }),
+      saved: second.repository.save('default', { v: 1, order: [], objects: [] }),
+      listed: second.repository.list(),
     })`);
 
     assert.equal(result.seeded, 7);
     assert.equal(result.restored, false);
     assert.equal(result.saved, false, 'the null repository accepts and discards');
+    assert.deepEqual(result.listed, [], 'and lists no boards');
   });
 
   test('an injected repository is loaded from instead of the seed', async () => {
     const board = { v: 1, order: ['x1'], objects: [{ id: 'x1', type: 'card', x: 0, y: 0, w: 100, h: 100, text: 'injected' }] };
+    const record = { v: 1, id: 'remote', title: 'From a server', updatedAt: 7, board };
     const result = await withSecondApp(
-      `repository: { load: () => (${JSON.stringify(board)}), save: () => true }`,
+      `boardId: 'remote', repository: {
+        load: (id) => (id === 'remote' ? ${JSON.stringify(record)} : null),
+        save: () => true,
+        migrateLegacy: () => false,
+      }`,
       `({ second }) => ({
         count: second.store.order.length,
         text: second.store.get('x1').text,
+        title: second.title,
         restored: second.restoredFromStorage,
       })`,
     );
 
-    assert.deepEqual(result, { count: 1, text: 'injected', restored: true });
+    assert.deepEqual(result, { count: 1, text: 'injected', title: 'From a server', restored: true });
   });
 
-  test('a custom storage key keeps two boards apart', async () => {
+  test('an unknown board id seeds rather than showing an empty canvas', async () => {
     const result = await withSecondApp(
-      `storage: window.localStorage, storageKey: 'peerthink:test-key', autosaveDelay: 1`,
+      `boardId: 'missing', repository: { load: () => null, save: () => true, migrateLegacy: () => false }`,
+      `({ second }) => ({ count: second.store.order.length, restored: second.restoredFromStorage, title: second.title })`,
+    );
+
+    assert.deepEqual(result, { count: 7, restored: false, title: null });
+  });
+
+  test('a board id keeps two boards in the same storage apart', async () => {
+    const result = await withSecondApp(
+      `storage: window.localStorage, boardId: 'second-board', autosaveDelay: 1`,
       `async ({ second }) => {
         second.board.add('card', { x: 0, y: 0, text: 'scoped' });
         second.autosave.flush();
         return {
-          written: JSON.parse(localStorage.getItem('peerthink:test-key')).objects.some(o => o.text === 'scoped'),
-          leaked: (localStorage.getItem('peerthink:board') ?? '').includes('scoped'),
+          boardId: second.boardId,
+          written: JSON.parse(localStorage.getItem('peerthink:board:second-board')).board.objects.some(o => o.text === 'scoped'),
+          leaked: (localStorage.getItem('peerthink:board:default') ?? '').includes('scoped'),
+          listed: second.repository.list().map(b => b.id).includes('second-board'),
+        };
+      }`,
+    );
+
+    assert.equal(result.boardId, 'second-board');
+    assert.equal(result.written, true);
+    assert.equal(result.leaked, false, "the page's own board is untouched");
+    assert.equal(result.listed, true, 'and it shows up in the board list');
+    await page.eval(`localStorage.removeItem('peerthink:board:second-board')`);
+  });
+
+  test('a namespace isolates a whole workspace', async () => {
+    const result = await withSecondApp(
+      `storage: window.localStorage, namespace: 'scratch', autosaveDelay: 1`,
+      `async ({ second }) => {
+        second.board.add('card', { x: 0, y: 0, text: 'elsewhere' });
+        second.autosave.flush();
+        return {
+          written: localStorage.getItem('scratch:board:default') !== null,
+          leaked: (localStorage.getItem('peerthink:board:default') ?? '').includes('elsewhere'),
         };
       }`,
     );
 
     assert.equal(result.written, true);
     assert.equal(result.leaked, false);
-    await page.eval(`localStorage.removeItem('peerthink:test-key')`);
+    await page.eval(`localStorage.removeItem('scratch:board:default')`);
   });
 
   test('an injected seed replaces the starter board', async () => {
