@@ -2,3 +2,10 @@ node_modules/
 .coverage/
 *.log
 .DS_Store
+
+# Parallel feature work lives in worktrees under .claude/, inside the repo —
+# without this they surface as untracked files in every other worktree.
+# Scoped rather than ignoring .claude/ wholesale, so shared project settings
+# stay committable.
+.claude/worktrees/
+.claude/settings.local.json
