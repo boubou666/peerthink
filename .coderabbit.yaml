@@ -1,0 +1,46 @@
+language: en-US
+
+reviews:
+  profile: chill
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+
+  # The layering is the thing worth policing here: core/ must stay free of the
+  # browser, platform/ must take its dependencies as arguments, and the whole
+  # project must stay free of npm dependencies.
+  path_instructions:
+    - path: "public/js/core/**"
+      instructions: >
+        This is the dependency-free domain layer. Flag any reference to
+        document, window, localStorage, setTimeout, requestAnimationFrame,
+        Date or Math.random — timing and ids arrive through the injected
+        Scheduler and newId. Store mutations must go through apply(ops) with a
+        correct inverse.
+    - path: "public/js/platform/**"
+      instructions: >
+        Browser adapters. Every dependency must arrive via the factory
+        argument, never a global. Anything registering a listener or observer
+        must remove it in destroy().
+    - path: "test/**"
+      instructions: >
+        Zero-dependency suite: node:test plus raw CDP over Node's built-in
+        WebSocket. Flag added npm dependencies, and flag assertions that could
+        be flaky — fixed sleeps standing in for a real readiness condition, or
+        probabilistic claims without margin.
+    - path: "package.json"
+      instructions: >
+        This project has zero runtime dependencies by design. Any addition to
+        dependencies or devDependencies needs explicit justification.
+
+  tools:
+    gitleaks:
+      enabled: true
+    semgrep:
+      enabled: true
+    eslint:
+      enabled: false # no ESLint config in the repo; would only add noise
+
+chat:
+  auto_reply: true
