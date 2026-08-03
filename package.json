@@ -1,0 +1,16 @@
+{
+  "name": "peerthink",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "PeerThink — an infinite-canvas visual workspace. Zero runtime dependencies.",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/run.js",
+    "test:node": "node --test test/node/",
+    "coverage": "node test/run.js"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
