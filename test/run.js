@@ -3,6 +3,11 @@
 // Node's runner cannot start a browser, and a browser cannot import the pure
 // modules, so this starts both worlds, runs every test file against them, and
 // merges the two coverage streams into one number.
+//
+// The browser side runs against Vite's dev server: modules are served
+// unbundled at their source paths, so V8 coverage maps back to real files
+// rather than one minified chunk. The shipped artifact is covered separately
+// by the build smoke test.
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
@@ -10,8 +15,8 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { start as startApp } from '../server.js';
 import { launchChrome, findChrome } from './helpers/chrome.js';
+import { startDevServer } from './helpers/vite.js';
 import { report } from './coverage.js';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -36,8 +41,7 @@ if (!findChrome()) {
   process.exit(1);
 }
 
-const app = await startApp(0);
-const appBase = `http://127.0.0.1:${app.address().port}`;
+const { server: vite, base: appBase } = await startDevServer();
 const { child: chrome, base: browserBase } = await launchChrome({
   port: await freePort(),
   userDataDir: join(COVERAGE, 'chrome-profile'),
@@ -70,7 +74,7 @@ const code = await new Promise((resolve) => {
 });
 
 chrome.kill();
-app.close();
+await vite.close();
 
 const threshold = Number(process.env.COVERAGE_THRESHOLD ?? 95);
 const { pass } = report({ threshold });

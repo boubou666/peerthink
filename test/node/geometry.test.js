@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { bbox, clamp, rectContains, rectFromPoints, rectsIntersect } from '../../public/js/core/geometry.js';
+import { bbox, clamp, rectContains, rectFromPoints, rectsIntersect } from '../../src/core/geometry.js';
 
 const R = (x, y, w, h) => ({ x, y, w, h });
 

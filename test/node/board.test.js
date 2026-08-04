@@ -1,10 +1,10 @@
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Board, CARD_COLORS, OBJECT_DEFAULTS } from '../../public/js/core/board.js';
-import { Store } from '../../public/js/core/store.js';
-import { Selection } from '../../public/js/core/selection.js';
-import { createSequentialIds } from '../../public/js/core/ids.js';
+import { Board, CARD_COLORS, OBJECT_DEFAULTS } from '../../src/core/board.js';
+import { Store } from '../../src/core/store.js';
+import { Selection } from '../../src/core/selection.js';
+import { createSequentialIds } from '../../src/core/ids.js';
 
 describe('Board', () => {
   let store;

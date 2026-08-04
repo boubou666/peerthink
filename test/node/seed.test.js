@@ -1,12 +1,12 @@
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { seedBoard } from '../../public/js/core/seed.js';
-import { Board } from '../../public/js/core/board.js';
-import { Store } from '../../public/js/core/store.js';
-import { Selection } from '../../public/js/core/selection.js';
-import { createSequentialIds } from '../../public/js/core/ids.js';
-import { rectContains } from '../../public/js/core/geometry.js';
+import { seedBoard } from '../../src/core/seed.js';
+import { Board } from '../../src/core/board.js';
+import { Store } from '../../src/core/store.js';
+import { Selection } from '../../src/core/selection.js';
+import { createSequentialIds } from '../../src/core/ids.js';
+import { rectContains } from '../../src/core/geometry.js';
 
 describe('seedBoard', () => {
   let store;

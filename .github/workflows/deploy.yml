@@ -1,7 +1,7 @@
 name: Deploy
 
-# The app is a static site — public/ is shipped verbatim, no build step.
-# It only deploys after CI has gone green on the same commit.
+# Publishes the Vite build to GitHub Pages, and only after CI has gone green
+# on the same commit.
 
 on:
   workflow_run:
@@ -31,11 +31,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: public
+          path: dist
 
       - id: deployment
         uses: actions/deploy-pages@v4

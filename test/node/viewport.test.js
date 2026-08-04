@@ -1,7 +1,7 @@
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { MAX_SCALE, MIN_SCALE, Viewport } from '../../public/js/core/viewport.js';
+import { MAX_SCALE, MIN_SCALE, Viewport } from '../../src/core/viewport.js';
 
 const close = (a, b, eps = 1e-9) => assert.ok(Math.abs(a - b) < eps, `${a} ≉ ${b}`);
 

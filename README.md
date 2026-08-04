@@ -1,14 +1,14 @@
 # PeerThink
 
 An infinite-canvas visual workspace — cards, envelopes and lists on a pannable,
-zoomable board — built with **zero runtime dependencies** and **no build step**.
-
-The whole thing is ES modules served straight off disk by a `node:http` server.
-No bundler, no framework, no transpiler, no `node_modules`.
+zoomable board — with a React shell around a deliberately framework-free canvas.
 
 ```
-npm start      # → http://localhost:3000
-npm test       # 231 tests, line-coverage gate at 95%
+npm ci
+npm run dev      # → http://localhost:5173
+npm test         # node:test + a real browser, line-coverage gate at 95%
+npm run build    # → dist/
+npm start        # serve the built site
 ```
 
 ---
@@ -17,6 +17,7 @@ npm test       # 231 tests, line-coverage gate at 95%
 
 | | |
 |---|---|
+| **Boards** | Many per workspace — listed, renamed, deleted; the board id lives in the URL |
 | **Cards** | Coloured notes with editable text, resizable from eight handles |
 | **Envelopes** | Grouping containers — dragging one carries everything fully inside it, transitively |
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
@@ -42,38 +43,58 @@ npm test       # 231 tests, line-coverage gate at 95%
 Three layers, and dependencies only ever point inward.
 
 ```
-main.js          bootstrap — the only file that knows it is in a browser
-  └── app.js     composition root — builds the object graph, wires the commands
-        ├── core/       the domain. No DOM, no window, no clock.
-        │   ├── store.js       document as an op log (add / del / set / order)
-        │   ├── board.js       cards, envelopes, lists, z-order, snapping
-        │   ├── selection.js   what is selected
-        │   ├── viewport.js    the camera
-        │   ├── autosave.js    persistence policy
-        │   ├── scheduler.js   timing, behind an interface
-        │   ├── geometry.js    rectangle maths
-        │   ├── ids.js         id generation
-        │   └── seed.js        the starter board
-        └── platform/   the browser. Adapters, nothing else.
-            ├── renderer.js    reconciles the store into the DOM
-            ├── input.js       pointer and keyboard gestures
-            ├── views.js       per-type markup
-            ├── toolbar.js     buttons and view shortcuts
-            └── storage.js     BoardRepository over Web Storage
+src/main.jsx        bootstrap — the only file that knows it is in a browser
+  └── App.jsx       routes: / (board list) and /b/:boardId
+        ├── routes/, components/   the React shell
+        │     └── BoardCanvas.jsx  mounts the canvas once, via refs
+        └── app.js  composition root — builds the object graph, wires commands
+              ├── core/       the domain. No DOM, no window, no clock, no React.
+              │   ├── store.js       document as an op log (add / del / set / order)
+              │   ├── board.js       cards, envelopes, lists, z-order, snapping
+              │   ├── selection.js   what is selected
+              │   ├── viewport.js    the camera
+              │   ├── autosave.js    persistence policy
+              │   ├── scheduler.js   timing, behind an interface
+              │   ├── geometry.js    rectangle maths
+              │   ├── ids.js         id generation
+              │   └── seed.js        the starter board
+              └── platform/   the browser. Adapters, nothing else.
+                  ├── renderer.js    reconciles the store into the DOM
+                  ├── input.js       pointer and keyboard gestures
+                  ├── views.js       per-type markup
+                  ├── toolbar.js     buttons and view shortcuts
+                  └── storage.js     BoardRepository over Web Storage
 ```
 
-**Everything is injected.** `createApp()` takes the `document`, the `window`,
-the storage backend, the scheduler, the id generator and the `ResizeObserver`
-as arguments. Nothing below the composition root reaches for a global. The
-practical consequences:
+### React renders the shell, not the canvas
+
+Pan, zoom and drag fire at frame rate. Putting board objects into React state
+would mean reconciling hundreds of components per pointer move, so the canvas
+stays imperative and React renders it exactly once:
+
+```jsx
+useEffect(() => {
+  const app = createApp({ document, window, boardId, repository, elements: { …refs } });
+  return () => app.destroy();
+}, [boardId]);
+```
+
+That works because `createApp` takes its elements as an argument. Handing it
+refs is the entire integration between the framework and the canvas, and
+`destroy()` — which unwinds listeners, observers and elements — is the cleanup.
+
+### Everything is injected
+
+Nothing below the composition root reaches for a global. The `document`, the
+`window`, the storage backend, the scheduler, the clock, the id generator and
+the `ResizeObserver` all arrive as arguments. The practical consequences:
 
 - two independent boards can be composed on one page, each with its own DOM
-  subtree and its own state — [`test/browser/app.test.js`](test/browser/app.test.js) does exactly that;
-- the persistence backend is one argument (`repository`), so the localStorage
-  implementation swaps for an HTTP or WebSocket one without touching the core;
-- timing is a `Scheduler` object, so debounce and frame behaviour are driven by
-  hand in tests instead of by `setTimeout` and luck;
-- `destroy()` genuinely tears an instance down — listeners, observers, elements.
+  subtree and state — [`test/browser/app.test.js`](test/browser/app.test.js) does exactly that;
+- the persistence backend is one argument, so the Web Storage implementation
+  swaps for an HTTP or WebSocket one without touching the core;
+- timing is a `Scheduler`, so debounce and frame behaviour are driven by hand
+  in tests instead of by `setTimeout` and luck.
 
 ### Why an op log
 
@@ -83,8 +104,8 @@ Every mutation goes through `store.apply(ops)` and returns its own inverse:
 store.apply([{ t: 'set', id: 'a3f', patch: { x: 120, y: 40 } }])
 ```
 
-That single representation gives undo/redo, the autosave payload, and — the
-point of the exercise — the wire format a sync layer would broadcast. Adding
+One representation gives undo/redo, the autosave payload, and — the point of
+the exercise — the wire format a sync layer would broadcast. Adding
 collaboration means reimplementing `apply`, and nothing above it changes.
 
 ### Rendering
@@ -103,30 +124,24 @@ constant on screen at any zoom.
 
 Two worlds, one number.
 
-- **`test/node/`** — the core, the repository and the server, run directly under
-  `node:test`. No DOM, no browser, no fakes beyond the injected seams.
-- **`test/browser/`** — the DOM layers, driven through the real Chrome DevTools
-  Protocol over Node's built-in `WebSocket`. Real pointer events, real
-  contenteditable, real layout. No Playwright, no Puppeteer, no jsdom.
+- **`test/node/`** — the core, the repository and the server, run directly
+  under `node:test`. No DOM, no browser, no fakes beyond the injected seams.
+- **`test/browser/`** — the React shell and the DOM layers, driven through the
+  raw Chrome DevTools Protocol over Node's built-in `WebSocket`. Real pointer
+  events, real `contenteditable`, real layout. No Playwright, no Puppeteer, no
+  jsdom.
 
-`test/run.js` starts both, runs every file, then merges the V8 coverage from
-Node and from Chromium into a single line-coverage report and fails the run
-under the threshold.
+`test/run.js` starts Vite and Chromium, runs every file, then merges the V8
+coverage from Node and from the browser into a single line-coverage report and
+fails the run under the threshold.
 
-```
-public/js/app.js                    97/97   100.0%
-public/js/core/board.js           171/171   100.0%
-public/js/platform/input.js       404/404   100.0%
-...
-TOTAL                           1306/1309    99.8%
-```
-
-The three uncovered lines are a defence-in-depth path-traversal guard in the
-server that URL parsing makes unreachable — the guard itself is unit-tested
-directly.
+The browser suite runs against Vite's **dev server**, not a bundle: unbundled
+modules are served at their source paths, so coverage attributes to
+`src/core/board.js` rather than one minified chunk. CI builds the production
+artifact separately, so the shipped output is still verified.
 
 Tests need a Chromium. CI uses the runner's preinstalled Chrome; locally it
-finds a system or Playwright-cached build, or you can point at one:
+finds a system or Playwright-cached build, or point at one:
 
 ```
 CHROME_PATH=/path/to/chrome npm test
@@ -134,11 +149,31 @@ CHROME_PATH=/path/to/chrome npm test
 
 ---
 
+## Dependencies
+
+`core/` and the canvas have none — they are plain ES modules that would run
+unchanged without a framework. The additions are the shell and its tooling:
+
+| | |
+|---|---|
+| `react`, `react-dom` | the shell |
+| `react-router` | routing — v8, because v7's `react-router-dom` carries a CSRF advisory |
+| `vite`, `@vitejs/plugin-react` | dev server and build (dev only) |
+
+CI fails on any high-severity production advisory.
+
 ## Not built yet
 
-Real-time collaboration, presence cursors, share links, export. The seams are
-in place — `BoardRepository` for persistence and the op log for transport — but
-none of it is written.
+Real-time collaboration, presence cursors, share links, auth, export. The seams
+are in place — `BoardRepository` for persistence, the op log for transport —
+but none of it is written.
+
+The toolbar is still imperative rather than a React component; converting it
+needs `useSyncExternalStore` over the store and viewport.
+
+Routing is hash-based (`/#/b/:id`) because GitHub Pages has no SPA rewrite.
+Moving to a host that can serve `index.html` for any path makes that a one-line
+change to `BrowserRouter`.
 
 ## Licence
 

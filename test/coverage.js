@@ -12,7 +12,8 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const COVERAGE = join(ROOT, '.coverage');
 
 /** Files we hold to the threshold. Test and helper code is not measured. */
-const isMeasured = (rel) => rel === 'server.js' || (rel.startsWith('public/js/') && rel.endsWith('.js'));
+const isMeasured = (rel) =>
+  rel === 'server.js' || (rel.startsWith('src/') && (rel.endsWith('.js') || rel.endsWith('.jsx')));
 
 function readAll(dir) {
   if (!existsSync(dir)) return [];
@@ -37,7 +38,8 @@ function toRelative(url) {
     }
   }
   if (url.startsWith('http://') || url.startsWith('https://')) {
-    return `public${new URL(url).pathname}`;
+    // Vite serves sources at their repo path and appends cache-busting queries
+    return new URL(url).pathname.replace(/^\/+/, '');
   }
   return null;
 }

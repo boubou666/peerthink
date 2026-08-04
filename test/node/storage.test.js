@@ -7,7 +7,7 @@ import {
   LEGACY_KEY,
   createLocalStorageRepository,
   createNullRepository,
-} from '../../public/js/platform/storage.js';
+} from '../../src/platform/storage.js';
 
 /** Stand-in for Web Storage, with hooks for the failure modes that matter. */
 function fakeStorage(initial = {}) {
