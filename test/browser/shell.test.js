@@ -360,7 +360,7 @@ describe('shell', () => {
       });
 
     const breakStorage = () => page.eval(`(() => {
-      window.__setItem = Storage.prototype.setItem;
+      window.__setItem ??= Storage.prototype.setItem;
       Storage.prototype.setItem = () => { throw new DOMException('quota', 'QuotaExceededError'); };
     })()`);
     const fixStorage = () => page.eval('Storage.prototype.setItem = window.__setItem;');
@@ -403,12 +403,17 @@ describe('shell', () => {
 
     test('closing the tab writes what the debounce is still holding', async () => {
       await newBoard();
-      await page.eval(`app.board.add('card', { x: 0, y: 0, text: 'unsaved when the tab went' })`);
-      assert.doesNotMatch(await stored(), /unsaved when the tab went/, 'the debounce had already fired');
 
-      // no wait, no settle: the write has to have landed by the time the
-      // handler returns, because a page on its way out runs nothing after it
-      await page.eval(`window.dispatchEvent(new Event('pagehide'))`);
+      // Both in one turn of the event loop. Asserting that the record is
+      // *absent* between the edit and the event would be a race against the
+      // debounce dressed up as a precondition — this way no timer can fire
+      // in between, so the write that lands is provably the one `pagehide`
+      // asked for rather than the debounce getting there first.
+      await page.eval(`(() => {
+        app.board.add('card', { x: 0, y: 0, text: 'unsaved when the tab went' });
+        window.dispatchEvent(new Event('pagehide'));
+      })()`);
+
       assert.match(await stored(), /unsaved when the tab went/, 'the last edits went with the tab');
     });
 
@@ -492,7 +497,6 @@ describe('shell', () => {
         });
 
         await unpatch('remove');
-        await page.eval(`document.querySelector('[data-error]')?.textContent`);
         assert.deepEqual(await titles(), ['Untitled board'], 'and the board is still there');
       });
 

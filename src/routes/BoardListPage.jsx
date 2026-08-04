@@ -83,6 +83,22 @@ export function BoardListPage() {
   };
 
   /**
+   * A retry is a read in flight like any other. Without `busy` the button that
+   * started it stays enabled over a list that is still `null`, so a second
+   * click starts a second read and the answers land in whichever order they
+   * come back — and the browser tests, which wait on `data-busy`, would think
+   * the page had settled while it had not.
+   */
+  const retryList = async () => {
+    setBusy(true);
+    try {
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
    * A board created here starts empty. Only a first-ever visit gets the
    * starter board, which is a tour rather than content you asked for.
    *
@@ -159,7 +175,7 @@ export function BoardListPage() {
         <p className="error" role="alert" data-error>
           {error}
           {error === COULD_NOT_LIST && (
-            <button type="button" data-action="retry-list" disabled={busy} onClick={refresh}>
+            <button type="button" data-action="retry-list" disabled={busy} onClick={retryList}>
               Try again
             </button>
           )}

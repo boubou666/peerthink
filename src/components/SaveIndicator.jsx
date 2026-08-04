@@ -13,6 +13,12 @@ import { FAILED, PENDING, SAVED, SAVING, UNLOADED } from '../core/save-status.js
  * a screen reader that reported every settled edit would be unusable, while a
  * board that has stopped saving is exactly what an assistive technology should
  * interrupt for.
+ *
+ * Silencing them is `aria-live="off"` on a region that is always there, not
+ * `aria-hidden` — hiding it would take the save state away from a screen
+ * reader user entirely, including from someone who navigates over to ask. And
+ * a live region has to exist before the content that announces it changes, so
+ * the role cannot be the thing that appears with the failure.
  */
 const COPY = {
   [SAVED]: { text: 'Saved', hint: 'Every change is stored' },
@@ -31,14 +37,18 @@ const COPY = {
 };
 
 export function SaveIndicator({ status, onRetry }) {
-  const { text, hint, alert } = COPY[status] ?? COPY[SAVED];
+  // A status this file does not recognise reads as in progress, never as
+  // stored. Claiming a board is saved is the one thing that must not happen by
+  // accident, and it is true of nothing to say a state nobody defined is fine.
+  const { text, hint, alert } = COPY[status] ?? COPY[PENDING];
 
   return (
     <span
       className="save-state"
       data-save-status={status}
       title={hint}
-      {...(alert ? { role: 'alert' } : { 'aria-hidden': 'true' })}
+      role="status"
+      aria-live={alert ? 'assertive' : 'off'}
     >
       {text}
       {status === FAILED && (

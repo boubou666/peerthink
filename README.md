@@ -172,6 +172,15 @@ Three things had to become true for the bar to be honest:
   loses data: the last edit failed to save and nobody touched the board again.
   The backoff runs 1s → 3s → 10s → 30s and then repeats, and `stop()` takes the
   timer with it so a closed board does not wake up to save itself.
+- **One write at a time.** Four callers reach `flush()` — the debounce, the
+  retry timer, the page on its way out, and the button in the bar — and none of
+  them knows about the others. Two overlapping writes are not a race the
+  repository can settle: both capture the same version to replace, so the one
+  that lands second is refused for claiming a version the first has just moved,
+  and the board spends a retry converging on a document it already had. A
+  second caller joins the queue behind the write already out. The write still
+  *starts* synchronously when nothing is in flight, which is what the next
+  point depends on.
 - **A page on its way out writes what the debounce is still holding.**
   `platform/lifecycle.js` listens for `pagehide` and for `visibilitychange`,
   because neither covers the other — a phone backgrounding a tab may fire only

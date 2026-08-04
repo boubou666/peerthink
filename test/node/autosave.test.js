@@ -109,17 +109,25 @@ describe('autosave', () => {
       assert.deepEqual(saved, []);
     });
 
-    test('authority is read at write time, not at construction', () => {
+    test('authority is read at write time, not at construction', async () => {
       let writer = false;
       const { store, scheduler, saved } = gated(() => writer);
 
+      // Writes are serialised, so the second attempt only starts on its own
+      // once the first has settled. Draining the microtasks between the two
+      // timers is what a real clock does anyway — a task never follows a task
+      // without the queue in between emptying first.
+      const drain = () => new Promise((resolve) => setImmediate(resolve));
+
       store.apply([{ t: 'add', obj: card('a') }]);
       scheduler.flushTimers();
+      await drain();
       assert.deepEqual(saved, [], 'wrote before it had authority');
 
       writer = true;
       store.apply([{ t: 'set', id: 'a', patch: { x: 1 } }]);
       scheduler.flushTimers();
+      await drain();
       assert.equal(saved.length, 1, 'did not write once it had authority');
     });
 
@@ -372,6 +380,86 @@ describe('autosave', () => {
       scheduler.flushTimers();
       await settle();
       assert.equal(attempts.length, 1, 'a closed board woke up to save itself');
+    });
+  });
+
+  /**
+   * Four callers reach `flush` — the debounce, the retry timer, the page on
+   * its way out and the button in the bar — and none of them knows about the
+   * others.
+   */
+  describe('one write at a time', () => {
+    const blocking = () => {
+      const store = new Store();
+      const scheduler = createManualScheduler();
+      const started = [];
+      const waiting = [];
+      const autosave = createAutosave({
+        store,
+        scheduler,
+        boardId: 'alpha',
+        repository: {
+          load: async () => null,
+          save: async (id, board) => {
+            started.push(board);
+            await new Promise((resolve) => waiting.push(resolve));
+            return true;
+          },
+        },
+      });
+      const settle = () => new Promise((resolve) => setImmediate(resolve));
+      return { store, autosave, started, waiting, settle };
+    };
+
+    test('a second caller joins the queue rather than racing the write already out', async () => {
+      const { store, autosave, started, waiting, settle } = blocking();
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      const first = autosave.flush();
+      await settle();
+      assert.equal(started.length, 1);
+
+      // what pagehide, the retry timer or the Retry button does mid-write
+      store.apply([{ t: 'set', id: 'a', patch: { x: 42 } }]);
+      const second = autosave.flush();
+      await settle();
+      assert.equal(started.length, 1, 'two writes were out at once');
+
+      waiting.shift()();
+      await first;
+      await settle();
+      assert.equal(started.length, 2, 'the queued write never ran');
+      assert.equal(started[1].objects[0].x, 42, 'the second write carried the older document');
+
+      waiting.shift()();
+      assert.equal(await second, true);
+      assert.equal(autosave.dirty, false);
+    });
+
+    test('a queued write still runs when the one before it failed', async () => {
+      const store = new Store();
+      const scheduler = createManualScheduler();
+      const results = [false, true];
+      const started = [];
+      const autosave = createAutosave({
+        store,
+        scheduler,
+        boardId: 'alpha',
+        repository: {
+          load: async () => null,
+          save: async () => {
+            started.push(1);
+            return results.shift();
+          },
+        },
+      });
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      const [first, second] = [autosave.flush(), autosave.flush()];
+      assert.equal(await first, false);
+      assert.equal(await second, true);
+      assert.equal(started.length, 2);
+      assert.equal(autosave.status, SAVED);
     });
   });
 

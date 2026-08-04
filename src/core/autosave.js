@@ -7,8 +7,8 @@ import { FAILED, PENDING, SAVED, SAVING } from './save-status.js';
  * same code whether the board is going to localStorage today or to an endpoint
  * later, and whether the workspace holds one board or a hundred.
  *
- * `flush` hands back the repository's promise, so a caller that wants to know
- * whether the write landed can wait for it. The debounced path deliberately
+ * `flush` hands back the write's promise, so a caller that wants to know
+ * whether it landed can wait for it. The debounced path deliberately
  * does not: it fires on every settled edit with nobody waiting, and a rejected
  * save there is a dropped autosave, not a reason to take the tab down with an
  * unhandled rejection. The session keeps working from memory either way.
@@ -53,6 +53,7 @@ export function createAutosave({ store, repository, boardId, scheduler, delay = 
   let retries = 0;
   let cancelRetry = null;
   let stopped = false;
+  let inFlight = null;
 
   const setStatus = (next) => {
     if (next === status) return;
@@ -85,7 +86,7 @@ export function createAutosave({ store, repository, boardId, scheduler, delay = 
     }, wait);
   };
 
-  const flush = async () => {
+  const write = async () => {
     if (canWrite?.() === false) {
       // Not this client's write to make. The document stays dirty so that
       // taking over write authority saves it, but nothing is wrong and the
@@ -105,8 +106,9 @@ export function createAutosave({ store, repository, boardId, scheduler, delay = 
     } catch (error) {
       // Handled here rather than in the debounced wrapper below: `flush` is
       // public and the callers that use it directly — the replay after a load,
-      // the save on taking over write authority — would otherwise leave a
-      // board that failed to write looking clean, and nothing would retry it.
+      // the save on taking over write authority, a page on its way out —
+      // would otherwise leave a board that failed to write looking clean, and
+      // nothing would retry it.
       dirty = true;
       setStatus(FAILED);
       scheduleRetry();
@@ -130,6 +132,36 @@ export function createAutosave({ store, repository, boardId, scheduler, delay = 
     // landed. The follow-up is scheduled here instead.
     if (dirty) save();
     return true;
+  };
+
+  /**
+   * One write at a time.
+   *
+   * There are four callers now — the debounce, the retry timer, the page on
+   * its way out, and the button in the bar — and none of them knows about the
+   * others. Two of them overlapping is not a race the repository can settle:
+   * both writes capture the same version to replace, so whichever lands second
+   * is refused for claiming a version the first has just moved, and the board
+   * spends a retry converging on a document it already had. A second caller
+   * joins the queue behind the write already out instead.
+   *
+   * The write is still started synchronously when nothing is in flight, which
+   * is what `platform/lifecycle.js` depends on: against Web Storage the save
+   * has landed before the `pagehide` handler returns.
+   */
+  const flush = () => {
+    // then(write, write): the next write is owed whether the last one landed
+    // or not, and it is the one holding the newer document.
+    const next = inFlight ? inFlight.then(write, write) : write();
+    inFlight = next;
+
+    const settle = () => {
+      if (inFlight === next) inFlight = null;
+    };
+    // both handlers, so this derived promise is never an unhandled rejection —
+    // the one handed back to the caller keeps the original outcome
+    next.then(settle, settle);
+    return next;
   };
 
   // Rethrown by flush, and swallowed here: the debounced path fires on every
