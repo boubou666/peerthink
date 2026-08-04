@@ -12,8 +12,8 @@ function harness() {
   const scheduler = createManualScheduler();
   const saved = [];
   const repository = {
-    load: () => null,
-    save(boardId, board) {
+    load: async () => null,
+    async save(boardId, board) {
       saved.push({ boardId, board });
       return true;
     },
@@ -63,11 +63,147 @@ describe('autosave', () => {
   test('a repository that cannot save does not break the session', () => {
     const store = new Store();
     const scheduler = createManualScheduler();
-    const repository = { load: () => null, save: () => false };
+    const repository = { load: async () => null, save: async () => false };
     createAutosave({ store, repository, boardId: 'alpha', scheduler });
 
     store.apply([{ t: 'add', obj: card('a') }]);
     scheduler.flushTimers();
     assert.equal(store.order.length, 1);
+  });
+
+  /**
+   * With several people on a board, every one of them holds the same document
+   * and only one of them writes it. A client that has been outvoted holds its
+   * peace rather than taking turns overwriting the others.
+   */
+  describe('write authority', () => {
+    const gated = (canWrite) => {
+      const store = new Store();
+      const scheduler = createManualScheduler();
+      const saved = [];
+      const repository = {
+        load: async () => null,
+        save: async (boardId, board) => {
+          saved.push({ boardId, board });
+          return true;
+        },
+      };
+      const autosave = createAutosave({ store, repository, boardId: 'alpha', scheduler, canWrite });
+      return { store, scheduler, saved, autosave };
+    };
+
+    test('a client without authority does not write', () => {
+      const { store, scheduler, saved } = gated(() => false);
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      assert.deepEqual(saved, []);
+    });
+
+    test('an explicit flush is not a claim of authority either', async () => {
+      const { store, saved, autosave } = gated(() => false);
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      assert.equal(await autosave.flush(), false);
+      assert.deepEqual(saved, []);
+    });
+
+    test('authority is read at write time, not at construction', () => {
+      let writer = false;
+      const { store, scheduler, saved } = gated(() => writer);
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      assert.deepEqual(saved, [], 'wrote before it had authority');
+
+      writer = true;
+      store.apply([{ t: 'set', id: 'a', patch: { x: 1 } }]);
+      scheduler.flushTimers();
+      assert.equal(saved.length, 1, 'did not write once it had authority');
+    });
+
+    test('no gate at all is a board this client writes', () => {
+      const { store, scheduler, saved } = gated(undefined);
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      assert.equal(saved.length, 1);
+    });
+  });
+
+  /**
+   * A write that did not land leaves the document ahead of the stored one, and
+   * nothing else will notice — the next settled edit is what retries it.
+   */
+  describe('dirty', () => {
+    const withRepository = (save) => {
+      const store = new Store();
+      const scheduler = createManualScheduler();
+      const autosave = createAutosave({ store, repository: { load: async () => null, save }, boardId: 'alpha', scheduler });
+      return { store, scheduler, autosave };
+    };
+
+    test('a settled write leaves nothing outstanding', async () => {
+      const { store, scheduler, autosave } = withRepository(async () => true);
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(autosave.dirty, false);
+    });
+
+    test('a refused write stays outstanding', async () => {
+      const { store, scheduler, autosave } = withRepository(async () => false);
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(autosave.dirty, true, 'a save the server refused was forgotten');
+    });
+
+    test('a rejected write stays outstanding, whichever path made it', async () => {
+      const failing = () => withRepository(async () => { throw new Error('offline'); });
+
+      // the debounced path
+      const viaDebounce = failing();
+      viaDebounce.store.apply([{ t: 'add', obj: card('a') }]);
+      viaDebounce.scheduler.flushTimers();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(viaDebounce.autosave.dirty, true);
+
+      // and a direct flush, which is what app.js uses for the replay and for
+      // the save on taking over write authority
+      const viaFlush = failing();
+      viaFlush.store.apply([{ t: 'add', obj: card('a') }]);
+      await assert.rejects(() => viaFlush.autosave.flush());
+      assert.equal(viaFlush.autosave.dirty, true, 'a direct flush that rejected looked clean');
+    });
+
+    test('a client without authority is dirty rather than saved', async () => {
+      const store = new Store();
+      const scheduler = createManualScheduler();
+      const autosave = createAutosave({
+        store, scheduler, boardId: 'alpha', canWrite: () => false,
+        repository: { load: async () => null, save: async () => true },
+      });
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      assert.equal(await autosave.flush(), false);
+      assert.equal(autosave.dirty, true);
+    });
+  });
+
+  test('a repository that rejects does not surface an unhandled rejection', async () => {
+    const store = new Store();
+    const scheduler = createManualScheduler();
+    const repository = { load: async () => null, save: async () => { throw new Error('offline'); } };
+    createAutosave({ store, repository, boardId: 'alpha', scheduler });
+
+    store.apply([{ t: 'add', obj: card('a') }]);
+    scheduler.flushTimers();
+
+    // an unhandled rejection would take the process down between these lines
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(store.order.length, 1, 'the board is still there to keep editing');
   });
 });

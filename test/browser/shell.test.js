@@ -72,16 +72,71 @@ describe('shell', () => {
   };
 
   const hash = () => page.eval('location.hash');
-  const titles = () => page.eval(`[...document.querySelectorAll('.board-card-title')].map(el => el.textContent)`);
+
+  /**
+   * "The page rendered" is not "the list is showing" — reading the boards is a
+   * round trip, and so is re-reading them after a rename or a delete. Every
+   * assertion about what is listed goes through here, so none of them can
+   * catch the list mid-flight.
+   */
+  const listSettled = [
+    "Boolean(document.querySelector('.shell'))",
+    "!document.querySelector('[data-loading]')",
+    "!document.querySelector('[data-busy]')",
+  ].join(' && ');
+
+  const settle = () => page.waitFor(listSettled, { label: 'the board list to settle' });
+
+  const titles = async () => {
+    await settle();
+    return page.eval(`[...document.querySelectorAll('.board-card-title')].map(el => el.textContent)`);
+  };
+
+  const showsEmptyState = async () => {
+    await settle();
+    return page.eval(`document.querySelector('[data-empty]') !== null`);
+  };
 
   /** Native dialogs would block the page, so answer them in JS. */
   const answerPrompt = (value) => page.eval(`window.prompt = () => ${JSON.stringify(value)};`);
   const answerConfirm = (value) => page.eval(`window.confirm = () => ${value};`);
 
+  /**
+   * This suite is about the Web Storage build, and a Vite dev server reads
+   * `.env.local` — so a developer who has run the app against a local stack
+   * would silently be testing the Supabase one instead, and every assertion
+   * here about localStorage would be about the wrong thing. test/run.js blanks
+   * the variables for this origin; this is what notices if it stops.
+   */
+  test('this origin is the build with no project behind it', async () => {
+    assert.equal(
+      await page.eval(`Boolean(document.querySelector('[data-account-gate], .account-menu, [data-action="share"]'))`),
+      false,
+      'the plain origin is serving a Supabase build',
+    );
+  });
+
   describe('board list', () => {
     test('starts empty and says so', async () => {
-      assert.equal(await page.eval(`document.querySelector('[data-empty]') !== null`), true);
+      assert.equal(await showsEmptyState(), true);
       assert.deepEqual(await titles(), []);
+    });
+
+    test('says nothing about being empty until the boards have been read', async () => {
+      // "No boards yet" is a claim about the workspace. Making it while the
+      // read is still in flight tells a user with boards that they have none.
+      await page.goto(LIST_PATH);
+      const seen = await page.eval(`(() => {
+        const el = document.querySelector('.shell');
+        return {
+          empty: el?.querySelector('[data-empty]') !== null && el?.querySelector('[data-empty]') !== undefined,
+          resolved: el?.querySelector('[data-loading]') === null,
+        };
+      })()`);
+
+      // whichever side of the read this landed on, the two states are exclusive
+      assert.equal(seen.empty && !seen.resolved, false, 'never both loading and empty');
+      assert.equal(await showsEmptyState(), true, 'and it settles on empty');
     });
 
     test('New board creates one and opens it', async () => {
@@ -170,7 +225,7 @@ describe('shell', () => {
       await answerConfirm(true);
       await clickOn('[data-action="delete"]');
       assert.deepEqual(await titles(), []);
-      assert.equal(await page.eval(`document.querySelector('[data-empty]') !== null`), true);
+      assert.equal(await showsEmptyState(), true);
     });
   });
 

@@ -6,7 +6,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const COVERAGE = join(ROOT, '.coverage');
@@ -14,6 +14,31 @@ const COVERAGE = join(ROOT, '.coverage');
 /** Files we hold to the threshold. Test and helper code is not measured. */
 const isMeasured = (rel) =>
   rel === 'server.js' || (rel.startsWith('src/') && (rel.endsWith('.js') || rel.endsWith('.jsx')));
+
+/**
+ * The account UI and the server-backed repository, which only run in a build
+ * that has a Supabase project behind it — so the suite can only reach them
+ * when one is running.
+ *
+ * When it is, these are gated like everything else. When it is not, they are
+ * still reported but left out of the total, and `report()` says so in as many
+ * words. Averaging an unreachable file into the number would quietly lower the
+ * bar for every other file to make up the difference, which is the one thing a
+ * coverage gate must not do.
+ */
+export const SUPABASE_ONLY = [
+  'src/components/AccountForm.jsx',
+  'src/components/AccountMenu.jsx',
+  'src/components/ShareDialog.jsx',
+  'src/platform/cursors.js',
+  'src/platform/supabase-repository.js',
+  'src/platform/sharing.js',
+  'src/platform/sync.js',
+  'src/routes/JoinPage.jsx',
+  'src/shell/RequireAccount.jsx',
+  'src/shell/sharing.js',
+  'src/shell/sync.js',
+];
 
 function readAll(dir) {
   if (!existsSync(dir)) return [];
@@ -122,8 +147,14 @@ function ranges(nums) {
   return out.join(', ');
 }
 
-export function report({ threshold = 95, quiet = false } = {}) {
+/**
+ * `unmeasured` names files to report but not gate — see SUPABASE_ONLY. `note`
+ * is the one-line reason, printed under the table so a green run that skipped
+ * something says which something.
+ */
+export function report({ threshold = 95, quiet = false, unmeasured = [], note = '' } = {}) {
   const scripts = [...readAll(join(COVERAGE, 'node')), ...readAll(join(COVERAGE, 'browser'))];
+  const skipped = new Set(unmeasured);
 
   const byFile = new Map();
   for (const script of scripts) {
@@ -139,8 +170,9 @@ export function report({ threshold = 95, quiet = false } = {}) {
     return { file: rel, total, covered, pct: total ? (covered / total) * 100 : 100, uncovered };
   });
 
-  const total = rows.reduce((n, r) => n + r.total, 0);
-  const covered = rows.reduce((n, r) => n + r.covered, 0);
+  const gated = rows.filter((r) => !skipped.has(r.file));
+  const total = gated.reduce((n, r) => n + r.total, 0);
+  const covered = gated.reduce((n, r) => n + r.covered, 0);
   const pct = total ? (covered / total) * 100 : 0;
 
   if (!quiet) {
@@ -149,20 +181,34 @@ export function report({ threshold = 95, quiet = false } = {}) {
     console.log(`\n${'file'.padEnd(width)}  ${'lines'.padStart(9)}  ${'%'.padStart(7)}  uncovered`);
     console.log(bar);
     for (const r of rows) {
-      const flag = r.pct >= threshold ? ' ' : '!';
+      const out = skipped.has(r.file)
+        ? '(not measured)'
+        : `${ranges(r.uncovered.slice(0, 12))}${r.uncovered.length > 12 ? ' …' : ''}`;
+      const flag = skipped.has(r.file) || r.pct >= threshold ? ' ' : '!';
       console.log(
-        `${r.file.padEnd(width)}  ${`${r.covered}/${r.total}`.padStart(9)}  ${r.pct.toFixed(1).padStart(6)}%${flag} ${ranges(r.uncovered.slice(0, 12))}${r.uncovered.length > 12 ? ' …' : ''}`,
+        `${r.file.padEnd(width)}  ${`${r.covered}/${r.total}`.padStart(9)}  ${r.pct.toFixed(1).padStart(6)}%${flag} ${out}`,
       );
     }
     console.log(bar);
-    console.log(`${'TOTAL'.padEnd(width)}  ${`${covered}/${total}`.padStart(9)}  ${pct.toFixed(1).padStart(6)}%`);
+    const label = rows.length > gated.length ? `TOTAL (of ${gated.length} measured files)` : 'TOTAL';
+    console.log(`${label.padEnd(width)}  ${`${covered}/${total}`.padStart(9)}  ${pct.toFixed(1).padStart(6)}%`);
+    if (note) console.log(`! ${note}`);
     console.log(pct >= threshold ? `\n✔ line coverage ${pct.toFixed(1)}% ≥ ${threshold}%` : `\n✘ line coverage ${pct.toFixed(1)}% < ${threshold}%`);
   }
 
   return { rows, pct, total, covered, pass: pct >= threshold };
 }
 
-if (import.meta.main) {
+/**
+ * Whether this module is what node was asked to run.
+ *
+ * `import.meta.main` says this in one word, and is not available until Node
+ * 22.19 — package.json allows 22.0, where it is silently undefined and the
+ * block below simply never runs. Comparing the URLs works everywhere.
+ */
+const isEntryPoint = (url) => Boolean(process.argv[1]) && url === pathToFileURL(process.argv[1]).href;
+
+if (isEntryPoint(import.meta.url)) {
   const threshold = Number(process.env.COVERAGE_THRESHOLD ?? 95);
   process.exit(report({ threshold }).pass ? 0 : 1);
 }

@@ -253,3 +253,46 @@ body:has(.board-page) { overflow: hidden; }
   white-space: nowrap;
 }
 @media (max-width: 900px) { #hint { display: none; } }
+
+/* ---------- other people's pointers ---------- */
+
+/* Drawn in the overlay, which is screen space, so the arrow and the name stay
+   the same size at any zoom — the same reasoning as the selection handles.
+   The world position is converted on every pan and zoom instead. */
+.cursor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  will-change: transform;
+  /* no transition: a cursor that eases into place is a cursor that is
+     reporting where someone was, slowly */
+}
+
+.cursor-arrow {
+  width: 0;
+  height: 0;
+  border-left: 9px solid var(--cursor-colour);
+  border-bottom: 9px solid transparent;
+  border-right: 9px solid transparent;
+  transform: rotate(-45deg);
+  transform-origin: 0 0;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / .35));
+}
+
+.cursor-name {
+  position: absolute;
+  top: 14px;
+  left: 10px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  color: #fff;
+  background: var(--cursor-colour);
+  border-radius: 5px;
+  padding: 4px 6px;
+}

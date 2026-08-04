@@ -19,6 +19,12 @@
   letter-spacing: -0.01em;
 }
 
+.shell-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 button.primary {
   font: inherit;
   font-size: 13px;
@@ -45,6 +51,103 @@ button.primary:hover { opacity: .85; }
   background: color-mix(in srgb, #d83a52 12%, transparent);
   border: 1px solid color-mix(in srgb, #d83a52 30%, transparent);
   border-radius: 9px;
+}
+
+/* ---------- accounts ---------- */
+
+button.link {
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+button.link:hover { color: var(--ink); }
+
+.account-gate {
+  max-width: 340px;
+  padding-top: 96px;
+}
+.account-gate h1 {
+  margin: 0 0 20px;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.account-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.account-form input {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.account-form input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+.account-menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.account-email {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.account-menu > button {
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.account-menu > button:hover {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--ink);
+}
+
+.account-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 3;
+  width: 260px;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  box-shadow: var(--shadow);
+}
+
+.account-pending {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
 }
 
 .board-grid {
@@ -163,4 +266,135 @@ button.primary:hover { opacity: .85; }
 .board-bar-title:focus {
   outline: none;
   background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+
+/* ---------- sharing ---------- */
+
+.board-bar button[data-action="share"] {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 9px;
+  cursor: pointer;
+}
+.board-bar button[data-action="share"]:hover {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--ink);
+}
+
+.share-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+}
+
+.share {
+  width: min(480px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+
+.share-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.share-header h2 {
+  margin: 0;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+.share-header button {
+  font: inherit;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 7px;
+  cursor: pointer;
+}
+.share-header button:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+
+.share-link label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.share-link select {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 5px 7px;
+}
+
+.share-url {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.share-url input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+}
+
+.share-people-title {
+  margin: 22px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.share-people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.share-people li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.share-person-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.share-person-role {
+  font-size: 12px;
+  color: var(--muted);
 }

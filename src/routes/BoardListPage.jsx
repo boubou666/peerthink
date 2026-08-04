@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 
+import { AccountMenu } from '../components/AccountMenu.jsx';
 import { createIdGenerator } from '../core/ids.js';
 import { DEFAULT_TITLE } from '../platform/storage.js';
+import { sharing } from '../shell/sharing.js';
 import { repository } from '../shell/storage.js';
 
 const newId = createIdGenerator();
@@ -13,9 +15,40 @@ const formatDate = (ms) =>
 
 export function BoardListPage() {
   const navigate = useNavigate();
-  const [boards, setBoards] = useState(() => repository.list());
+  // null is "not read yet", which is a different thing from "no boards" — the
+  // empty state is a claim about the workspace and it should not be made until
+  // the repository has actually answered.
+  const [boards, setBoards] = useState(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const refresh = () => setBoards(repository.list());
+
+  const refresh = useCallback(() => repository.list().then(setBoards), []);
+
+  useEffect(() => {
+    let live = true;
+    repository.list().then((found) => {
+      if (live) setBoards(found);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  /**
+   * Run a mutation, then re-read. `busy` is what stops a second click landing
+   * on a list that the first click has already invalidated but not yet
+   * refreshed — a window that does not exist against Web Storage and is wide
+   * open against a server.
+   */
+  const mutate = async (fn) => {
+    setBusy(true);
+    try {
+      await fn();
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   /**
    * A board created here starts empty. Only a first-ever visit gets the
@@ -25,20 +58,35 @@ export function BoardListPage() {
    * record, which createApp treats as a first visit and seeds — so a failed
    * save would hand back a board full of starter content.
    */
-  const create = () => {
-    const id = newId();
-    if (!repository.save(id, EMPTY_BOARD, { title: DEFAULT_TITLE })) {
-      setError('Could not create a board — storage is full or unavailable.');
-      return;
+  const create = async () => {
+    setBusy(true);
+    try {
+      const id = newId();
+      if (!(await repository.save(id, EMPTY_BOARD, { title: DEFAULT_TITLE }))) {
+        setError('Could not create a board — storage is full or unavailable.');
+        return;
+      }
+      setError(null);
+      navigate(`/b/${id}`);
+    } finally {
+      setBusy(false);
     }
-    setError(null);
-    navigate(`/b/${id}`);
   };
 
   const remove = (id, title) => {
     if (!window.confirm(`Delete “${title}”? This cannot be undone.`)) return;
-    repository.remove(id);
-    refresh();
+    return mutate(() => repository.remove(id));
+  };
+
+  /**
+   * A board someone shared with you is not yours to delete — the policies
+   * would refuse, and refusing quietly would look like a board that came back.
+   * So the card offers what is actually available: hand the access back, and
+   * it leaves your list without leaving anyone else's.
+   */
+  const leave = (id, title) => {
+    if (!window.confirm(`Leave “${title}”? You will need a new link to get back in.`)) return;
+    return mutate(() => sharing.leave(id));
   };
 
   const rename = (id, current) => {
@@ -46,22 +94,36 @@ export function BoardListPage() {
     if (next === null) return;
     const trimmed = next.trim();
     if (!trimmed || trimmed === current) return;
-    repository.rename(id, trimmed);
-    refresh();
+    return mutate(() => repository.rename(id, trimmed));
   };
 
   return (
-    <div className="shell">
+    // data-busy marks a read or write in flight. It drives nothing visually on
+    // its own — the disabled buttons do that — but it is the one honest signal
+    // that the list on screen is settled, which is what the browser tests wait
+    // on instead of assuming a click has already landed.
+    <div className="shell" {...(busy ? { 'data-busy': '' } : {})}>
       <header className="shell-header">
         <h1>Boards</h1>
-        <button type="button" className="primary" data-action="new-board" onClick={create}>
-          New board
-        </button>
+        <div className="shell-header-actions">
+          <AccountMenu />
+          <button
+            type="button"
+            className="primary"
+            data-action="new-board"
+            disabled={busy}
+            onClick={create}
+          >
+            New board
+          </button>
+        </div>
       </header>
 
       {error && <p className="error" role="alert" data-error>{error}</p>}
 
-      {boards.length === 0 ? (
+      {boards === null ? (
+        <p className="empty" data-loading>Loading…</p>
+      ) : boards.length === 0 ? (
         <p className="empty" data-empty>No boards yet. Create one to get started.</p>
       ) : (
         <ul className="board-grid">
@@ -77,12 +139,34 @@ export function BoardListPage() {
               </button>
 
               <div className="board-card-actions">
-                <button type="button" data-action="rename" onClick={() => rename(board.id, board.title)}>
+                <button
+                  type="button"
+                  data-action="rename"
+                  disabled={busy}
+                  onClick={() => rename(board.id, board.title)}
+                >
                   Rename
                 </button>
-                <button type="button" data-action="delete" onClick={() => remove(board.id, board.title)}>
-                  Delete
-                </button>
+
+                {board.owned === false ? (
+                  <button
+                    type="button"
+                    data-action="leave"
+                    disabled={busy}
+                    onClick={() => leave(board.id, board.title)}
+                  >
+                    Leave
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    data-action="delete"
+                    disabled={busy}
+                    onClick={() => remove(board.id, board.title)}
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </li>
           ))}

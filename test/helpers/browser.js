@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { newPage, closePage } from './cdp.js';
+import { newPage, newIsolatedPage, closePage } from './cdp.js';
 
 // fileURLToPath, not URL.pathname — see the note in ./vite.js
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -11,6 +11,14 @@ const COVERAGE_DIR = join(ROOT, '.coverage', 'browser');
 /** Written by test/run.js before the test files are spawned. */
 export function endpoints() {
   return JSON.parse(readFileSync(join(ROOT, '.coverage', 'endpoint.json'), 'utf8'));
+}
+
+/**
+ * The origin serving a build that has a Supabase project behind it, or null
+ * when no local stack was running. A suite that needs accounts skips on null.
+ */
+export function supabaseOrigin() {
+  return endpoints().authBase ?? null;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -40,9 +48,20 @@ export async function openApp({
   height = 800,
   path = BOARD_PATH,
   readyWhen = readinessFor(path),
+  // Which build to drive: the plain one, or — for the account suite — the
+  // origin that was handed a Supabase project. Two origins also means two
+  // localStorage partitions, so a signed-in session cannot leak into a test
+  // that assumes there isn't one.
+  origin = endpoints().appBase,
+  // A page for somebody else. Two tabs on one origin share Web Storage, so a
+  // second session signed in here would overwrite the first one's — which is
+  // right for a browser and useless for testing two people.
+  isolated = false,
 } = {}) {
-  const { browserBase, appBase } = endpoints();
-  const { session, targetId } = await newPage(browserBase);
+  const { browserBase } = endpoints();
+  const { session, targetId, dispose } = isolated
+    ? await newIsolatedPage(browserBase)
+    : await newPage(browserBase);
 
   const errors = [];
   session.on('Runtime.exceptionThrown', (p) => {
@@ -100,12 +119,12 @@ export async function openApp({
       await session.send('Page.navigate', { url: 'about:blank' });
       await blankCommitted;
 
-      await session.send('Page.navigate', { url: appBase + to });
+      await session.send('Page.navigate', { url: origin + to });
 
       const deadline = Date.now() + timeout;
       for (;;) {
         if (await api.eval(ready).catch(() => false)) return;
-        if (Date.now() > deadline) throw new Error(`page never became ready at ${appBase + to} (${ready})`);
+        if (Date.now() > deadline) throw new Error(`page never became ready at ${origin + to} (${ready})`);
         await sleep(25);
       }
     },
@@ -220,7 +239,8 @@ export async function openApp({
       writeFileSync(join(COVERAGE_DIR, `${targetId}.json`), JSON.stringify({ result: collected }));
       await session.send('Profiler.stopPreciseCoverage').catch(() => {});
       session.close();
-      await closePage(browserBase, targetId);
+      if (dispose) await dispose();
+      else await closePage(browserBase, targetId);
     },
   };
 

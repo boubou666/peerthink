@@ -20,13 +20,26 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
  * both, and no test file imports either. The code under test still imports
  * nothing — `src/core/**` stays plain ES modules.
  */
-export async function startDevServer() {
+/**
+ * `env` becomes `import.meta.env` entries for this server only.
+ *
+ * The suite runs two of these: one plain, and — when a local Supabase is up —
+ * one that has been handed a project, because whether there is a backend is a
+ * load-time decision the app makes from its environment. Passing it here
+ * rather than through process.env is what keeps the two servers independent;
+ * Vite resolves env once per config, so a mutated process.env would depend on
+ * which server was created first.
+ */
+export async function startDevServer({ env = {} } = {}) {
   const server = await createServer({
     // fileURLToPath, not URL.pathname: pathname keeps percent-encoding and
     // yields `/C:/...` on Windows, neither of which Vite can resolve
     configFile: fileURLToPath(new URL('../../vite.config.js', import.meta.url)),
     root: fileURLToPath(new URL('../../', import.meta.url)),
     logLevel: 'error',
+    define: Object.fromEntries(
+      Object.entries(env).map(([key, value]) => [`import.meta.env.${key}`, JSON.stringify(value)]),
+    ),
     server: { port: 0, strictPort: false },
   });
 

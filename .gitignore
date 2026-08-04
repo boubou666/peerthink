@@ -4,6 +4,13 @@ dist/
 *.log
 .DS_Store
 
+# Local Supabase credentials. VITE_ variables are inlined into the bundle, so
+# what goes here is the anon key and the project URL — public by design — but a
+# committed .env is still a claim about which project this checkout points at.
+.env
+.env.local
+.env.*.local
+
 # Parallel feature work lives in worktrees under .claude/, inside the repo —
 # without this they surface as untracked files in every other worktree.
 # Scoped rather than ignoring .claude/ wholesale, so shared project settings

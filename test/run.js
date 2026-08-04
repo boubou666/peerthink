@@ -16,8 +16,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { launchChrome, findChrome } from './helpers/chrome.js';
+import { localSupabase } from './helpers/supabase.js';
 import { ensureBuild, startDevServer } from './helpers/vite.js';
-import { report } from './coverage.js';
+import { SUPABASE_ONLY, report } from './coverage.js';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const COVERAGE = join(ROOT, '.coverage');
@@ -45,20 +46,61 @@ if (!findChrome()) {
 // that test is what keeps test/node/** on Node built-ins
 if (await ensureBuild()) console.log('built dist/ for the production-server test');
 
-const { server: vite, base: appBase } = await startDevServer();
+/**
+ * The plain origin, and it has to be made plain rather than left plain.
+ *
+ * Vite reads `.env.local`, which a developer who has run the app against a
+ * local stack certainly has — and it would quietly turn this server into a
+ * Supabase build, so every suite that assumes Web Storage would be talking to
+ * Postgres instead. Blanking the two variables here means the offline suites
+ * are offline because this file says so, not because of what is on disk.
+ */
+const { server: vite, base: appBase } = await startDevServer({
+  env: { VITE_SUPABASE_URL: '', VITE_SUPABASE_ANON_KEY: '' },
+});
+
+/**
+ * A second origin, serving the same sources to a build that has been told
+ * about a Supabase project. Whether there is a backend is something the app
+ * decides once, at load, from its environment — so it is not a thing one page
+ * can toggle, and the two worlds have to be two servers.
+ */
+const supabase = localSupabase();
+if (!supabase) console.log('no local supabase — the account suite will skip (npx supabase start)');
+const auth = supabase
+  ? await startDevServer({
+      env: { VITE_SUPABASE_URL: supabase.url, VITE_SUPABASE_ANON_KEY: supabase.anonKey },
+    })
+  : null;
+
 const { child: chrome, base: browserBase } = await launchChrome({
   port: await freePort(),
   userDataDir: join(COVERAGE, 'chrome-profile'),
 });
 
-writeFileSync(join(COVERAGE, 'endpoint.json'), JSON.stringify({ appBase, browserBase }));
-
-const testFiles = ['test/node', 'test/browser'].flatMap((dir) =>
-  readdirSync(join(ROOT, dir))
-    .filter((f) => f.endsWith('.test.js'))
-    .sort()
-    .map((f) => `${dir}/${f}`),
+writeFileSync(
+  join(COVERAGE, 'endpoint.json'),
+  JSON.stringify({ appBase, browserBase, authBase: auth?.base ?? null }),
 );
+
+/**
+ * Named files run instead of the whole suite — `node test/run.js
+ * test/browser/shell.test.js`. The browser files cannot be handed to
+ * `node --test` directly; they need the dev server and the browser this script
+ * starts, so narrowing has to happen here rather than at the runner.
+ *
+ * The coverage gate still runs, and will fail: one file does not cover the
+ * app. That is the honest outcome of asking for one file.
+ */
+const requested = process.argv.slice(2);
+const testFiles = requested.length
+  ? requested
+  : ['test/node', 'test/browser'].flatMap((dir) =>
+      readdirSync(join(ROOT, dir))
+        .filter((f) => f.endsWith('.test.js'))
+        .sort()
+        .map((f) => `${dir}/${f}`),
+    );
 
 const args = [
   '--test',
@@ -88,9 +130,16 @@ try {
 } finally {
   chrome.kill();
   await vite.close().catch(() => {});
+  await auth?.server.close().catch(() => {});
 }
 
 const threshold = Number(process.env.COVERAGE_THRESHOLD ?? 95);
-const { pass } = report({ threshold });
+const { pass } = report({
+  threshold,
+  // Without a stack the account UI never mounts. Reported, not gated — and
+  // said out loud, so a green run is never mistaken for a complete one.
+  unmeasured: supabase ? [] : SUPABASE_ONLY,
+  note: supabase ? '' : 'the account UI was not measured: no local supabase (npx supabase start)',
+});
 
 process.exit(code === 0 && pass ? 0 : 1);

@@ -22,6 +22,38 @@ export function createScheduler({ requestAnimationFrame, setTimeout, clearTimeou
       };
     },
 
+    /**
+     * Run now, then at most once every `ms` for as long as the calls keep
+     * coming — with a final run after the last one.
+     *
+     * Unlike `debounce`, a caller that never stops still gets served: a drag
+     * emits ops for as long as the pointer moves, and the other end of a wire
+     * cannot wait for it to finish. Unlike `onFrame`, this is a timer, so it
+     * keeps running in a tab the compositor has stopped drawing.
+     *
+     * Takes no arguments, because the callers that need this are draining a
+     * queue rather than carrying a value forward.
+     */
+    throttle(fn, ms) {
+      let timer = null;
+      let queued = false;
+
+      const run = () => {
+        fn();
+        timer = setTimeout(() => {
+          timer = null;
+          if (!queued) return;
+          queued = false;
+          run();
+        }, ms);
+      };
+
+      return () => {
+        if (timer) queued = true;
+        else run();
+      };
+    },
+
     /** Run once the calls stop for `ms`. */
     debounce(fn, ms) {
       let timer = null;

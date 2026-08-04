@@ -10,18 +10,23 @@
     "preview": "vite preview",
     "start": "node server.js",
     "test": "node test/run.js",
-    "test:node": "node --test \"test/node/**/*.test.js\""
+    "test:node": "node --test \"test/node/**/*.test.js\"",
+    "test:db": "node --test \"test/db/**/*.test.js\"",
+    "db:apply": "node test/db/apply.js"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.112.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router": "^8.3.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.0.5",
+    "pg": "^8.22.0",
+    "supabase": "^2.111.0",
     "vite": "^8.2.0"
   }
 }

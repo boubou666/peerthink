@@ -22,6 +22,7 @@ npm start        # serve the built site
 | **Envelopes** | Grouping containers — dragging one carries everything fully inside it, transitively |
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
+| **Together** | With a project configured: share a board by link, live edits, and other people's cursors |
 
 ### Gestures
 
@@ -63,7 +64,13 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
                   ├── input.js       pointer and keyboard gestures
                   ├── views.js       per-type markup
                   ├── toolbar.js     buttons and view shortcuts
-                  └── storage.js     BoardRepository over Web Storage
+                  ├── storage.js     BoardRepository over Web Storage
+                  ├── supabase-repository.js  the same contract over Postgres
+                  ├── sync.js        the op log, on a private channel
+                  ├── cursors.js     other people's pointers
+                  ├── sharing.js     invite links and who holds them
+                  ├── auth.js        accounts, as { id, email, guest }
+                  └── supabase.js    the client, and whether there is one
 ```
 
 ### React renders the shell, not the canvas
@@ -92,7 +99,8 @@ the `ResizeObserver` all arrive as arguments. The practical consequences:
 - two independent boards can be composed on one page, each with its own DOM
   subtree and state — [`test/browser/app.test.js`](test/browser/app.test.js) does exactly that;
 - the persistence backend is one argument, so the Web Storage implementation
-  swaps for an HTTP or WebSocket one without touching the core;
+  and the Postgres one are the same code path to everything above them — which
+  is what made adding the second a new file rather than an edit to the first;
 - timing is a `Scheduler`, so debounce and frame behaviour are driven by hand
   in tests instead of by `setTimeout` and luck.
 
@@ -105,8 +113,41 @@ store.apply([{ t: 'set', id: 'a3f', patch: { x: 120, y: 40 } }])
 ```
 
 One representation gives undo/redo, the autosave payload, and — the point of
-the exercise — the wire format a sync layer would broadcast. Adding
-collaboration means reimplementing `apply`, and nothing above it changes.
+the exercise — the wire format. `platform/sync.js` takes that literally: what a
+client applies locally is exactly what it sends, and what it receives goes
+through the same `apply()` the local UI uses. There is no second representation
+of a change, so there is no second implementation to keep honest.
+
+Ops carry an origin. A remote one is applied with `record: false`, which keeps
+somebody else's edit out of your undo stack, and marked `REMOTE`, which is what
+stops it being sent straight back out.
+
+Ops keep the live documents identical; the *row* is written by whole-document
+save, so several editors autosaving one is several editors overwriting each
+other. Exactly one of them writes it — the earliest joiner, elected from
+presence, which every client computes from the same state and agrees on without
+anyone deciding — and the rest hold their peace. Election cannot see the case
+that matters most, though: a client that has lost the channel elects itself and
+carries on saving a document that has fallen behind. So a save also carries the
+version it is replacing, and the update matches nothing if that version has
+moved on. The counter belongs to `doc` alone, so a rename is not a competing
+edit and does not refuse the next honest save.
+
+Cursors go the other way. They are broadcast, not presence updates — presence
+diffs a set and fans the whole thing out on every change, which is the right
+shape for a list of people and the wrong shape for something that moves at
+pointer rate. Presence still says who is *here*, and carries their name, so a
+position does not have to repeat it hundreds of times a minute. Positions are
+in world coordinates, so a cursor points at the thing its owner is pointing at
+rather than at a place on their screen.
+
+The one thing an absolute op could not survive was replication. `{ t: 'order' }`
+names the whole z-order, and a sender cannot name an object they have not
+received yet — taking their array literally would drop a concurrent addition out
+of the document entirely. So an incoming order decides the relative depth of
+everything it mentions, and anything it does not mention keeps the depth it has
+here. There is no operational transform beyond that: two people dragging the
+same object settle on whoever's message landed last.
 
 ### Rendering
 
@@ -147,6 +188,96 @@ finds a system or Playwright-cached build, or point at one:
 CHROME_PATH=/path/to/chrome npm test
 ```
 
+### Accounts
+
+The app decides once, at load, whether there is a backend behind it. Given
+both of
+
+```sh
+VITE_SUPABASE_URL=https://<project>.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon key>
+```
+
+it signs every visitor in — anonymously on a first visit, which is a real row
+in `auth.users` and so a real subject for the row level security policies — and
+keeps the boards in Postgres. With either variable missing it runs on Web
+Storage with no accounts at all, which is what the published GitHub Pages site
+is and what `npm test` runs against. Registering attaches an email to the guest
+who is already signed in, rather than creating a second user beside them, so
+the boards come along.
+
+The two repositories satisfy one contract, so nothing above `shell/storage.js`
+knows which is in front of it. `list()` is one indexed query rather than a parse
+of every stored board, and access is not enforced in the client: a `select` with
+no `where` clause is the correct way to ask for "my boards", because the
+policies are what answer it.
+
+The suites that need a real stack — accounts, the Postgres repository, and the
+live channel — skip without one:
+
+```sh
+npx supabase start && npm test
+```
+
+`test/run.js` finds it through `supabase status`, serves a second Vite origin
+that has been handed the project, and drives the browser suites there. The node
+suites talk to it directly, signing in two anonymous users so that one can be
+refused what the other is allowed. Skipping is reported rather than silent: the
+files only those suites can reach are printed but left out of the coverage
+total, with a line saying so — an unreachable file averaged into the number
+would quietly lower the bar for every other file. CI starts a stack, so nothing
+merges without them.
+
+### Sharing
+
+A board is handed out by **link**, not by naming a person. There is nothing to
+name them with: `auth.users` is not readable by `authenticated`, and most people
+here are anonymous and have no address. A link needs neither, and the person
+following it needs no account beyond the guest session they already have —
+which is the same reason anonymous sign-in exists.
+
+One live link per board, and it says what it grants. Changing the role changes
+what the outstanding link is worth rather than killing it, because a link
+already pasted into a chat should not quietly stop working. Revoking deletes
+it; the people who already joined stay, because they are rows in
+`board_members` now and the link is not what holds them there.
+
+The token is the whole secret, so it is never derived from the board id and the
+invite row is readable only by the owner. Redeeming goes through a
+`SECURITY DEFINER` function — the point is to act on a row the caller cannot
+see. Every reason a token might not work gives the same answer, so the join
+page is not somewhere to test guesses.
+
+Access is handed back the same way it was given. A board someone shared with
+you is not yours to delete, so its card offers **Leave** where an owned one
+offers Delete — the policy would refuse a delete, and refusing quietly would
+look like a board that came back. `list()` carries `owned` so the list knows
+which of the two it is looking at; the local repository reports `true` for
+everything, because nobody else can reach a browser's own storage. An owner
+cannot leave: there is no membership row to hand back, and a board with no
+owner is one nobody can share or delete.
+
+### The database
+
+`test/db/` is a third world, kept out of `npm test` because it needs a Postgres
+rather than a browser. The row level security policies are the thing that keeps
+one person's boards out of another's, and they are not code that can be
+reviewed into correctness — they get exercised as the database sees them, every
+statement running as `authenticated` with a JWT claim, exactly as PostgREST
+issues it.
+
+```sh
+npx supabase start                                    # or any Postgres
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres \
+  npm run db:apply && npm run test:db
+```
+
+Against a bare Postgres, pass `--stub` to `db:apply` first: `test/db/stub-auth.sql`
+installs the surface the migrations expect — the `auth` schema, `auth.uid()`,
+and the `anon` / `authenticated` roles — which a real Supabase database already
+has. The suite skips itself when `DATABASE_URL` is unset. CI sets it from the
+stack it starts, so these run on every pull request.
+
 ---
 
 ## Dependencies
@@ -158,7 +289,9 @@ unchanged without a framework. The additions are the shell and its tooling:
 |---|---|
 | `react`, `react-dom` | the shell |
 | `react-router` | routing — v8 |
+| `@supabase/supabase-js` | accounts, and the boards backend behind them |
 | `vite`, `@vitejs/plugin-react` | dev server and build (dev only) |
+| `pg` | connects the RLS tests to a database (dev only) |
 
 Routing is `react-router` v8 rather than v7's `react-router-dom` mostly because
 v8 is where the package is going. On the security side the only relevant item is
@@ -172,9 +305,35 @@ CI fails on any high-severity production advisory.
 
 ## Not built yet
 
-Real-time collaboration, presence cursors, share links, auth, export. The seams
-are in place — `BoardRepository` for persistence, the op log for transport —
-but none of it is written.
+Export.
+
+Ops emitted between reading the snapshot and joining the channel are missed —
+`hydrate()` subscribes after the load, so a change made in that window shows up
+on the next reload rather than immediately.
+
+A refused save is retried on the next settled edit, and not before — the board
+stays dirty until a write lands, but nothing chases it on a timer, so a board
+whose last edit was refused and then left alone keeps changes that are not
+stored. The same gap closes a tab: a write still inside the autosave debounce
+does not survive the page. Both want a flush on `pagehide`.
+
+Signing in with an emailed confirmation link does not work. `detectSessionInUrl`
+is off because HashRouter owns the fragment, so the tokens in a confirmation
+link are never read — the fix is to handle the fragment in the bootstrap,
+before the router mounts. Local dev has `enable_confirmations = false`, so this
+path is not exercised by anything.
+
+Both repositories answer rather than reject, by contract — but the contract is
+documented, not enforced. Nothing above them is written to survive a rejected
+call: `hydrate()` would leave an editable canvas that saves nowhere, and the
+board list would sit on "Loading…" for good.
+
+Boards already in a browser's Web Storage are not adopted when a project is
+configured — the account and the browser are separate places, and moving boards
+between them is a decision nobody has made yet.
+
+There is no notification that a board has been shared with you; it simply
+appears in the list.
 
 The toolbar is still imperative rather than a React component; converting it
 needs `useSyncExternalStore` over the store and viewport.
