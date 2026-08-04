@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router';
 import { AccountMenu } from '../components/AccountMenu.jsx';
 import { createIdGenerator } from '../core/ids.js';
 import { DEFAULT_TITLE } from '../platform/storage.js';
+import { sharing } from '../shell/sharing.js';
 import { repository } from '../shell/storage.js';
 
 const newId = createIdGenerator();
@@ -77,6 +78,17 @@ export function BoardListPage() {
     return mutate(() => repository.remove(id));
   };
 
+  /**
+   * A board someone shared with you is not yours to delete — the policies
+   * would refuse, and refusing quietly would look like a board that came back.
+   * So the card offers what is actually available: hand the access back, and
+   * it leaves your list without leaving anyone else's.
+   */
+  const leave = (id, title) => {
+    if (!window.confirm(`Leave “${title}”? You will need a new link to get back in.`)) return;
+    return mutate(() => sharing.leave(id));
+  };
+
   const rename = (id, current) => {
     const next = window.prompt('Board name', current);
     if (next === null) return;
@@ -135,14 +147,26 @@ export function BoardListPage() {
                 >
                   Rename
                 </button>
-                <button
-                  type="button"
-                  data-action="delete"
-                  disabled={busy}
-                  onClick={() => remove(board.id, board.title)}
-                >
-                  Delete
-                </button>
+
+                {board.owned === false ? (
+                  <button
+                    type="button"
+                    data-action="leave"
+                    disabled={busy}
+                    onClick={() => leave(board.id, board.title)}
+                  >
+                    Leave
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    data-action="delete"
+                    disabled={busy}
+                    onClick={() => remove(board.id, board.title)}
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </li>
           ))}

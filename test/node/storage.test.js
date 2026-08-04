@@ -120,10 +120,12 @@ describe('local storage repository', () => {
       clock = 200;
       await repo.save('mid', board(), { title: 'Mid' });
 
+      // `owned` is part of the contract, and true for everything here: nobody
+      // else can reach this browser's storage.
       assert.deepEqual(await repo.list(), [
-        { id: 'new', title: 'New', updatedAt: 300 },
-        { id: 'mid', title: 'Mid', updatedAt: 200 },
-        { id: 'old', title: 'Old', updatedAt: 100 },
+        { id: 'new', title: 'New', updatedAt: 300, owned: true },
+        { id: 'mid', title: 'Mid', updatedAt: 200, owned: true },
+        { id: 'old', title: 'Old', updatedAt: 100, owned: true },
       ]);
     });
 
@@ -154,8 +156,8 @@ describe('local storage repository', () => {
       await repo.save('dated', board(), { title: 'Dated' });
 
       assert.deepEqual(await repo.list(), [
-        { id: 'dated', title: 'Dated', updatedAt: 50 },
-        { id: 'bare', title: DEFAULT_TITLE, updatedAt: 0 },
+        { id: 'dated', title: 'Dated', updatedAt: 50, owned: true },
+        { id: 'bare', title: DEFAULT_TITLE, updatedAt: 0, owned: true },
       ]);
     });
 

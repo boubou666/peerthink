@@ -177,6 +177,54 @@ describe('sharing', { skip: stack ? false : 'no local supabase (npx supabase sta
       assert.equal(await carol.sharing.redeem(token), null);
     });
 
+    test('a member can hand their own access back', async () => {
+      const id = await aliceBoard();
+      const { token } = await alice.sharing.share(id, 'editor');
+      await bob.sharing.redeem(token);
+
+      assert.equal(await bob.sharing.leave(id), true);
+      assert.equal(await bob.repository.load(id), null);
+      assert.equal((await bob.repository.list()).some((b) => b.id === id), false);
+
+      // and it is only their own access they handed back
+      assert.ok(await alice.repository.load(id), 'leaving a board deleted it');
+      assert.deepEqual((await alice.sharing.people(id)).map((p) => p.role), ['owner']);
+    });
+
+    test('leaving twice, or leaving a board you were never on, is false', async () => {
+      const id = await aliceBoard();
+      const { token } = await alice.sharing.share(id, 'editor');
+      await bob.sharing.redeem(token);
+
+      assert.equal(await bob.sharing.leave(id), true);
+      assert.equal(await bob.sharing.leave(id), false);
+
+      const carol = await signIn();
+      assert.equal(await carol.sharing.leave(id), false);
+    });
+
+    /**
+     * An owner has no membership row to hand back, and a board with no owner
+     * is one nobody can share or delete. Getting rid of your own board is
+     * what delete is for.
+     */
+    test('an owner cannot leave their own board', async () => {
+      const id = await aliceBoard();
+
+      assert.equal(await alice.sharing.leave(id), false);
+      assert.ok(await alice.repository.load(id), 'the board went anyway');
+    });
+
+    test('leaving and coming back needs the link again', async () => {
+      const id = await aliceBoard();
+      const { token } = await alice.sharing.share(id, 'editor');
+      await bob.sharing.redeem(token);
+      await bob.sharing.leave(id);
+
+      assert.equal(await bob.sharing.redeem(token), id);
+      assert.ok(await bob.repository.load(id));
+    });
+
     /** Sharing is the owner's alone; an editor cannot hand the board on. */
     test('a member cannot mint a link of their own', async () => {
       const id = await aliceBoard();

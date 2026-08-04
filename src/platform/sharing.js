@@ -77,6 +77,31 @@ export function createSharing({ client, auth }) {
     },
 
     /**
+     * Hand back your own access. The same delete as `remove`, and the same
+     * policy allows it — an owner may take anyone off a board, and anyone may
+     * take themselves off one. It is a separate method because it is a
+     * separate thing to want, and because nobody should have to look up their
+     * own id to do it.
+     *
+     * The owner cannot leave: they have no membership row to delete, and a
+     * board with no owner is a board nobody can share or delete. Getting rid
+     * of your own board is what Delete is for.
+     */
+    async leave(boardId) {
+      const me = auth.current()?.id;
+      if (!me) return false;
+
+      const { data, error } = await client
+        .from('board_members')
+        .delete()
+        .eq('board_id', boardId)
+        .eq('user_id', me)
+        .select('board_id');
+
+      return !error && data.length > 0;
+    },
+
+    /**
      * Join a board with a token. Answers the board id, or null when the token
      * buys nothing — expired, revoked, or never real. The caller cannot tell
      * those apart, which is the point: a token is not something to probe.

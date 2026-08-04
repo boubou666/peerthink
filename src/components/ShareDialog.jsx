@@ -15,7 +15,7 @@ const ROLES = [
  * gate. So an editor who opens this is told what is true — they are on the
  * board, and it is not theirs to share.
  */
-export function ShareDialog({ boardId, title, onClose }) {
+export function ShareDialog({ boardId, title, onClose, onLeave }) {
   const [invite, setInvite] = useState(null);
   const [people, setPeople] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -115,9 +115,26 @@ export function ShareDialog({ boardId, title, onClose }) {
         {people === null ? (
           <p className="empty" data-loading>Loading…</p>
         ) : !owned ? (
-          <p className="empty" data-not-owner>
-            You are on this board, but it is not yours to share.
-          </p>
+          <>
+            <p className="empty" data-not-owner>
+              You are on this board, but it is not yours to share.
+            </p>
+            {/* The one thing a member can do about their own access. */}
+            <button
+              type="button"
+              className="link"
+              data-action="leave-board"
+              disabled={busy}
+              onClick={() =>
+                run(async () => {
+                  if (await sharing.leave(boardId)) onLeave?.();
+                  else setError('Could not leave the board.');
+                })
+              }
+            >
+              Leave this board
+            </button>
+          </>
         ) : (
           <>
             <div className="share-link">

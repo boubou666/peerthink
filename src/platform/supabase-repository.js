@@ -58,10 +58,17 @@ export function createSupabaseRepository({ client, auth, table = 'boards' }) {
      */
     async list() {
       const { data, error } = await from()
-        .select('id, title, updated_at')
+        .select('id, title, updated_at, owner_id')
         .order('updated_at', { ascending: false });
 
-      return error ? [] : data.map(toSummary);
+      if (error) return [];
+
+      // `owned` is the difference between a board you can delete and one you
+      // can only walk away from. The list is where that choice is offered, so
+      // it is the list that has to know — and one extra column answers it,
+      // where asking board_role() per row would be a query each.
+      const me = auth.current()?.id;
+      return data.map((row) => ({ ...toSummary(row), owned: row.owner_id === me }));
     },
 
     /**

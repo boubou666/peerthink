@@ -49,16 +49,19 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
     await page.goto(LIST_PATH, { ready: SETTLED });
   });
 
-  const click = async (selector) => {
-    const box = await page.eval(`(() => {
+  /** Click a selector on any page — the owner's, or somebody else's. */
+  const clickIn = async (target, selector) => {
+    const box = await target.eval(`(() => {
       const el = document.querySelector(${JSON.stringify(selector)});
       if (!el) return null;
       const r = el.getBoundingClientRect();
       return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
     })()`);
     assert.ok(box, `no element matched ${selector}`);
-    await page.click(box.cx, box.cy);
+    await target.click(box.cx, box.cy);
   };
+
+  const click = (selector) => clickIn(page, selector);
 
   const settle = () => page.waitFor(SETTLED, { label: 'the board list to settle' });
 
@@ -440,6 +443,66 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
       });
     });
 
+    /**
+     * A shared board is not yours to delete — the policies would refuse, and
+     * refusing quietly would look like a board that came back. So the card
+     * offers the thing that is actually available.
+     */
+    test('a shared board offers Leave where an owned one offers Delete', async () => {
+      await newBoard();
+      const url = await shareUrl();
+
+      const other = await joinAsSomeoneElse(url);
+      try {
+        await other.waitFor(ON_CANVAS);
+        await other.goto(LIST_PATH, { ready: SETTLED });
+
+        assert.equal(
+          await other.eval(`document.querySelector('[data-action="delete"]') === null`),
+          true,
+          'a member was offered Delete on a board that is not theirs',
+        );
+        assert.equal(
+          await other.eval(`document.querySelector('[data-action="leave"]').textContent`),
+          'Leave',
+        );
+
+        await other.eval('window.confirm = () => true');
+        await clickIn(other, '[data-action="leave"]');
+
+        await other.waitFor("document.querySelector('[data-empty]') !== null", {
+          label: 'the board to leave the list',
+        });
+
+        // and it left nobody else's list
+        await page.goto(LIST_PATH, { ready: SETTLED });
+        assert.equal((await titles()).length, 1, 'leaving a board deleted it');
+      } finally {
+        await other.close();
+      }
+    });
+
+    test('a member can leave from the share dialog, and lands back on the list', async () => {
+      await newBoard();
+      const url = await shareUrl();
+
+      const other = await joinAsSomeoneElse(url);
+      try {
+        await other.waitFor(ON_CANVAS);
+        await clickIn(other, '[data-action="share"]');
+        await other.waitFor("document.querySelector('[data-action=\"leave-board\"]') !== null", {
+          label: 'the leave option',
+        });
+        await clickIn(other, '[data-action="leave-board"]');
+
+        await other.waitFor("location.hash === '#/' && document.querySelector('[data-empty]') !== null", {
+          label: 'the list, without the board',
+        });
+      } finally {
+        await other.close();
+      }
+    });
+
     test('a revoked link stops opening the board', async () => {
       await newBoard();
       const url = await shareUrl();
@@ -467,12 +530,7 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
       const other = await joinAsSomeoneElse(url);
       try {
         await other.waitFor(ON_CANVAS);
-        const box = await other.eval(`(() => {
-          const el = document.querySelector('[data-action="share"]');
-          const r = el.getBoundingClientRect();
-          return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
-        })()`);
-        await other.click(box.cx, box.cy);
+        await clickIn(other, '[data-action="share"]');
 
         await other.waitFor("document.querySelector('[data-not-owner]') !== null", {
           label: 'the not-yours message',

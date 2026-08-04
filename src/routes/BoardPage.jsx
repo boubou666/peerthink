@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 
 import { BoardCanvas } from '../components/BoardCanvas.jsx';
 import { ShareDialog } from '../components/ShareDialog.jsx';
@@ -12,6 +12,7 @@ const titleOf = async (boardId) => (await repository.load(boardId))?.title ?? DE
 
 export function BoardPage() {
   const { boardId } = useParams();
+  const navigate = useNavigate();
   const [title, setTitle] = useState(DEFAULT_TITLE);
   const [draft, setDraft] = useState(DEFAULT_TITLE);
   const [showShare, setShowShare] = useState(false);
@@ -102,7 +103,14 @@ export function BoardPage() {
       </header>
 
       {showShare && (
-        <ShareDialog boardId={boardId} title={title} onClose={() => setShowShare(false)} />
+        <ShareDialog
+          boardId={boardId}
+          title={title}
+          onClose={() => setShowShare(false)}
+          // Leaving a board you are looking at means you can no longer look
+          // at it; the list is the only place left to be.
+          onLeave={() => navigate('/', { replace: true })}
+        />
       )}
 
       <BoardCanvas boardId={boardId} onReady={handleReady} />

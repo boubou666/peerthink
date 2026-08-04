@@ -95,6 +95,10 @@ export function createLocalStorageRepository({
           id,
           title: typeof title === 'string' ? title : DEFAULT_TITLE,
           updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
+          // Nobody else can reach this browser's storage, so every board in it
+          // is yours. The field exists because the contract has it, and a
+          // caller should not have to ask which repository it is holding.
+          owned: true,
         }))
         .sort((a, b) => b.updatedAt - a.updatedAt);
     },

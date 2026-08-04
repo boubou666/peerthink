@@ -127,7 +127,30 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
 
       const mine = (await alice.repository.list()).filter((b) => [older, newer].includes(b.id));
       assert.deepEqual(mine.map((b) => b.title), ['Newer', 'Older']);
-      assert.deepEqual(Object.keys(mine[0]).sort(), ['id', 'title', 'updatedAt']);
+      assert.deepEqual(Object.keys(mine[0]).sort(), ['id', 'owned', 'title', 'updatedAt']);
+    });
+
+    /**
+     * The list is where "delete" and "leave" are chosen between, so it has to
+     * say which of the two a board is.
+     */
+    test('says which boards are yours', async () => {
+      const mine = newId();
+      await alice.repository.save(mine, board());
+
+      const theirs = newId();
+      await alice.repository.save(theirs, board());
+      await alice.client.from('board_members').insert({ board_id: theirs, user_id: bob.id, role: 'editor' });
+
+      const forBob = await bob.repository.list();
+      assert.deepEqual(forBob.filter((b) => b.id === theirs).map((b) => b.owned), [false]);
+      assert.equal(forBob.some((b) => b.id === mine), false);
+
+      const forAlice = await alice.repository.list();
+      assert.deepEqual(
+        forAlice.filter((b) => [mine, theirs].includes(b.id)).map((b) => b.owned),
+        [true, true],
+      );
     });
 
     test('a save moves a board back to the front', async () => {

@@ -248,6 +248,15 @@ invite row is readable only by the owner. Redeeming goes through a
 see. Every reason a token might not work gives the same answer, so the join
 page is not somewhere to test guesses.
 
+Access is handed back the same way it was given. A board someone shared with
+you is not yours to delete, so its card offers **Leave** where an owned one
+offers Delete — the policy would refuse a delete, and refusing quietly would
+look like a board that came back. `list()` carries `owned` so the list knows
+which of the two it is looking at; the local repository reports `true` for
+everything, because nobody else can reach a browser's own storage. An owner
+cannot leave: there is no membership row to hand back, and a board with no
+owner is one nobody can share or delete.
+
 ### The database
 
 `test/db/` is a third world, kept out of `npm test` because it needs a Postgres
@@ -311,8 +320,8 @@ Boards already in a browser's Web Storage are not adopted when a project is
 configured — the account and the browser are separate places, and moving boards
 between them is a decision nobody has made yet.
 
-There is no way to leave a board you have been added to, and no notification
-that you have been added to one; a shared board simply appears in the list.
+There is no notification that a board has been shared with you; it simply
+appears in the list.
 
 The toolbar is still imperative rather than a React component; converting it
 needs `useSyncExternalStore` over the store and viewport.
