@@ -59,7 +59,10 @@ describe('app shell', () => {
     test('a board survives a reload', async () => {
       await boot(null);
       const id = await page.eval(`app.board.add('card', { x: 5000, y: 5000, text: 'persisted' }).id`);
-      await page.sleep(600); // debounced save
+      await page.waitFor(
+        `(localStorage.getItem(${JSON.stringify(KEY)}) ?? '').includes('persisted')`,
+        { label: 'the debounced save to land' },
+      );
 
       await page.goto();
       assert.equal(await page.eval(`app.store.get("${id}")?.text ?? null`), 'persisted');
@@ -68,10 +71,12 @@ describe('app shell', () => {
     test('it saves under the board id, not a single global key', async () => {
       await boot(null);
       await page.eval(`app.board.add('card', { x: 0, y: 0, text: 'scoped' })`);
-      await page.sleep(600);
+      await page.waitFor(
+        `(localStorage.getItem(${JSON.stringify(KEY)}) ?? '').includes('scoped')`,
+        { label: 'the board to be written under its id' },
+      );
 
       assert.equal(await page.eval('app.boardId'), 'default');
-      assert.ok(await page.eval(`(localStorage.getItem(${JSON.stringify(KEY)}) ?? '').includes('scoped')`));
       assert.equal(await page.eval(`localStorage.getItem(${JSON.stringify(LEGACY_KEY)})`), null);
     });
 
@@ -117,7 +122,9 @@ describe('app shell', () => {
         Storage.prototype.setItem = () => { throw new DOMException('quota', 'QuotaExceededError'); };
       })()`);
       await page.eval(`app.board.add('card', { x: 0, y: 0, text: 'unsaveable' })`);
-      await page.sleep(600);
+      // flush rather than sleep: there is no positive condition to wait for
+      // when the assertion is that nothing was written and nothing threw
+      await page.eval('app.autosave.flush()');
       assert.deepEqual(page.errors, []);
       assert.ok(await page.eval('app.store.order.length > 7'));
       await page.eval('Storage.prototype.setItem = window.__setItem;');

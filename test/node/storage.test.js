@@ -140,6 +140,25 @@ describe('local storage repository', () => {
       assert.deepEqual(repo.list().map((b) => b.id), ['good']);
     });
 
+    test('trusts the key over an id field that disagrees with it', () => {
+      // a record written by an older version, or edited by hand
+      storage.data.set('peerthink:board:real-id', JSON.stringify({
+        v: 1, id: 'stale-id', title: 'T', updatedAt: 5, board: board(),
+      }));
+      assert.deepEqual(repo.list().map((b) => b.id), ['real-id']);
+    });
+
+    test('a record missing its metadata still sorts and still has a label', () => {
+      storage.data.set('peerthink:board:bare', JSON.stringify({ v: 1, board: board() }));
+      clock = 50;
+      repo.save('dated', board(), { title: 'Dated' });
+
+      assert.deepEqual(repo.list(), [
+        { id: 'dated', title: 'Dated', updatedAt: 50 },
+        { id: 'bare', title: DEFAULT_TITLE, updatedAt: 0 },
+      ]);
+    });
+
     test('storage that cannot be enumerated degrades to an empty list', () => {
       repo.save('alpha', board());
       storage.failOn = 'enumerate';
@@ -234,6 +253,29 @@ describe('local storage repository', () => {
       assert.equal(repo.migrateLegacy(), false);
       assert.equal(repo.load(DEFAULT_BOARD_ID).board.objects.length, 9);
       assert.equal(storage.data.has(LEGACY_KEY), true, 'the legacy board is left for inspection');
+    });
+
+    test('a non-default namespace leaves the legacy board alone', () => {
+      // both repositories share one Web Storage, and the legacy key belongs to
+      // the default workspace — adopting it here would steal someone's board
+      storage.data.set(LEGACY_KEY, JSON.stringify(legacy));
+      const scratch = createLocalStorageRepository({ storage, namespace: 'scratch', now: () => clock });
+
+      assert.equal(scratch.migrateLegacy(), false);
+      assert.equal(scratch.load(DEFAULT_BOARD_ID), null);
+      assert.equal(storage.data.has(LEGACY_KEY), true);
+
+      assert.equal(repo.migrateLegacy(), true, 'the owning workspace still adopts it');
+    });
+
+    test('an explicit legacy key overrides the namespace rule', () => {
+      storage.data.set('other:board', JSON.stringify(legacy));
+      const scoped = createLocalStorageRepository({
+        storage, namespace: 'scratch', legacyKey: 'other:board', now: () => clock,
+      });
+
+      assert.equal(scoped.migrateLegacy(), true);
+      assert.deepEqual(scoped.load(DEFAULT_BOARD_ID).board, legacy);
     });
 
     test('ignores a legacy key holding junk', () => {

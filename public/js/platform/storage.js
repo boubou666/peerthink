@@ -11,6 +11,7 @@
  */
 
 export const RECORD_VERSION = 1;
+export const DEFAULT_NAMESPACE = 'peerthink';
 export const DEFAULT_BOARD_ID = 'default';
 export const DEFAULT_TITLE = 'Untitled board';
 
@@ -21,8 +22,12 @@ const isBoard = (board) => Array.isArray(board?.objects) && Array.isArray(board?
 
 export function createLocalStorageRepository({
   storage,
-  namespace = 'peerthink',
+  namespace = DEFAULT_NAMESPACE,
   now = () => Date.now(),
+  // Only the workspace that wrote the legacy key may adopt and delete it.
+  // A repository on another namespace shares the same Web Storage, and would
+  // otherwise consume a board that does not belong to it.
+  legacyKey = namespace === DEFAULT_NAMESPACE ? LEGACY_KEY : null,
 }) {
   const prefix = `${namespace}:board:`;
   const keyFor = (id) => `${prefix}${id}`;
@@ -69,9 +74,17 @@ export function createLocalStorageRepository({
      */
     list() {
       return ids()
-        .map((id) => read(keyFor(id)))
-        .filter(Boolean)
-        .map(({ id, title, updatedAt }) => ({ id, title, updatedAt }))
+        .map((id) => [id, read(keyFor(id))])
+        .filter(([, record]) => record)
+        // the key is the record's real address — an `id` field written by an
+        // older version, or edited by hand, may disagree with it. A missing
+        // updatedAt would make the comparator return NaN and scramble the
+        // whole list, so it gets a floor too.
+        .map(([id, { title, updatedAt }]) => ({
+          id,
+          title: typeof title === 'string' ? title : DEFAULT_TITLE,
+          updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
+        }))
         .sort((a, b) => b.updatedAt - a.updatedAt);
     },
 
@@ -113,9 +126,11 @@ export function createLocalStorageRepository({
      * that already exists under the target id.
      */
     migrateLegacy({ toId = DEFAULT_BOARD_ID, title = DEFAULT_TITLE } = {}) {
+      if (!legacyKey) return false;
+
       let legacy;
       try {
-        const raw = storage.getItem(LEGACY_KEY);
+        const raw = storage.getItem(legacyKey);
         if (!raw) return false;
         legacy = JSON.parse(raw);
       } catch {
@@ -125,7 +140,7 @@ export function createLocalStorageRepository({
       if (!repository.save(toId, legacy, { title })) return false;
 
       try {
-        storage.removeItem(LEGACY_KEY);
+        storage.removeItem(legacyKey);
       } catch {
         // the copy landed; leaving the original behind is harmless
       }
