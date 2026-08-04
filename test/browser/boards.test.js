@@ -304,6 +304,123 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
   });
 
   /**
+   * The upgrade path: someone who has been using the Web Storage build opens
+   * one with a project behind it. Their boards were written to localStorage by
+   * the old build and are read from Postgres by this one — so unless they are
+   * moved, the list they meet is empty and their work is unreachable.
+   */
+  describe('boards made before there was an account', () => {
+    /**
+     * Write boards the way the Web Storage build did, then load the app.
+     *
+     * The ids are unique per run: they end up as rows in a database that
+     * outlives the run, and a fixed id adopted by one anonymous user is a
+     * primary key the next run's user cannot have — which is a failure of the
+     * fixture, indistinguishable from a failure of adoption.
+     */
+    let seeded = 0;
+    const givenABrowserWithBoards = async (titlesById) => {
+      const boards = Object.fromEntries(
+        Object.entries(titlesById).map(([name, title]) => [`${name}${process.pid.toString(36)}${seeded++}`, title]),
+      );
+      await page.eval('localStorage.clear()');
+      for (const [id, title] of Object.entries(boards)) {
+        await page.eval(`localStorage.setItem('peerthink:board:${id}', ${JSON.stringify(JSON.stringify({
+          v: 1, id, title, updatedAt: 1,
+          board: { v: 1, order: [id], objects: [{ id, type: 'card', x: 0, y: 0, w: 200, h: 120, text: `made in ${id}` }] },
+        }))})`);
+      }
+      await page.goto(LIST_PATH, { ready: SETTLED });
+      return Object.keys(boards);
+    };
+
+    test('are adopted into the account, once, without being asked', async () => {
+      await givenABrowserWithBoards({ alpha: 'Roadmap', beta: 'Retro' });
+
+      assert.deepEqual((await titles()).sort(), ['Retro', 'Roadmap']);
+
+      // on the server, not merely on screen: a reload reads Postgres
+      await page.goto(LIST_PATH, { ready: SETTLED });
+      assert.deepEqual((await titles()).sort(), ['Retro', 'Roadmap']);
+      assert.equal(
+        await page.eval(`document.querySelector('[data-action="delete"]') !== null`),
+        true,
+        'the adopted boards are not owned by this account',
+      );
+
+      // and the board itself came across, not just its name
+      await clickIn(page, '.board-card-open');
+      await page.waitFor(ON_CANVAS);
+      await page.waitFor('window.app.restoredFromStorage === true');
+      assert.match(
+        await page.eval(`window.app.store.toJSON().objects[0].text`),
+        /^made in (alpha|beta)/,
+        'the board opened without the card it was seeded with',
+      );
+    });
+
+    /**
+     * Adopted once per page, not once per mount. StrictMode runs the gate's
+     * effect twice, and two adoptions racing each other both find the board
+     * missing from the account and both create it — one losing on the primary
+     * key. The `after` hook is what notices: a 409 reaches the page as a
+     * console error, and this suite allows none.
+     */
+    test('the browser keeps its own copies, and does not adopt them twice', async () => {
+      const [id] = await givenABrowserWithBoards({ gamma: 'Kept' });
+      assert.deepEqual(await titles(), ['Kept']);
+
+      // still in Web Storage — copying is reversible, deleting is not
+      assert.equal(
+        await page.eval(`localStorage.getItem('peerthink:board:' + ${JSON.stringify(id)}) !== null`),
+        true,
+        'adoption deleted the browser copy',
+      );
+
+      // a second visit is the same account and the same list, not a doubled one
+      await page.goto(LIST_PATH, { ready: SETTLED });
+      assert.deepEqual(await titles(), ['Kept']);
+    });
+
+    /**
+     * The account's copy is the one other people may have edited, so a browser
+     * that has been sitting closed must not put its version on top of it.
+     */
+    test('a board the account already has is not overwritten', async () => {
+      await page.eval('localStorage.clear()');
+      await page.goto(LIST_PATH, { ready: SETTLED });
+
+      const id = await newBoard();
+      await page.eval(`window.app.board.add('card', { x: 10, y: 10, text: 'the account version' })`);
+      await page.waitFor('Boolean(window.app.autosave)');
+      assert.equal(await page.eval('window.app.autosave.flush()'), true);
+
+      // The same id turns up in Web Storage holding an older, emptier board —
+      // as a browser that had been closed since before the backend would — and
+      // the marker is cleared so adoption considers it afresh.
+      await page.eval(`(() => {
+        localStorage.removeItem('peerthink:adopted');
+        localStorage.setItem('peerthink:board:' + ${JSON.stringify(id)}, JSON.stringify({
+          v: 1, id: ${JSON.stringify(id)}, title: 'the browser version', updatedAt: 1,
+          board: { v: 1, order: [], objects: [] },
+        }));
+      })()`);
+      await page.goto(LIST_PATH, { ready: SETTLED });
+
+      assert.deepEqual(await titles(), ['Untitled board'], 'the browser copy renamed the account board');
+
+      await clickIn(page, '.board-card-open');
+      await page.waitFor(ON_CANVAS);
+      await page.waitFor('window.app.restoredFromStorage === true');
+      assert.deepEqual(
+        await page.eval(`window.app.store.toJSON().objects.map(o => o.text)`),
+        ['the account version'],
+        'the emptier browser copy replaced the account board',
+      );
+    });
+  });
+
+  /**
    * Sharing, end to end and between two accounts.
    *
    * The second page clears its session first, so it is a different person —

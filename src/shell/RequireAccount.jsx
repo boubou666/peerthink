@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { AccountForm } from '../components/AccountForm.jsx';
+import { adoptLocalBoards } from './adopt.js';
 import { auth, useAccount } from './auth.js';
 
 /**
@@ -32,18 +33,29 @@ export function RequireAccount({ children }) {
 
     // start() memoises its promise, so the second mount joins the first
     // attempt rather than signing in as a second anonymous user.
-    auth.start().then((result) => {
-      if (!live) return;
-      setStarting(false);
-      if (!result.ok) setError(result.message);
-    });
+    auth.start()
+      .then(async (result) => {
+        // Before anything reads the board list: the boards this browser had
+        // are moved into the account, so the first list is the whole list
+        // rather than one that has quietly dropped them. Once per browser,
+        // and a no-op on every visit after that.
+        if (result.ok && adoptLocalBoards) await adoptLocalBoards();
+        return result;
+      })
+      .then((result) => {
+        if (!live) return;
+        setStarting(false);
+        if (!result.ok) setError(result.message);
+      });
 
     return () => {
       live = false;
     };
   }, [attempt]);
 
-  if (account) return children;
+  // `starting` covers the adoption as well as the sign-in, so the list is not
+  // read — and an empty workspace not rendered — while boards are still moving.
+  if (account && !starting) return children;
 
   if (starting) {
     return (
