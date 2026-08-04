@@ -147,6 +147,26 @@ finds a system or Playwright-cached build, or point at one:
 CHROME_PATH=/path/to/chrome npm test
 ```
 
+### The database
+
+`test/db/` is a third world, kept out of `npm test` because it needs a Postgres
+rather than a browser. The row level security policies are the thing that keeps
+one person's boards out of another's, and they are not code that can be
+reviewed into correctness — they get exercised as the database sees them, every
+statement running as `authenticated` with a JWT claim, exactly as PostgREST
+issues it.
+
+```sh
+npx supabase start                                    # or any Postgres
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres \
+  npm run db:apply && npm run test:db
+```
+
+Against a bare Postgres, pass `--stub` to `db:apply` first: `test/db/stub-auth.sql`
+installs the surface the migrations expect — the `auth` schema, `auth.uid()`,
+and the `anon` / `authenticated` roles — which a real Supabase database already
+has. The suite skips itself when `DATABASE_URL` is unset.
+
 ---
 
 ## Dependencies
@@ -159,6 +179,7 @@ unchanged without a framework. The additions are the shell and its tooling:
 | `react`, `react-dom` | the shell |
 | `react-router` | routing — v8 |
 | `vite`, `@vitejs/plugin-react` | dev server and build (dev only) |
+| `pg` | connects the RLS tests to a database (dev only) |
 
 Routing is `react-router` v8 rather than v7's `react-router-dom` mostly because
 v8 is where the package is going. On the security side the only relevant item is
