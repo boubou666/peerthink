@@ -1,21 +1,48 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 
 import { BoardCanvas } from '../components/BoardCanvas.jsx';
+import { DEFAULT_TITLE } from '../platform/storage.js';
 import { repository } from '../shell/storage.js';
+
+const EMPTY_BOARD = { v: 1, order: [], objects: [] };
+const titleOf = (boardId) => repository.load(boardId)?.title ?? DEFAULT_TITLE;
 
 export function BoardPage() {
   const { boardId } = useParams();
-  const [title, setTitle] = useState(() => repository.load(boardId)?.title ?? 'Untitled board');
+  const [title, setTitle] = useState(() => titleOf(boardId));
+  const [draft, setDraft] = useState(title);
+  const app = useRef(null);
 
-  // identity is stable, so mounting the canvas does not depend on this render
-  const handleReady = useCallback(() => {}, []);
+  // The router reuses this component when only :boardId changes, so both the
+  // committed title and the field have to follow the parameter. A controlled
+  // input is what makes that possible — defaultValue is read once at mount and
+  // ignored afterwards.
+  useEffect(() => {
+    const current = titleOf(boardId);
+    setTitle(current);
+    setDraft(current);
+  }, [boardId]);
 
-  const rename = (next) => {
-    const trimmed = next.trim();
-    if (!trimmed || trimmed === title) return;
+  const handleReady = useCallback((instance) => {
+    app.current = instance;
+  }, []);
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === title) {
+      setDraft(title);
+      return;
+    }
     setTitle(trimmed);
-    repository.rename(boardId, trimmed);
+
+    if (repository.rename(boardId, trimmed)) return;
+
+    // A board seeded on a first visit has no stored record until autosave
+    // fires, and rename() cannot touch what does not exist. Write one now —
+    // otherwise the next autosave stores it under the default name and the
+    // rename silently disappears. save() without a title keeps this one.
+    repository.save(boardId, app.current?.store.toJSON() ?? EMPTY_BOARD, { title: trimmed });
   };
 
   return (
@@ -25,12 +52,13 @@ export function BoardPage() {
         <input
           className="board-bar-title"
           aria-label="Board title"
-          defaultValue={title}
-          onBlur={(e) => rename(e.target.value)}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
           onKeyDown={(e) => {
             if (e.key === 'Enter') e.target.blur();
             if (e.key === 'Escape') {
-              e.target.value = title;
+              setDraft(title);
               e.target.blur();
             }
           }}

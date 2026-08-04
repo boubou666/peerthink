@@ -25,11 +25,18 @@ export const LIST_PATH = '/#/';
 const CANVAS_READY = 'Boolean(window.app?.store)';
 const SHELL_READY = "Boolean(document.querySelector('.shell'))";
 
+/**
+ * Readiness depends on where you are going, not on where the session started.
+ * A board route mounts the canvas; everything else lands on the list, since
+ * unknown routes redirect there.
+ */
+const readinessFor = (to) => (/#\/b\//.test(to) ? CANVAS_READY : SHELL_READY);
+
 export async function openApp({
   width = 1280,
   height = 800,
   path = BOARD_PATH,
-  readyWhen = path === LIST_PATH ? SHELL_READY : CANVAS_READY,
+  readyWhen = readinessFor(path),
 } = {}) {
   const { browserBase, appBase } = endpoints();
   const { session, targetId } = await newPage(browserBase);
@@ -71,7 +78,7 @@ export async function openApp({
      * re-execute the document — hence the explicit reload. Tests depend on a
      * genuinely fresh app after seeding localStorage.
      */
-    async goto(to = path, { timeout = 15_000, ready = readyWhen } = {}) {
+    async goto(to = path, { timeout = 15_000, ready = to === path ? readyWhen : readinessFor(to) } = {}) {
       await snapshot();
       // Routing is hash-based, so navigating straight to another route would
       // not re-execute the document — and tests depend on a genuinely fresh

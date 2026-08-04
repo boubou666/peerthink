@@ -37,6 +37,16 @@ button.primary:hover { opacity: .85; }
   font-size: 14px;
 }
 
+.error {
+  margin: 0 0 18px;
+  padding: 10px 13px;
+  font-size: 13px;
+  color: #b3243c;
+  background: color-mix(in srgb, #d83a52 12%, transparent);
+  border: 1px solid color-mix(in srgb, #d83a52 30%, transparent);
+  border-radius: 9px;
+}
+
 .board-grid {
   list-style: none;
   margin: 0;

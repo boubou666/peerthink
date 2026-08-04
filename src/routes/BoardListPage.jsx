@@ -14,15 +14,24 @@ const formatDate = (ms) =>
 export function BoardListPage() {
   const navigate = useNavigate();
   const [boards, setBoards] = useState(() => repository.list());
+  const [error, setError] = useState(null);
   const refresh = () => setBoards(repository.list());
 
   /**
    * A board created here starts empty. Only a first-ever visit gets the
    * starter board, which is a tour rather than content you asked for.
+   *
+   * Navigating before confirming the write would open a route with no stored
+   * record, which createApp treats as a first visit and seeds — so a failed
+   * save would hand back a board full of starter content.
    */
   const create = () => {
     const id = newId();
-    repository.save(id, EMPTY_BOARD, { title: DEFAULT_TITLE });
+    if (!repository.save(id, EMPTY_BOARD, { title: DEFAULT_TITLE })) {
+      setError('Could not create a board — storage is full or unavailable.');
+      return;
+    }
+    setError(null);
     navigate(`/b/${id}`);
   };
 
@@ -49,6 +58,8 @@ export function BoardListPage() {
           New board
         </button>
       </header>
+
+      {error && <p className="error" role="alert" data-error>{error}</p>}
 
       {boards.length === 0 ? (
         <p className="empty" data-empty>No boards yet. Create one to get started.</p>

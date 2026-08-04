@@ -3,7 +3,7 @@
 An infinite-canvas visual workspace — cards, envelopes and lists on a pannable,
 zoomable board — with a React shell around a deliberately framework-free canvas.
 
-```
+```sh
 npm ci
 npm run dev      # → http://localhost:5173
 npm test         # node:test + a real browser, line-coverage gate at 95%
@@ -143,7 +143,7 @@ artifact separately, so the shipped output is still verified.
 Tests need a Chromium. CI uses the runner's preinstalled Chrome; locally it
 finds a system or Playwright-cached build, or point at one:
 
-```
+```sh
 CHROME_PATH=/path/to/chrome npm test
 ```
 
