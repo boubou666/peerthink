@@ -65,6 +65,20 @@ export async function openApp({ width = 1280, height = 800, path = '/' } = {}) {
       }
     },
 
+    /**
+     * Poll until an expression is truthy. Use this instead of sleeping past a
+     * debounce — a fixed delay that is generous on a laptop is a coin flip on
+     * a loaded CI runner.
+     */
+    async waitFor(expression, { timeout = 5_000, label = expression } = {}) {
+      const deadline = Date.now() + timeout;
+      for (;;) {
+        if (await api.eval(expression).catch(() => false)) return;
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+        await sleep(25);
+      }
+    },
+
     async eval(expression) {
       const r = await session.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
       if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? 'evaluate failed');

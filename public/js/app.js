@@ -11,7 +11,7 @@ import { createViews } from './platform/views.js';
 import { createRenderer } from './platform/renderer.js';
 import { createInput } from './platform/input.js';
 import { createToolbar } from './platform/toolbar.js';
-import { createLocalStorageRepository, createNullRepository } from './platform/storage.js';
+import { DEFAULT_BOARD_ID, createLocalStorageRepository, createNullRepository } from './platform/storage.js';
 
 const ELEMENT_IDS = {
   stage: 'stage',
@@ -41,7 +41,9 @@ export function createApp({
   newId = createIdGenerator(),
   ResizeObserver = window.ResizeObserver,
   autosaveDelay = 400,
-  storageKey,
+  boardId = DEFAULT_BOARD_ID,
+  namespace,
+  now,
   seed = seedBoard,
 } = {}) {
   const dom = elements ?? Object.fromEntries(
@@ -54,8 +56,9 @@ export function createApp({
     clearTimeout: window.clearTimeout.bind(window),
   });
 
-  const boardRepository = repository
-    ?? (storage ? createLocalStorageRepository({ storage, ...(storageKey ? { key: storageKey } : {}) }) : createNullRepository());
+  const boardRepository = repository ?? (storage
+    ? createLocalStorageRepository({ storage, ...(namespace ? { namespace } : {}), ...(now ? { now } : {}) })
+    : createNullRepository());
 
   const store = new Store();
   const selection = new Selection();
@@ -91,15 +94,25 @@ export function createApp({
   const input = createInput({ document, window, elements: dom, store, selection, viewport, board, commands });
   const toolbar = createToolbar({ window, elements: dom, store, viewport, commands });
 
-  // load before autosave is wired, so a restore never writes itself back
-  const saved = boardRepository.load();
-  if (saved) store.load(saved);
+  // Adopt anything a single-board version of the app left behind, then load
+  // before autosave is wired so a restore never writes itself back.
+  boardRepository.migrateLegacy({ toId: boardId });
+  const saved = boardRepository.load(boardId);
+  if (saved) store.load(saved.board);
   else seed(board);
 
-  const autosave = createAutosave({ store, repository: boardRepository, scheduler: clock, delay: autosaveDelay });
+  const autosave = createAutosave({
+    store,
+    repository: boardRepository,
+    boardId,
+    scheduler: clock,
+    delay: autosaveDelay,
+  });
   commands.fit();
 
   return {
+    boardId,
+    title: saved?.title ?? null,
     store,
     selection,
     viewport,

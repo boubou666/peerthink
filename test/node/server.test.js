@@ -1,8 +1,18 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createServer as createSocket } from 'node:net';
 import { sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+const freePort = () => new Promise((resolve, reject) => {
+  const probe = createSocket();
+  probe.on('error', reject);
+  probe.listen(0, () => {
+    const { port } = probe.address();
+    probe.close(() => resolve(port));
+  });
+});
 
 import { PUBLIC_DIR, createStaticServer, resolveFile, start } from '../../server.js';
 
@@ -95,7 +105,9 @@ describe('static server', () => {
 
 describe('running server.js directly', () => {
   test('listens on PORT and announces itself', async () => {
-    const port = 3999;
+    // a free port, not a fixed one — a leftover process from an earlier run
+    // would otherwise turn this into a phantom failure
+    const port = await freePort();
     const child = spawn(process.execPath, ['server.js'], {
       cwd: fileURLToPath(new URL('../../', import.meta.url)),
       env: { ...process.env, PORT: String(port) },
@@ -110,7 +122,7 @@ describe('running server.js directly', () => {
       });
     });
 
-    assert.match(banner, /PeerThink → http:\/\/localhost:3999/);
+    assert.match(banner, new RegExp(`PeerThink → http://localhost:${port}`));
     assert.equal((await fetch(`http://127.0.0.1:${port}/style.css`)).status, 200);
 
     child.kill('SIGINT');

@@ -1,12 +1,13 @@
 /**
  * Persists the document whenever it settles.
  *
- * The repository is injected, so this is the same code whether the board is
- * going to localStorage today or to an endpoint later.
+ * Both the repository and the board it writes to are injected, so this is the
+ * same code whether the board is going to localStorage today or to an endpoint
+ * later, and whether the workspace holds one board or a hundred.
  */
-export function createAutosave({ store, repository, scheduler, delay = 400 }) {
-  const flush = () => repository.save(store.toJSON());
+export function createAutosave({ store, repository, boardId, scheduler, delay = 400 }) {
+  const flush = () => repository.save(boardId, store.toJSON());
   const save = scheduler.debounce(flush, delay);
   const stop = store.on(save);
-  return { stop, flush };
+  return { stop, flush, boardId };
 }

@@ -1,43 +1,164 @@
 /**
  * Board persistence against a Web Storage implementation.
  *
- * Both calls are total: storage can be full, disabled, or hold junk written by
+ * The repository is addressed by board id rather than holding a single board,
+ * which is what lets one workspace hold many. The shape here — list / load /
+ * save / rename / remove — is the contract a server-backed repository will
+ * implement later; nothing above it should know which one it is talking to.
+ *
+ * Every call is total. Storage can be full, disabled, or hold junk written by
  * an older version, and none of that is worth losing the session over.
  */
-export function createLocalStorageRepository({ storage, key = 'peerthink:board' }) {
-  return {
-    load() {
-      try {
-        const raw = storage.getItem(key);
-        if (!raw) return null;
-        const data = JSON.parse(raw);
-        return data?.objects?.length ? data : null;
-      } catch {
-        return null;
+
+export const RECORD_VERSION = 1;
+export const DEFAULT_NAMESPACE = 'peerthink';
+export const DEFAULT_BOARD_ID = 'default';
+export const DEFAULT_TITLE = 'Untitled board';
+
+/** Where single-board versions of the app kept their state. */
+export const LEGACY_KEY = 'peerthink:board';
+
+const isBoard = (board) => Array.isArray(board?.objects) && Array.isArray(board?.order);
+
+export function createLocalStorageRepository({
+  storage,
+  namespace = DEFAULT_NAMESPACE,
+  now = () => Date.now(),
+  // Only the workspace that wrote the legacy key may adopt and delete it.
+  // A repository on another namespace shares the same Web Storage, and would
+  // otherwise consume a board that does not belong to it.
+  legacyKey = namespace === DEFAULT_NAMESPACE ? LEGACY_KEY : null,
+}) {
+  const prefix = `${namespace}:board:`;
+  const keyFor = (id) => `${prefix}${id}`;
+
+  const read = (key) => {
+    try {
+      const raw = storage.getItem(key);
+      if (!raw) return null;
+      const record = JSON.parse(raw);
+      return isBoard(record?.board) ? record : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const write = (key, record) => {
+    try {
+      storage.setItem(key, JSON.stringify(record));
+      return true;
+    } catch {
+      return false; // quota or private mode — the board still works in memory
+    }
+  };
+
+  /** Board ids present in storage. Enumeration is a Web Storage detail. */
+  const ids = () => {
+    const found = [];
+    try {
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i);
+        if (key?.startsWith(prefix)) found.push(key.slice(prefix.length));
       }
+    } catch {
+      // storage that cannot be enumerated still supports get/set by id
+    }
+    return found;
+  };
+
+  const repository = {
+    /**
+     * Summaries for a board picker, newest first. This parses every stored
+     * board, which is fine at Web Storage scale and is exactly the call a
+     * server-backed repository answers with a single query instead.
+     */
+    list() {
+      return ids()
+        .map((id) => [id, read(keyFor(id))])
+        .filter(([, record]) => record)
+        // the key is the record's real address — an `id` field written by an
+        // older version, or edited by hand, may disagree with it. A missing
+        // updatedAt would make the comparator return NaN and scramble the
+        // whole list, so it gets a floor too.
+        .map(([id, { title, updatedAt }]) => ({
+          id,
+          title: typeof title === 'string' ? title : DEFAULT_TITLE,
+          updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0,
+        }))
+        .sort((a, b) => b.updatedAt - a.updatedAt);
     },
 
-    save(board) {
-      try {
-        storage.setItem(key, JSON.stringify(board));
-        return true;
-      } catch {
-        return false; // quota or private mode — the board still works in memory
-      }
+    load(id) {
+      return read(keyFor(id));
     },
 
-    clear() {
+    /** Stamps updatedAt. An existing title survives a save that omits one. */
+    save(id, board, { title } = {}) {
+      if (!isBoard(board)) return false;
+      const existing = read(keyFor(id));
+      return write(keyFor(id), {
+        v: RECORD_VERSION,
+        id,
+        title: title ?? existing?.title ?? DEFAULT_TITLE,
+        updatedAt: now(),
+        board,
+      });
+    },
+
+    rename(id, title) {
+      const record = read(keyFor(id));
+      if (!record) return false;
+      return write(keyFor(id), { ...record, title, updatedAt: now() });
+    },
+
+    remove(id) {
       try {
-        storage.removeItem(key);
+        storage.removeItem(keyFor(id));
         return true;
       } catch {
         return false;
       }
     },
+
+    /**
+     * Adopt a board written by a single-board version of the app. Returns true
+     * only when something was actually moved, and never overwrites a board
+     * that already exists under the target id.
+     */
+    migrateLegacy({ toId = DEFAULT_BOARD_ID, title = DEFAULT_TITLE } = {}) {
+      if (!legacyKey) return false;
+
+      let legacy;
+      try {
+        const raw = storage.getItem(legacyKey);
+        if (!raw) return false;
+        legacy = JSON.parse(raw);
+      } catch {
+        return false;
+      }
+      if (!isBoard(legacy) || read(keyFor(toId))) return false;
+      if (!repository.save(toId, legacy, { title })) return false;
+
+      try {
+        storage.removeItem(legacyKey);
+      } catch {
+        // the copy landed; leaving the original behind is harmless
+      }
+      return true;
+    },
   };
+
+  return repository;
 }
 
 /** Drops everything on the floor. Used when no storage is available at all. */
 export function createNullRepository() {
-  return { load: () => null, save: () => false, clear: () => false };
+  return {
+    list: () => [],
+    load: () => null,
+    save: () => false,
+    rename: () => false,
+    remove: () => false,
+    migrateLegacy: () => false,
+  };
 }

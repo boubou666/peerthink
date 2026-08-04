@@ -13,12 +13,12 @@ function harness() {
   const saved = [];
   const repository = {
     load: () => null,
-    save(board) {
-      saved.push(board);
+    save(boardId, board) {
+      saved.push({ boardId, board });
       return true;
     },
   };
-  const autosave = createAutosave({ store, repository, scheduler });
+  const autosave = createAutosave({ store, repository, boardId: 'alpha', scheduler });
   return { store, scheduler, saved, autosave };
 }
 
@@ -33,7 +33,16 @@ describe('autosave', () => {
 
     scheduler.flushTimers();
     assert.equal(saved.length, 1);
-    assert.equal(saved[0].objects[0].x, 2, 'the settled state, not an intermediate one');
+    assert.equal(saved[0].board.objects[0].x, 2, 'the settled state, not an intermediate one');
+  });
+
+  test('writes to the board it was given', () => {
+    const { store, scheduler, saved, autosave } = harness();
+    assert.equal(autosave.boardId, 'alpha');
+
+    store.apply([{ t: 'add', obj: card('a') }]);
+    scheduler.flushTimers();
+    assert.equal(saved[0].boardId, 'alpha');
   });
 
   test('flush writes immediately, without waiting for the debounce', () => {
@@ -55,7 +64,7 @@ describe('autosave', () => {
     const store = new Store();
     const scheduler = createManualScheduler();
     const repository = { load: () => null, save: () => false };
-    createAutosave({ store, repository, scheduler });
+    createAutosave({ store, repository, boardId: 'alpha', scheduler });
 
     store.apply([{ t: 'add', obj: card('a') }]);
     scheduler.flushTimers();
