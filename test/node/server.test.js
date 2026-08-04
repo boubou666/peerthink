@@ -51,7 +51,7 @@ function waitForOutput(child, expected, timeout = 15_000) {
       clearTimeout(timer);
       child.stdout.off('data', onData);
       child.off('exit', onExit);
-      child.off('error', reject);
+      child.off('error', onError);
     };
     const onData = (chunk) => {
       buffered += chunk;
@@ -63,6 +63,12 @@ function waitForOutput(child, expected, timeout = 15_000) {
       cleanup();
       reject(new Error(`server exited before starting (code=${code} signal=${signal}): ${buffered}`));
     };
+    // a spawn failure can emit 'error' with no 'exit' at all, so this has to
+    // tear down the timer itself rather than lean on onExit doing it
+    const onError = (err) => {
+      cleanup();
+      reject(err);
+    };
     const timer = setTimeout(() => {
       cleanup();
       reject(new Error(`server did not start within ${timeout}ms: ${buffered}`));
@@ -70,7 +76,7 @@ function waitForOutput(child, expected, timeout = 15_000) {
 
     child.stdout.on('data', onData);
     child.on('exit', onExit);
-    child.on('error', reject);
+    child.on('error', onError);
   });
 }
 
@@ -169,10 +175,15 @@ describe('running server.js directly', () => {
       env: { ...process.env, PORT: String(port) },
       stdio: ['ignore', 'pipe', 'inherit'],
     });
-    // attached before the kill below, or an already-exited child never fires it
+    // attached before the kill below, or an already-exited child never fires
+    // it. 'error' counts as settled too: a child that failed to spawn has no
+    // exit to wait for, and this promise is awaited in a finally.
     const exited = new Promise((resolve) => {
       if (child.exitCode !== null || child.signalCode !== null) resolve();
-      else child.on('exit', resolve);
+      else {
+        child.once('close', resolve);
+        child.once('error', resolve);
+      }
     });
 
     try {

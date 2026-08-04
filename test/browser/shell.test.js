@@ -45,7 +45,11 @@ describe('shell', () => {
   };
 
   const onCanvas = "Boolean(window.app?.store) && location.hash.startsWith('#/b/')";
-  const onList = "Boolean(document.querySelector('.shell'))";
+  // Leaving a board is not just the list appearing — BoardCanvas's effect
+  // cleanup has to have run too. Waiting on `.shell` alone lets an assertion
+  // about teardown race a teardown that is still in flight.
+  const onList =
+    "Boolean(document.querySelector('.shell')) && !window.app && !document.querySelector('#stage')";
   const newBoard = () => clickAndWaitFor('[data-action="new-board"]', onCanvas, 'the new board to open');
 
   /**
@@ -53,13 +57,17 @@ describe('shell', () => {
    * it. The typing is real key input, so React's onChange drives the state —
    * assigning `.value` would not, now that the field is controlled.
    */
-  const renameInBar = async (value) => {
+  const typeInBar = async (value) => {
     await page.eval(`(() => {
       const el = document.querySelector('.board-bar-title');
       el.focus();
       el.select();
     })()`);
     await page.type(value);
+  };
+
+  const renameInBar = async (value) => {
+    await typeInBar(value);
     await page.eval(`document.querySelector('.board-bar-title').blur()`);
   };
 
@@ -188,6 +196,51 @@ describe('shell', () => {
 
       await page.goto(LIST_PATH);
       assert.deepEqual(await titles(), ['Renamed from the bar']);
+    });
+
+    test('Enter commits the rename without a manual blur', async () => {
+      await newBoard();
+
+      await typeInBar('Committed with Enter');
+      await page.key('Enter');
+      await page.waitFor(
+        `(localStorage.getItem('peerthink:board:' + location.hash.replace('#/b/', '')) ?? '').includes('Committed with Enter')`,
+        { label: 'Enter to commit the rename' },
+      );
+
+      await page.goto(LIST_PATH);
+      assert.deepEqual(await titles(), ['Committed with Enter']);
+    });
+
+    test('Escape abandons the edit instead of committing it', async () => {
+      await newBoard();
+      const key = `'peerthink:board:' + location.hash.replace('#/b/', '')`;
+
+      await typeInBar('Typed then abandoned');
+      assert.equal(
+        await page.eval(`document.querySelector('.board-bar-title').value`),
+        'Typed then abandoned',
+        'the field really did take the text',
+      );
+
+      // Escape blurs, and blur commits — so this is the case where a cancelled
+      // edit could still be persisted by the onBlur that Escape itself causes
+      await page.key('Escape');
+      await page.waitFor(
+        `document.querySelector('.board-bar-title').value === 'Untitled board'`,
+        { label: 'the field to snap back' },
+      );
+
+      await page.eval(`app.board.add('card', { x: 0, y: 0, text: 'force a save' })`);
+      await page.eval('app.autosave.flush()');
+      assert.equal(
+        await page.eval(`JSON.parse(localStorage.getItem(${key})).title`),
+        'Untitled board',
+        'the abandoned title was never written',
+      );
+
+      await page.goto(LIST_PATH);
+      assert.deepEqual(await titles(), ['Untitled board']);
     });
 
     test('renaming a seeded board that has never been stored still sticks', async () => {

@@ -1,8 +1,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { newPage, closePage } from './cdp.js';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+// fileURLToPath, not URL.pathname — see the note in ./vite.js
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const COVERAGE_DIR = join(ROOT, '.coverage', 'browser');
 
 /** Written by test/run.js before the test files are spawned. */
@@ -84,7 +87,19 @@ export async function openApp({
       // not re-execute the document — and tests depend on a genuinely fresh
       // app after seeding localStorage. Bouncing through about:blank forces a
       // real load without racing an in-flight navigation the way reload does.
+      //
+      // Page.navigate resolving only means the request was accepted, not that
+      // the blank document committed. Firing the second navigate on that
+      // promise alone can replace an uncommitted about:blank and leave the old
+      // document — and its app state — in place, so wait for the main frame to
+      // actually land on about:blank first.
+      const blankCommitted = session.once(
+        'Page.frameNavigated',
+        (p) => !p.frame.parentId && p.frame.url === 'about:blank',
+      );
       await session.send('Page.navigate', { url: 'about:blank' });
+      await blankCommitted;
+
       await session.send('Page.navigate', { url: appBase + to });
 
       const deadline = Date.now() + timeout;

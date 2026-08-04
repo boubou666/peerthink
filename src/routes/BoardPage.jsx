@@ -13,6 +13,7 @@ export function BoardPage() {
   const [title, setTitle] = useState(() => titleOf(boardId));
   const [draft, setDraft] = useState(title);
   const app = useRef(null);
+  const cancelled = useRef(false);
 
   // The router reuses this component when only :boardId changes, so both the
   // committed title and the field have to follow the parameter. A controlled
@@ -29,6 +30,16 @@ export function BoardPage() {
   }, []);
 
   const commit = () => {
+    // Escape blurs the field, and blur() runs onBlur synchronously — before
+    // React has re-rendered with the restored draft. Reading `draft` here would
+    // still see the typed-and-cancelled value and persist exactly what the user
+    // just rejected, so the keydown handler flags the intent instead.
+    if (cancelled.current) {
+      cancelled.current = false;
+      setDraft(title);
+      return;
+    }
+
     const trimmed = draft.trim();
     if (!trimmed || trimmed === title) {
       setDraft(title);
@@ -56,10 +67,11 @@ export function BoardPage() {
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') e.target.blur();
+            if (e.key === 'Enter') e.currentTarget.blur();
             if (e.key === 'Escape') {
+              cancelled.current = true;
               setDraft(title);
-              e.target.blur();
+              e.currentTarget.blur();
             }
           }}
         />

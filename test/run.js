@@ -69,12 +69,16 @@ const args = [
 // a message about the debugging port that says nothing about the real cause
 let code;
 try {
-  code = await new Promise((resolve) => {
+  code = await new Promise((resolve, reject) => {
     const proc = spawn(process.execPath, args, {
       cwd: ROOT,
       stdio: 'inherit',
       env: { ...process.env, NODE_V8_COVERAGE: join(COVERAGE, 'node'), APP_BASE: appBase },
     });
+    // a spawn failure emits 'error' and never 'exit'; without this the promise
+    // never settles and the finally below — the whole point of the block — is
+    // never reached
+    proc.on('error', reject);
     proc.on('exit', resolve);
   });
 } finally {

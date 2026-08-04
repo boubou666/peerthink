@@ -1,7 +1,11 @@
 name: Deploy
 
-# Publishes the Vite build to GitHub Pages, and only after CI has gone green
-# on the same commit.
+# Publishes the Vite build to GitHub Pages.
+#
+# Two ways in: automatically once CI has gone green on a main commit, and
+# manually via workflow_dispatch — which deploys whatever the chosen ref points
+# at, without waiting for CI. The manual path is the escape hatch for a broken
+# Pages deployment; it is deliberately not gated.
 
 on:
   workflow_run:
@@ -30,6 +34,10 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # a workflow_run event checks out the default branch by default, which
+          # need not be the commit CI just passed — build exactly what was tested
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-node@v4
         with:

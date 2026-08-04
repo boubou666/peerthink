@@ -157,8 +157,16 @@ unchanged without a framework. The additions are the shell and its tooling:
 | | |
 |---|---|
 | `react`, `react-dom` | the shell |
-| `react-router` | routing — v8, because v7's `react-router-dom` carries a CSRF advisory |
+| `react-router` | routing — v8 |
 | `vite`, `@vitejs/plugin-react` | dev server and build (dev only) |
+
+Routing is `react-router` v8 rather than v7's `react-router-dom` mostly because
+v8 is where the package is going. On the security side the only relevant item is
+[GHSA-qwww-vcr4-c8h2](https://github.com/advisories/GHSA-qwww-vcr4-c8h2), a CSRF
+issue in the **unstable RSC APIs** — `unstable_RSCPayload` and the RSC request
+handlers. It affects `>=7.12.0 <7.18.2` and `>=8.0.0 <8.3.0`; both lines are
+patched, at `7.18.2` and `8.3.0`. This app is a client-only SPA and never touches
+those APIs, and the `^8.3.0` pin is on the patched side regardless.
 
 CI fails on any high-severity production advisory.
 
