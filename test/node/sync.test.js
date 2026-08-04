@@ -256,6 +256,74 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
   });
 
   /**
+   * Pointers share the channel with ops and share nothing else: they are not
+   * applied, not recorded, and not part of the document.
+   */
+  describe('cursors', () => {
+    test('a pointer crosses as a cursor, and changes nothing', async () => {
+      const id = await sharedBoard();
+      const seen = [];
+      const his = await join(bob, id, { onCursor: (cursor) => seen.push(cursor) });
+      const hers = await join(alice, id);
+
+      hers.sync.moveCursor({ x: 120, y: -40 });
+
+      assert.ok(await waitFor(() => seen.length > 0, 'the cursor to arrive'));
+      assert.deepEqual(seen[0], { id: hers.sync.clientId, x: 120, y: -40 });
+      assert.equal(his.store.order.length, 0, 'a pointer became a change to the board');
+      assert.equal(his.store.canUndo, false);
+
+      await hers.sync.destroy();
+      await his.sync.destroy();
+    });
+
+    test('a pointer that leaves says so', async () => {
+      const id = await sharedBoard();
+      const seen = [];
+      const his = await join(bob, id, { onCursor: (cursor) => seen.push(cursor) });
+      const hers = await join(alice, id);
+
+      hers.sync.moveCursor({ x: 1, y: 1 });
+      await waitFor(() => seen.length > 0, 'the cursor');
+
+      hers.sync.moveCursor(null);
+      hers.scheduler.flushTimers();
+
+      assert.ok(
+        await waitFor(() => seen.some((cursor) => cursor.gone), 'the departure'),
+        'a pointer left the board and its cursor stayed',
+      );
+
+      await hers.sync.destroy();
+      await his.sync.destroy();
+    });
+
+    /** Positions are sent at pointer rate; the name is not sent with them. */
+    test('presence carries the name, and does not report you to yourself', async () => {
+      const id = await sharedBoard();
+      const rosters = [];
+      const his = await join(bob, id, { onMembers: (members) => rosters.push(members) });
+      const hers = await join(alice, id, { identity: { label: 'ada@example.com' } });
+
+      assert.ok(
+        await waitFor(
+          () => rosters.at(-1)?.some((member) => member.label === 'ada@example.com'),
+          'alice to appear on the roster',
+        ),
+        'the name never arrived',
+      );
+      assert.equal(
+        rosters.at(-1).some((member) => member.id === his.sync.clientId),
+        false,
+        'the roster included the client it was sent to',
+      );
+
+      await hers.sync.destroy();
+      await his.sync.destroy();
+    });
+  });
+
+  /**
    * One writer, chosen by everyone independently and reaching the same answer.
    * Election is what stops several editors autosaving over each other; the
    * version guard in the repository is what covers the case it cannot see.

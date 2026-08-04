@@ -163,6 +163,69 @@ describe('createApp', () => {
     assert.equal(result.afterLoad, 8, 'the seed landed alongside the mid-load edit');
   });
 
+  /**
+   * The canvas is interactive from the first frame, which is the whole reason
+   * loading is a separate step — so what someone does in that window has to
+   * survive the snapshot arriving on top of it. Against Web Storage the window
+   * was a microtask and this was invisible; against a network it is a round
+   * trip, and it is exactly when an impatient person starts a card.
+   */
+  test('an edit made while the board is still loading survives the load', async () => {
+    const result = await page.eval(`(async () => {
+      const { createApp } = await import('/src/app.js');
+      const host = document.createElement('div');
+      host.style.cssText = 'position:absolute; left:-9999px; top:0; width:800px; height:600px;';
+      host.innerHTML = [
+        '<div id="e-stage" style="position:relative;width:800px;height:600px"><div id="e-bg"></div>',
+        '<div id="e-layer"></div><div id="e-overlay"></div></div>',
+        '<div id="e-toolbar"><button data-add="card"></button></div><span id="e-zoom"></span>',
+      ].join('');
+      document.body.appendChild(host);
+
+      const elements = {
+        stage: host.querySelector('#e-stage'),
+        bg: host.querySelector('#e-bg'),
+        layer: host.querySelector('#e-layer'),
+        overlay: host.querySelector('#e-overlay'),
+        toolbar: host.querySelector('#e-toolbar'),
+        zoomLabel: host.querySelector('#e-zoom'),
+      };
+
+      const stored = { v: 1, order: ['saved'], objects: [
+        { id: 'saved', type: 'card', x: 0, y: 0, w: 200, h: 120, text: 'from the server' },
+      ] };
+
+      const app = createApp({
+        document, window, elements, boardId: 'slow', autosaveDelay: 1,
+        repository: {
+          load: () => new Promise((done) => setTimeout(() => done({ board: stored }), 40)),
+          save: async () => true,
+          migrateLegacy: async () => false,
+        },
+      });
+
+      const hydrated = app.hydrate();
+      app.board.add('card', { x: 300, y: 40, text: 'typed while loading' });
+      await hydrated;
+
+      const result = {
+        texts: app.store.toJSON().objects.map((o) => o.text).sort(),
+        rendered: elements.layer.querySelectorAll('.obj').length,
+        // the load is not a step the user should be able to undo past
+        canUndo: app.store.canUndo,
+      };
+      app.destroy();
+      host.remove();
+      return result;
+    })()`);
+
+    assert.deepEqual(result, {
+      texts: ['from the server', 'typed while loading'],
+      rendered: 2,
+      canUndo: false,
+    });
+  });
+
   test('destroying mid-load abandons the board instead of resurrecting the app', async () => {
     const result = await page.eval(`(async () => {
       const { createApp } = await import('/src/app.js');

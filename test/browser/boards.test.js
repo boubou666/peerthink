@@ -91,18 +91,28 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
     const id = await newBoard();
 
     await page.eval(`window.app.board.add('card', { x: 40, y: 40, text: 'from the server' })`);
+
+    // The canvas is usable before hydrate() has finished, so the card above is
+    // deliberately made during the load — but autosave does not exist until it
+    // has, and reaching for it early is a race in the test rather than a fact
+    // about the app.
+    await page.waitFor('Boolean(window.app.autosave)', { label: 'the board to finish loading' });
+
     // flush rather than sleep — it hands back the repository's own promise, so
     // this waits for the write itself rather than for the debounce to expire
-    await page.eval('window.app.autosave.flush()');
+    assert.equal(await page.eval('window.app.autosave.flush()'), true, 'the write was refused');
 
     await page.goto(`/#/b/${id}`, { ready: ON_CANVAS });
-    await page.waitFor('window.app.store.toJSON().objects.length === 1', {
-      label: 'the board to come back from the server',
+    await page.waitFor('window.app.restoredFromStorage || window.app.store.order.length > 0', {
+      label: 'the reloaded board to settle',
     });
 
-    assert.equal(
-      await page.eval(`window.app.store.toJSON().objects[0].text`),
-      'from the server',
+    // Asserted rather than waited on, so a board that came back wrong says
+    // what it came back as — a seeded starter board is the tell that the
+    // reload could not read the row at all.
+    assert.deepEqual(
+      await page.eval(`window.app.store.toJSON().objects.map(o => o.text)`),
+      ['from the server'],
     );
     assert.equal(await page.eval('window.app.restoredFromStorage'), true);
   });
@@ -170,6 +180,79 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
         1,
         'the remote op did not reach the renderer',
       );
+    } finally {
+      await second.close();
+    }
+  });
+
+  /**
+   * Somebody else's pointer, drawn on this board.
+   *
+   * The position travels in world coordinates, so what is checked is not that
+   * a marker turned up somewhere — it is that panning the *receiving* page
+   * moves the cursor with the board, which is the whole difference between
+   * pointing at a place on a screen and pointing at a thing on a board.
+   */
+  test("another person's pointer is drawn, named, and anchored to the board", async () => {
+    const id = await newBoard();
+    await page.waitFor('Boolean(window.app?.sync)', { label: 'the first page to join' });
+
+    const second = await openApp({ path: `/#/b/${id}`, origin, readyWhen: ON_CANVAS });
+    try {
+      await second.waitFor('Boolean(window.app?.cursors)', { label: 'the second page to join' });
+
+      await page.mouse('mouseMoved', 400, 300);
+      await second.waitFor("document.querySelector('.cursor') !== null", {
+        label: "the first page's cursor to appear",
+      });
+
+      const at = () => second.eval(`(() => {
+        const el = document.querySelector('.cursor');
+        const r = el.getBoundingClientRect();
+        return { x: Math.round(r.left), y: Math.round(r.top), name: el.textContent };
+      })()`);
+
+      const before = await at();
+      // both pages are the same anonymous account, which has no email
+      assert.equal(before.name, 'Guest');
+      assert.deepEqual(await second.eval('window.app.cursors.list().length'), 1);
+
+      // pan the receiving page: the cursor is pinned to the board, not the glass
+      await second.eval('window.app.viewport.panBy(-120, -60)');
+      await second.waitFor(`Math.round(document.querySelector('.cursor').getBoundingClientRect().left) !== ${before.x}`, {
+        label: 'the cursor to follow the pan',
+      });
+
+      // panBy shifts what is on screen by the delta it is given, so a cursor
+      // pinned to the board moves by exactly that and one pinned to the glass
+      // would not move at all
+      const after = await at();
+      assert.equal(after.x - before.x, -120, 'the cursor did not move with the board');
+      assert.equal(after.y - before.y, -60);
+
+      // a pointer that leaves the board is gone, not parked at the edge of it
+      await page.eval(`document.getElementById('stage').dispatchEvent(
+        new PointerEvent('pointerleave', { bubbles: false }))`);
+      await second.waitFor("document.querySelector('.cursor') === null", {
+        label: 'the cursor to leave with the pointer',
+      });
+      assert.deepEqual(await second.eval('window.app.cursors.list()'), []);
+
+      // and presence is the backstop: someone who has gone takes theirs with them
+      await page.mouse('mouseMoved', 420, 320);
+      await second.waitFor("document.querySelector('.cursor') !== null");
+      await second.eval('window.app.cursors.setMembers([])');
+      assert.equal(await second.eval(`document.querySelector('.cursor') === null`), true);
+
+      // Leaving the board takes the whole layer with it. Driven through
+      // destroy() rather than by navigating, because a navigation would take
+      // the teardown with it and prove nothing about what it unwound.
+      await page.mouse('mouseMoved', 440, 340);
+      await second.waitFor("document.querySelector('.cursor') !== null");
+
+      await second.eval('window.app.destroy()');
+      assert.equal(await second.eval(`document.querySelector('.cursor') === null`), true);
+      assert.deepEqual(await second.eval('window.app.cursors.list()'), []);
     } finally {
       await second.close();
     }

@@ -30,6 +30,20 @@ import { LOCAL, REMOTE } from '../core/store.js';
 
 export const EVENT = 'ops';
 
+/**
+ * Pointers travel as broadcast, not as presence updates.
+ *
+ * Presence answers "who is on this board" — it diffs state and fans the whole
+ * set out to everyone on every change, which is the right shape for a list of
+ * people and the wrong shape for something that moves at pointer rate. A
+ * cursor is a fact with a short life; it does not need to be reconciled, only
+ * delivered.
+ */
+export const CURSOR_EVENT = 'cursor';
+
+/** Stands in for a position, so one queue carries "here" and "gone". */
+const GONE = Symbol('gone');
+
 /** A board's topic. The id shape excludes ':', so this parses unambiguously. */
 export const topicFor = (boardId) => `board:${boardId}`;
 
@@ -57,7 +71,11 @@ export function createBoardSync({
   scheduler,
   onStatus,
   onWriter,
+  onCursor,
+  onMembers,
+  identity = {},
   sendEvery = 50,
+  cursorEvery = 60,
   clientId = createIdGenerator()(),
   now = () => Date.now(),
 }) {
@@ -115,16 +133,31 @@ export function createBoardSync({
     store.apply(ops, false, REMOTE);
   });
 
-  /** Everyone currently on the board, as the election needs them. */
+  channel.on('broadcast', { event: CURSOR_EVENT }, (message) => {
+    const { id, x, y, gone } = message?.payload ?? {};
+    if (stopped || typeof id !== 'string') return;
+    if (gone) return void onCursor?.({ id, gone: true });
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    onCursor?.({ id, x, y });
+  });
+
+  /**
+   * Everyone currently on the board — what the election needs, and what tells
+   * a cursor layer whose pointers to stop drawing. `label` is carried here
+   * rather than on every cursor message: it is a property of the person, and
+   * repeating it at pointer rate would be paying for it hundreds of times.
+   */
   const members = () =>
     Object.values(channel.presenceState())
       .flat()
       .filter((meta) => typeof meta?.id === 'string' && Number.isFinite(meta.at))
-      .map(({ id, at }) => ({ id, at }));
+      .map(({ id, at, label }) => ({ id, at, label }));
 
   const settleWriter = () => {
     if (stopped) return;
-    const elected = electWriter(members());
+    const present = members();
+    onMembers?.(present.filter((member) => member.id !== clientId));
+    const elected = electWriter(present);
     // No presence state yet is not "somebody else writes" — it is nobody
     // having reported in, which leaves this client as the only one it knows.
     const next = elected ? elected.id === clientId : true;
@@ -151,10 +184,27 @@ export function createBoardSync({
       // tells the incumbent it is no longer alone. Until it lands, everyone
       // already here has an answer that does not include us, which is the
       // right answer for a client that has not arrived.
-      if (status === 'SUBSCRIBED') channel.track({ id: clientId, at: now() });
+      if (status === 'SUBSCRIBED') channel.track({ ...identity, id: clientId, at: now() });
       resolve(status);
     });
   });
+
+  /**
+   * Where this client's pointer is, in world coordinates — throttled, and
+   * dropped rather than queued. An old position is not worth sending: whoever
+   * receives it would draw a pointer that is no longer there.
+   */
+  let pending = null;
+  const sendCursor = scheduler.throttle(() => {
+    const next = pending;
+    pending = null;
+    if (!next || stopped) return;
+
+    const payload = next === GONE ? { id: clientId, gone: true } : { id: clientId, ...next };
+    Promise.resolve(
+      channel.send({ type: 'broadcast', event: CURSOR_EVENT, payload }),
+    ).catch(() => {});
+  }, cursorEvery);
 
   return {
     topic,
@@ -163,6 +213,13 @@ export function createBoardSync({
 
     /** Whether this client is the one that writes the snapshot. */
     isWriter: () => writer,
+
+    /** A point in world coordinates, or null for "my pointer has left". */
+    moveCursor(point) {
+      if (stopped) return;
+      pending = point ?? GONE;
+      sendCursor();
+    },
 
     async destroy() {
       stopped = true;

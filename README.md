@@ -22,6 +22,7 @@ npm start        # serve the built site
 | **Envelopes** | Grouping containers — dragging one carries everything fully inside it, transitively |
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
+| **Together** | With a project configured: live edits, and other people's cursors on the board |
 
 ### Gestures
 
@@ -66,6 +67,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
                   ├── storage.js     BoardRepository over Web Storage
                   ├── supabase-repository.js  the same contract over Postgres
                   ├── sync.js        the op log, on a private channel
+                  ├── cursors.js     other people's pointers
                   ├── auth.js        accounts, as { id, email, guest }
                   └── supabase.js    the client, and whether there is one
 ```
@@ -129,6 +131,14 @@ carries on saving a document that has fallen behind. So a save also carries the
 version it is replacing, and the update matches nothing if that version has
 moved on. The counter belongs to `doc` alone, so a rename is not a competing
 edit and does not refuse the next honest save.
+
+Cursors go the other way. They are broadcast, not presence updates — presence
+diffs a set and fans the whole thing out on every change, which is the right
+shape for a list of people and the wrong shape for something that moves at
+pointer rate. Presence still says who is *here*, and carries their name, so a
+position does not have to repeat it hundreds of times a minute. Positions are
+in world coordinates, so a cursor points at the thing its owner is pointing at
+rather than at a place on their screen.
 
 The one thing an absolute op could not survive was replication. `{ t: 'order' }`
 names the whole z-order, and a sender cannot name an object they have not
@@ -265,7 +275,7 @@ CI fails on any high-severity production advisory.
 
 ## Not built yet
 
-Presence cursors, share links, export.
+Share links and export.
 
 Ops emitted between reading the snapshot and joining the channel are missed —
 `hydrate()` subscribes after the load, so a change made in that window shows up

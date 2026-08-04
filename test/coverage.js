@@ -29,6 +29,7 @@ const isMeasured = (rel) =>
 export const SUPABASE_ONLY = [
   'src/components/AccountForm.jsx',
   'src/components/AccountMenu.jsx',
+  'src/platform/cursors.js',
   'src/platform/supabase-repository.js',
   'src/platform/sync.js',
   'src/shell/RequireAccount.jsx',

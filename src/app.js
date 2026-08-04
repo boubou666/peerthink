@@ -1,4 +1,4 @@
-import { Store } from './core/store.js';
+import { LOCAL, Store } from './core/store.js';
 import { Selection } from './core/selection.js';
 import { Viewport } from './core/viewport.js';
 import { Board } from './core/board.js';
@@ -11,6 +11,7 @@ import { createViews } from './platform/views.js';
 import { createRenderer } from './platform/renderer.js';
 import { createInput } from './platform/input.js';
 import { createToolbar } from './platform/toolbar.js';
+import { createCursors } from './platform/cursors.js';
 import { DEFAULT_BOARD_ID, createLocalStorageRepository, createNullRepository } from './platform/storage.js';
 
 /**
@@ -92,6 +93,7 @@ export function createApp({
 
   let autosave = null;
   let sync = null;
+  let cursors = null;
   let destroyed = false;
 
   /**
@@ -104,10 +106,35 @@ export function createApp({
    * flight, rather than the whole app waiting on a round trip.
    */
   async function hydrate() {
-    // Adopt anything a single-board version of the app left behind, then load
-    // before autosave is wired so a restore never writes itself back.
-    await boardRepository.migrateLegacy({ toId: boardId });
-    const saved = await boardRepository.load(boardId);
+    /**
+     * Anything the user does while the board is still in flight.
+     *
+     * The canvas is on screen and interactive from the first frame, which is
+     * the point of loading separately — but `store.load()` replaces the
+     * document, so a card made in that window used to vanish when the snapshot
+     * landed on top of it. Against Web Storage the window was a microtask and
+     * nobody ever saw it; against a network it is however long the round trip
+     * takes, and it is exactly the moment an impatient person starts typing.
+     *
+     * So the ops are kept and replayed onto the snapshot. They are the same
+     * ops a remote client would have sent, and they are replayed the same way
+     * — which is why they can be: `add` is idempotent, `del` and `set` ignore
+     * what is not there, and `order` merges.
+     */
+    const early = [];
+    const stopBuffering = store.onOps((ops, origin) => {
+      if (origin === LOCAL) early.push(...ops);
+    });
+
+    let saved;
+    try {
+      // Adopt anything a single-board version of the app left behind, then load
+      // before autosave is wired so a restore never writes itself back.
+      await boardRepository.migrateLegacy({ toId: boardId });
+      saved = await boardRepository.load(boardId);
+    } finally {
+      stopBuffering();
+    }
 
     // destroy() can run while that is in flight — React unmounts a route far
     // faster than a round trip completes. Writing to the store now would
@@ -115,8 +142,16 @@ export function createApp({
     // to stop, so a cancelled hydrate has to stay silent.
     if (destroyed) return app;
 
-    if (saved) store.load(saved.board);
-    else seed(board);
+    if (saved) {
+      store.load(saved.board);
+      // not recorded: undo should not walk back past the board loading
+      if (early.length) store.apply(early, false);
+    } else {
+      // The seed adds to the board rather than replacing it, so a card made
+      // mid-load survives this branch unaided — it is `store.load` above that
+      // needed the replay.
+      seed(board);
+    }
 
     app.title = saved?.title ?? null;
     app.restoredFromStorage = Boolean(saved);
@@ -141,6 +176,10 @@ export function createApp({
         boardId,
         store,
         scheduler: clock,
+        // Both arrive before `cursors` below has been assigned, on a fast
+        // channel with someone already moving — hence the optional calls.
+        onCursor: (cursor) => cursors?.receive(cursor),
+        onMembers: (members) => cursors?.setMembers(members),
         // Taking over means the previous writer has gone, possibly mid-edit
         // and possibly before its own debounce fired. This client has those
         // ops — it just was not allowed to write them until now.
@@ -148,7 +187,9 @@ export function createApp({
           if (isWriter) autosave?.flush().catch(() => {});
         },
       });
+      cursors = createCursors({ document, elements: dom, viewport, sync, scheduler: clock });
       app.sync = sync;
+      app.cursors = cursors;
     }
 
     commands.fit();
@@ -176,6 +217,7 @@ export function createApp({
     destroy() {
       destroyed = true;
       autosave?.stop();
+      cursors?.destroy();
       // leaves the channel; the promise is nobody's to wait for
       sync?.destroy();
       toolbar.destroy();
