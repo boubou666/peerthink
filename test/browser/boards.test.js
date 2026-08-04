@@ -137,6 +137,45 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
   });
 
   /**
+   * Two windows, one board, one account — the same thing two people on one
+   * board is, minus the sharing. The op crosses a real channel and lands in
+   * the second canvas without either page reloading, which is the whole
+   * claim; the sync layer's own behaviour is covered in test/node/sync.test.js.
+   */
+  test('an edit on one page shows up on another that has the same board open', async () => {
+    const id = await newBoard();
+
+    // `window.app` exists from the first render; the channel is joined at the
+    // end of hydrate, so both pages have to be waited for separately.
+    const joined = async (target) => {
+      await target.waitFor('Boolean(window.app?.sync)', { label: 'the channel to be joined' });
+      assert.equal(await target.eval('window.app.sync.ready'), 'SUBSCRIBED');
+    };
+
+    await joined(page);
+    const second = await openApp({ path: `/#/b/${id}`, origin, readyWhen: ON_CANVAS });
+    try {
+      await joined(second);
+
+      await page.eval(`window.app.board.add('card', { x: 10, y: 10, text: 'live' })`);
+      await second.waitFor('window.app.store.toJSON().objects.length === 1', {
+        label: 'the card to arrive on the second page',
+      });
+
+      assert.equal(await second.eval('window.app.store.toJSON().objects[0].text'), 'live');
+      // it arrived as somebody else's edit, so it is not this page's to undo
+      assert.equal(await second.eval('window.app.store.canUndo'), false);
+      assert.equal(
+        await second.eval(`document.querySelectorAll('#layer [data-id]').length`),
+        1,
+        'the remote op did not reach the renderer',
+      );
+    } finally {
+      await second.close();
+    }
+  });
+
+  /**
    * The policies are tested directly in test/db/, and through the repository
    * in test/node/. This is the same claim from the outside: whatever the
    * previous test left behind, the next account does not see it.

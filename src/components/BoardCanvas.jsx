@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 
 import { createApp } from '../app.js';
 import { repository } from '../shell/storage.js';
+import { createSync } from '../shell/sync.js';
 
 /**
  * The canvas, mounted once.
@@ -30,6 +31,7 @@ export function BoardCanvas({ boardId, onReady }) {
       window,
       boardId,
       repository,
+      createSync,
       elements: {
         stage: stage.current,
         bg: bg.current,

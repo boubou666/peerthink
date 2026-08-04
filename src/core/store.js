@@ -15,6 +15,38 @@
 
 const HISTORY_LIMIT = 300;
 
+/** Where a change came from. Remote ops are applied but never sent back. */
+export const LOCAL = 'local';
+export const REMOTE = 'remote';
+
+/**
+ * Reconcile an incoming z-order against the one in hand.
+ *
+ * An `order` op names the whole array, which is fine on one machine and
+ * destructive on two: the sender's array cannot mention an object they had not
+ * received yet, and taking it literally would drop that object out of the
+ * z-order — out of `all()`, out of the render, and out of the next snapshot.
+ * The object would still be in the map, and gone from the document.
+ *
+ * So the incoming order decides the relative depth of everything it names, and
+ * anything it does not name keeps the depth it has here. That leaves a
+ * concurrent add where its author put it — an envelope at the bottom, a card
+ * on top — and makes the op idempotent, which a message that can arrive twice
+ * has to be. Two people reordering at once still resolve last-writer-wins,
+ * which is what "bring to front" means anyway.
+ */
+export function mergeOrder(current, incoming, objects) {
+  const kept = incoming.filter((id) => objects.has(id));
+  const named = new Set(kept);
+  const merged = kept.slice();
+
+  // ascending index, so each unnamed id lands at the depth it already had
+  current.forEach((id, index) => {
+    if (!named.has(id) && objects.has(id)) merged.splice(Math.min(index, merged.length), 0, id);
+  });
+  return merged;
+}
+
 export class Store {
   constructor() {
     this.objects = new Map();
@@ -22,6 +54,7 @@ export class Store {
     this.past = [];
     this.future = [];
     this.listeners = new Set();
+    this.opListeners = new Set();
   }
 
   on(fn) {
@@ -31,6 +64,20 @@ export class Store {
 
   emit(ids) {
     for (const fn of this.listeners) fn(ids);
+  }
+
+  /**
+   * Every applied op, with where it came from — the seam a sync layer plugs
+   * into. `on` reports which objects changed, which is what a renderer needs;
+   * this reports what happened, which is what a wire needs.
+   */
+  onOps(fn) {
+    this.opListeners.add(fn);
+    return () => this.opListeners.delete(fn);
+  }
+
+  emitOps(ops, origin) {
+    for (const fn of this.opListeners) fn(ops, origin);
   }
 
   get(id) {
@@ -50,7 +97,7 @@ export class Store {
    * `record: false` keeps a change out of history — used for the many
    * intermediate states of a drag, collapsed into one entry at drop.
    */
-  apply(ops, record = true) {
+  apply(ops, record = true, origin = LOCAL) {
     const inverse = [];
     const touched = new Set();
 
@@ -60,7 +107,11 @@ export class Store {
           const obj = structuredClone(op.obj);
           const index = op.index ?? this.order.length;
           this.objects.set(obj.id, obj);
-          this.order.splice(index, 0, obj.id);
+          // An id already in the order is an add that has arrived twice — a
+          // resent message, or a snapshot that already contained it. Adding
+          // the id again would put the same object in the document twice,
+          // which the renderer and toJSON would both faithfully reproduce.
+          if (!this.order.includes(obj.id)) this.order.splice(index, 0, obj.id);
           inverse.unshift({ t: 'del', id: obj.id });
           touched.add(obj.id);
           break;
@@ -87,7 +138,7 @@ export class Store {
         }
         case 'order': {
           inverse.unshift({ t: 'order', order: this.order.slice() });
-          this.order = op.order.slice();
+          this.order = mergeOrder(this.order, op.order, this.objects);
           for (const id of this.order) touched.add(id);
           break;
         }
@@ -95,7 +146,10 @@ export class Store {
     }
 
     if (record && ops.length) this.pushHistory(ops, inverse);
-    if (ops.length) this.emit(touched);
+    if (ops.length) {
+      this.emit(touched);
+      this.emitOps(ops, origin);
+    }
     return inverse;
   }
 

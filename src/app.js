@@ -31,6 +31,10 @@ export function createApp({
   elements,
   storage,
   repository,
+  // Optional: given one, hydrate() joins the board's live channel once the
+  // snapshot is in. Absent — no project configured, or a build that does not
+  // want it — the board is simply a board with nobody else on it.
+  createSync,
   scheduler,
   newId = createIdGenerator(),
   ResizeObserver = window.ResizeObserver,
@@ -87,6 +91,7 @@ export function createApp({
   const toolbar = createToolbar({ window, elements: dom, store, viewport, commands });
 
   let autosave = null;
+  let sync = null;
   let destroyed = false;
 
   /**
@@ -124,6 +129,16 @@ export function createApp({
       delay: autosaveDelay,
     });
     app.autosave = autosave;
+
+    // After the load, not before: ops that arrive while the snapshot is still
+    // in flight would be overwritten by it. The gap between the two is a
+    // window where another editor's change is missed until the next reload —
+    // narrow, and the price of loading a snapshot rather than replaying a log.
+    if (createSync) {
+      sync = createSync({ boardId, store, scheduler: clock });
+      app.sync = sync;
+    }
+
     commands.fit();
     return app;
   }
@@ -144,10 +159,13 @@ export function createApp({
     toolbar,
     repository: boardRepository,
     autosave,
+    sync,
     hydrate,
     destroy() {
       destroyed = true;
       autosave?.stop();
+      // leaves the channel; the promise is nobody's to wait for
+      sync?.destroy();
       toolbar.destroy();
       input.destroy();
       renderer.destroy();

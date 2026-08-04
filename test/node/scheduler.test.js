@@ -37,6 +37,34 @@ describe('createScheduler', () => {
     assert.deepEqual(seen, ['c']);
   });
 
+  /**
+   * The difference from debounce, and the reason it exists: a caller that
+   * never stops calling still gets served. Debounce would hold everything
+   * until the drag ended, which is exactly when the other end stops caring.
+   */
+  test('throttle runs immediately, then no more often than the interval', () => {
+    const scheduler = createManualScheduler();
+    let ran = 0;
+    const throttled = scheduler.throttle(() => ran++, 20);
+
+    throttled();
+    assert.equal(ran, 1, 'the first call is not delayed');
+
+    throttled();
+    throttled();
+    assert.equal(ran, 1, 'the ones behind it wait for the window');
+
+    scheduler.flushTimers();
+    assert.equal(ran, 2, 'a burst behind the leading call is one more run');
+
+    // that trailing run opened a window of its own; nothing is waiting in it
+    scheduler.flushTimers();
+    assert.equal(ran, 2);
+
+    throttled();
+    assert.equal(ran, 3, 'the throttle rearms once the window closes empty');
+  });
+
   test('nextFrame runs a one-shot callback', () => {
     const scheduler = createManualScheduler();
     let ran = 0;

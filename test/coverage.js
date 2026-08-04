@@ -30,7 +30,9 @@ export const SUPABASE_ONLY = [
   'src/components/AccountForm.jsx',
   'src/components/AccountMenu.jsx',
   'src/platform/supabase-repository.js',
+  'src/platform/sync.js',
   'src/shell/RequireAccount.jsx',
+  'src/shell/sync.js',
 ];
 
 function readAll(dir) {

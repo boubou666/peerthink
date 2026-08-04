@@ -65,6 +65,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
                   ├── toolbar.js     buttons and view shortcuts
                   ├── storage.js     BoardRepository over Web Storage
                   ├── supabase-repository.js  the same contract over Postgres
+                  ├── sync.js        the op log, on a private channel
                   ├── auth.js        accounts, as { id, email, guest }
                   └── supabase.js    the client, and whether there is one
 ```
@@ -109,8 +110,22 @@ store.apply([{ t: 'set', id: 'a3f', patch: { x: 120, y: 40 } }])
 ```
 
 One representation gives undo/redo, the autosave payload, and — the point of
-the exercise — the wire format a sync layer would broadcast. Adding
-collaboration means reimplementing `apply`, and nothing above it changes.
+the exercise — the wire format. `platform/sync.js` takes that literally: what a
+client applies locally is exactly what it sends, and what it receives goes
+through the same `apply()` the local UI uses. There is no second representation
+of a change, so there is no second implementation to keep honest.
+
+Ops carry an origin. A remote one is applied with `record: false`, which keeps
+somebody else's edit out of your undo stack, and marked `REMOTE`, which is what
+stops it being sent straight back out.
+
+The one thing an absolute op could not survive was replication. `{ t: 'order' }`
+names the whole z-order, and a sender cannot name an object they have not
+received yet — taking their array literally would drop a concurrent addition out
+of the document entirely. So an incoming order decides the relative depth of
+everything it mentions, and anything it does not mention keeps the depth it has
+here. There is no operational transform beyond that: two people dragging the
+same object settle on whoever's message landed last.
 
 ### Rendering
 
@@ -175,19 +190,21 @@ of every stored board, and access is not enforced in the client: a `select` with
 no `where` clause is the correct way to ask for "my boards", because the
 policies are what answer it.
 
-The account suite in `test/browser/auth.test.js` needs a real stack and skips
-without one:
+The suites that need a real stack — accounts, the Postgres repository, and the
+live channel — skip without one:
 
 ```sh
 npx supabase start && npm test
 ```
 
 `test/run.js` finds it through `supabase status`, serves a second Vite origin
-that has been handed the project, and drives the gate there. Skipping is
-reported rather than silent: the files only that suite can reach are printed
-but left out of the coverage total, with a line saying so — an unreachable file
-averaged into the number would quietly lower the bar for every other file. CI
-starts a stack, so nothing merges without them.
+that has been handed the project, and drives the browser suites there. The node
+suites talk to it directly, signing in two anonymous users so that one can be
+refused what the other is allowed. Skipping is reported rather than silent: the
+files only those suites can reach are printed but left out of the coverage
+total, with a line saying so — an unreachable file averaged into the number
+would quietly lower the bar for every other file. CI starts a stack, so nothing
+merges without them.
 
 ### The database
 
@@ -237,9 +254,18 @@ CI fails on any high-severity production advisory.
 
 ## Not built yet
 
-Real-time collaboration, presence cursors, share links, export. The seam is in
-place — the op log is the wire format — but none of it is written: two people
-on one board today are two people overwriting each other's snapshot.
+Presence cursors, share links, export.
+
+Live editing works — ops cross a private channel and land in the other canvas —
+but the *snapshot* behind it does not know about it yet: every editor autosaves
+the whole document on their own timer, so the last writer wins and a change can
+be undone by someone else's stale save. That is the next piece of work, and
+until it lands two people on one board should expect to lose the occasional
+edit on reload.
+
+Ops emitted between reading the snapshot and joining the channel are missed —
+`hydrate()` subscribes after the load, so a change made in that window shows up
+on the next reload rather than immediately.
 
 `board_members` has policies and no UI, so a board can be shared by inserting a
 row and no other way. And boards already in a browser's Web Storage are not
