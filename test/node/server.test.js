@@ -1,9 +1,11 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { createServer as createSocket } from 'node:net';
-import { basename, sep } from 'node:path';
+import { basename, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { build } from 'vite';
 
 import { PUBLIC_DIR, createStaticServer, resolveFile } from '../../server.js';
 
@@ -20,9 +22,57 @@ const freePort = () => new Promise((resolve, reject) => {
   });
 });
 
-const listen = (server) => new Promise((resolve) => {
-  server.listen(0, () => resolve(`http://127.0.0.1:${server.address().port}`));
+const listen = (server) => new Promise((resolve, reject) => {
+  // a bind failure has to surface at the await, not as an unhandled event
+  const onError = (err) => {
+    server.off('error', onError);
+    reject(err);
+  };
+  server.on('error', onError);
+  server.listen(0, () => {
+    server.off('error', onError);
+    resolve(`http://127.0.0.1:${server.address().port}`);
+  });
 });
+
+/**
+ * Resolve once the child has printed `expected` on stdout.
+ *
+ * A `data` event is not a line boundary, so the banner can arrive split across
+ * chunks — buffering is what keeps this from failing on a server that started
+ * perfectly well. An early exit or a spawn error rejects rather than waiting
+ * out the timeout.
+ */
+function waitForOutput(child, expected, timeout = 15_000) {
+  return new Promise((resolve, reject) => {
+    let buffered = '';
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      child.stdout.off('data', onData);
+      child.off('exit', onExit);
+      child.off('error', reject);
+    };
+    const onData = (chunk) => {
+      buffered += chunk;
+      if (!buffered.includes(expected)) return;
+      cleanup();
+      resolve(buffered);
+    };
+    const onExit = (code, signal) => {
+      cleanup();
+      reject(new Error(`server exited before starting (code=${code} signal=${signal}): ${buffered}`));
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`server did not start within ${timeout}ms: ${buffered}`));
+    }, timeout);
+
+    child.stdout.on('data', onData);
+    child.on('exit', onExit);
+    child.on('error', reject);
+  });
+}
 
 describe('resolveFile', () => {
   test('maps a pathname to a file under the root', () => {
@@ -102,7 +152,15 @@ describe('static server', () => {
 });
 
 describe('running server.js directly', () => {
-  test('listens on PORT and announces itself', async () => {
+  before(async () => {
+    // `npm test` runs before `npm run build` in CI, so give the production
+    // server something real to serve rather than asserting around its absence
+    if (!existsSync(join(ROOT, 'dist', 'index.html'))) {
+      await build({ configFile: join(ROOT, 'vite.config.js'), root: ROOT, logLevel: 'error' });
+    }
+  });
+
+  test('serves the built application on PORT', async () => {
     // a free port, not a fixed one — a leftover process from an earlier run
     // would otherwise turn this into a phantom failure
     const port = await freePort();
@@ -111,22 +169,22 @@ describe('running server.js directly', () => {
       env: { ...process.env, PORT: String(port) },
       stdio: ['ignore', 'pipe', 'inherit'],
     });
+    // attached before the kill below, or an already-exited child never fires it
+    const exited = new Promise((resolve) => {
+      if (child.exitCode !== null || child.signalCode !== null) resolve();
+      else child.on('exit', resolve);
+    });
 
     try {
-      const banner = await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('server did not start')), 10_000);
-        child.stdout.on('data', (chunk) => {
-          clearTimeout(timer);
-          resolve(String(chunk));
-        });
-      });
+      const banner = await waitForOutput(child, `PeerThink → http://localhost:${port}`);
+      assert.ok(banner.includes(`http://localhost:${port}`));
 
-      assert.match(banner, new RegExp(`PeerThink → http://localhost:${port}`));
-      // dist/ may not have been built yet, so only the response matters here
-      assert.ok((await fetch(`http://127.0.0.1:${port}/`)).status > 0);
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      assert.equal(response.status, 200);
+      assert.match(await response.text(), /id="root"/, 'the built index, not a stray file');
     } finally {
       child.kill('SIGINT');
-      await new Promise((resolve) => child.on('exit', resolve));
+      await exited;
     }
   });
 });

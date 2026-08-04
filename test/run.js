@@ -64,17 +64,23 @@ const args = [
   ...testFiles,
 ];
 
-const code = await new Promise((resolve) => {
-  const proc = spawn(process.execPath, args, {
-    cwd: ROOT,
-    stdio: 'inherit',
-    env: { ...process.env, NODE_V8_COVERAGE: join(COVERAGE, 'node'), APP_BASE: appBase },
+// whatever happens to the run, the browser and the dev server get torn down —
+// a leaked Chromium holds its profile lock and makes the *next* run fail with
+// a message about the debugging port that says nothing about the real cause
+let code;
+try {
+  code = await new Promise((resolve) => {
+    const proc = spawn(process.execPath, args, {
+      cwd: ROOT,
+      stdio: 'inherit',
+      env: { ...process.env, NODE_V8_COVERAGE: join(COVERAGE, 'node'), APP_BASE: appBase },
+    });
+    proc.on('exit', resolve);
   });
-  proc.on('exit', resolve);
-});
-
-chrome.kill();
-await vite.close();
+} finally {
+  chrome.kill();
+  await vite.close().catch(() => {});
+}
 
 const threshold = Number(process.env.COVERAGE_THRESHOLD ?? 95);
 const { pass } = report({ threshold });
