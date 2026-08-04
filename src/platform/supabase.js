@@ -13,11 +13,38 @@ import { createClient } from '@supabase/supabase-js';
  * argument so both branches are reachable from a test.
  */
 
+/**
+ * Somewhere it is safe to send a session.
+ *
+ * Every request this client makes carries the user's access token, so the
+ * scheme is not cosmetic: an `http:` project URL puts that token on the wire in
+ * clear text for anyone on the path. Loopback is the exception, because there
+ * is no path — it is the stack running on this machine, which is how the tests
+ * and `npm run dev` reach it.
+ *
+ * A malformed URL is refused for the same reason a missing one is: the app
+ * runs on Web Storage instead, which is a working app rather than one making
+ * requests nobody can vouch for.
+ */
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+export function isSafeProjectUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol === 'https:') return true;
+  return parsed.protocol === 'http:' && LOOPBACK.has(parsed.hostname);
+}
+
 /** Both halves or nothing — a URL without a key cannot make a request. */
 export function readSupabaseConfig(env = {}) {
   const url = env.VITE_SUPABASE_URL?.trim();
   const anonKey = env.VITE_SUPABASE_ANON_KEY?.trim();
-  return url && anonKey ? { url, anonKey } : null;
+  if (!url || !anonKey || !isSafeProjectUrl(url)) return null;
+  return { url, anonKey };
 }
 
 /**

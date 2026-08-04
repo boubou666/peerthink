@@ -311,6 +311,23 @@ describe('supabase configuration', () => {
     );
   });
 
+  /**
+   * Every request carries the session, so an `http:` project URL puts the
+   * access token on the wire in clear. Loopback is the exception because there
+   * is no wire — it is the stack on this machine.
+   */
+  test('refuses a project it would not be safe to send a session to', () => {
+    const key = 'k';
+    const config = (url) => readSupabaseConfig({ VITE_SUPABASE_URL: url, VITE_SUPABASE_ANON_KEY: key });
+
+    for (const url of ['https://project.supabase.co', 'http://localhost:54321', 'http://127.0.0.1:54321', 'http://[::1]:54321']) {
+      assert.ok(config(url), `refused ${url}`);
+    }
+    for (const url of ['http://project.supabase.co', 'http://192.168.1.10:54321', 'ftp://project.supabase.co', 'not a url', '//project.supabase.co']) {
+      assert.equal(config(url), null, `accepted ${url}`);
+    }
+  });
+
   test('a client without storage keeps its session in memory', () => {
     const config = { url: 'https://project.supabase.co', anonKey: 'k' };
     assert.ok(createSupabaseClient(config).auth, 'no storage — private mode');

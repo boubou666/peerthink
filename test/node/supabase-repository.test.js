@@ -1,10 +1,9 @@
 import { test, describe, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createClient } from '@supabase/supabase-js';
-
 import { DEFAULT_TITLE } from '../../src/platform/storage.js';
 import { createSupabaseRepository } from '../../src/platform/supabase-repository.js';
+import { createSupabaseClient } from '../../src/platform/supabase.js';
 import { localSupabase } from '../helpers/supabase.js';
 
 /**
@@ -29,9 +28,9 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
 
   /** A signed-in client and a repository on top of it, as the shell builds it. */
   const signIn = async () => {
-    const client = createClient(stack.url, stack.anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    });
+    // The app's own adapter, not a client this file assembles: a test that
+    // builds its own is a test of a client the app does not use.
+    const client = createSupabaseClient(stack);
     const { data, error } = await client.auth.signInAnonymously();
     assert.ok(!error, `could not sign in: ${error?.message}`);
 

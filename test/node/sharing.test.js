@@ -1,10 +1,9 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createClient } from '@supabase/supabase-js';
-
 import { createSharing } from '../../src/platform/sharing.js';
 import { createSupabaseRepository } from '../../src/platform/supabase-repository.js';
+import { createSupabaseClient } from '../../src/platform/supabase.js';
 import { localSupabase } from '../helpers/supabase.js';
 
 /**
@@ -23,9 +22,9 @@ describe('sharing', { skip: stack ? false : 'no local supabase (npx supabase sta
   const boards = [];
 
   const signIn = async () => {
-    const client = createClient(stack.url, stack.anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    });
+    // The app's own adapter, not a client this file assembles: a test that
+    // builds its own is a test of a client the app does not use.
+    const client = createSupabaseClient(stack);
     const { data, error } = await client.auth.signInAnonymously();
     assert.ok(!error, `could not sign in: ${error?.message}`);
 

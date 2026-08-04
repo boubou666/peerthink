@@ -1,12 +1,11 @@
 import { test, describe, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createClient } from '@supabase/supabase-js';
-
 import { REMOTE, Store } from '../../src/core/store.js';
 import { createManualScheduler } from '../../src/core/scheduler.js';
 import { createSupabaseRepository } from '../../src/platform/supabase-repository.js';
 import { createBoardSync, electWriter, topicFor } from '../../src/platform/sync.js';
+import { createSupabaseClient } from '../../src/platform/supabase.js';
 import { localSupabase } from '../helpers/supabase.js';
 
 /**
@@ -27,9 +26,9 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
   const boards = [];
 
   const signIn = async () => {
-    const client = createClient(stack.url, stack.anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    });
+    // The app's own adapter, not a client this file assembles: a test that
+    // builds its own is a test of a client the app does not use.
+    const client = createSupabaseClient(stack);
     const { data, error } = await client.auth.signInAnonymously();
     assert.ok(!error, `could not sign in: ${error?.message}`);
 
