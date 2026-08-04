@@ -282,6 +282,7 @@ describe('Store', () => {
           { t: 'add', obj: { x: 1 } },               // no id
           { t: 'del' },
           { t: 'set', id: 'a' },                     // no patch
+          { t: 'set', id: 'a', patch: { id: 'b' } }, // renaming an object out of its own key
           { t: 'set', patch: {} },
           { t: 'order' },
           { t: 'order', order: [1, 2] },             // ids are strings
@@ -293,6 +294,20 @@ describe('Store', () => {
       test('what it rejects is what would have thrown', () => {
         const store = new Store();
         assert.throws(() => store.apply([{ t: 'add' }]), 'a malformed add used to be survivable');
+      });
+
+      /** Not a crash — a document that quietly stops making sense. */
+      test('a set that renames an object would strand it', () => {
+        const store = new Store();
+        store.apply([{ t: 'add', obj: card('a') }]);
+        store.apply([{ t: 'set', id: 'a', patch: { id: 'b' } }]);
+
+        assert.equal(store.get('a').id, 'b', 'apply itself does not defend against this');
+        assert.equal(store.get('b'), undefined, 'so the object is no longer addressable');
+        assert.deepEqual(store.order, ['a'], 'and the order still names the id it had');
+
+        // which is why the transport refuses it before it gets here
+        assert.equal(isOp({ t: 'set', id: 'a', patch: { id: 'b' } }), false);
       });
     });
 

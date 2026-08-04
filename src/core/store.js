@@ -31,7 +31,16 @@ export function isOp(op) {
     case 'del':
       return typeof op.id === 'string';
     case 'set':
-      return typeof op.id === 'string' && Boolean(op.patch) && typeof op.patch === 'object';
+      // A patch may not carry `id`. `apply` assigns the patch over the object,
+      // and the id is also the key in `objects` and the entry in `order` —
+      // changing it in one place only would leave an object nothing can
+      // address, and free the old id for a later `add` to duplicate.
+      return (
+        typeof op.id === 'string'
+        && Boolean(op.patch)
+        && typeof op.patch === 'object'
+        && !Object.hasOwn(op.patch, 'id')
+      );
     case 'order':
       return Array.isArray(op.order) && op.order.every((id) => typeof id === 'string');
     default:
