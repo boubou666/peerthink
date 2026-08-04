@@ -33,9 +33,9 @@ const isDone = (storage, key) => {
   }
 };
 
-const markDone = (storage, key) => {
+const markDone = (storage, key, now) => {
   try {
-    storage.setItem(key, new Date().toISOString());
+    storage.setItem(key, now());
   } catch {
     // The adoption still happened; only the note that it did is lost, and the
     // next run skips every board it already moved rather than duplicating it.
@@ -47,7 +47,16 @@ const markDone = (storage, key) => {
  * the account already had, `failed` counts writes that did not land — and any
  * failure leaves the marker unset, so the next sign-in tries again.
  */
-export async function adoptBoards({ local, remote, storage, key = ADOPTED_KEY }) {
+export async function adoptBoards({
+  local,
+  remote,
+  storage,
+  key = ADOPTED_KEY,
+  // What the marker records. Injected like every other dependency down here —
+  // the value is only ever read by a person looking at storage, but a module
+  // in platform/ that reaches for a global is one a test cannot pin down.
+  now = () => new Date().toISOString(),
+}) {
   const result = { adopted: 0, kept: 0, failed: 0, done: false };
   if (isDone(storage, key)) return { ...result, done: true };
 
@@ -68,7 +77,7 @@ export async function adoptBoards({ local, remote, storage, key = ADOPTED_KEY })
   }
 
   if (!result.failed) {
-    markDone(storage, key);
+    markDone(storage, key, now);
     result.done = true;
   }
   return result;

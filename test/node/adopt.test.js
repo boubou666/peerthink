@@ -131,6 +131,12 @@ describe('adopting a browser\'s boards', () => {
     });
   });
 
+  test('the marker records when it happened, from the clock it was given', async () => {
+    await adoptBoards({ local, remote: fakeAccount(), storage, now: () => 'the moment it happened' });
+
+    assert.equal(storage.getItem(ADOPTED_KEY), 'the moment it happened');
+  });
+
   test('a browser with nothing in it is finished immediately', async () => {
     const empty = fakeStorage();
     const result = await adoptBoards({

@@ -25,12 +25,29 @@ async function adoptOnce() {
 }
 
 /**
- * Memoised for the life of the page, for the same reason `auth.start()` is:
+ * Shared while it is in flight, for the same reason `auth.start()` is:
  * StrictMode mounts every effect twice, and two adoptions running at once both
  * find the marker unset, both find the board missing from the account, and
  * both create it — one of them losing on the primary key. The marker is
  * written at the end, so it cannot separate two runs that started together.
+ *
+ * Dropped again unless it finished, so a retry is a retry rather than the
+ * cached disappointment. Only a run that adopted everything is worth keeping.
  */
 let adopting = null;
 
-export const adoptLocalBoards = client ? () => (adopting ??= adoptOnce()) : null;
+const share = (promise) => {
+  adopting = promise.then(
+    (result) => {
+      if (!result?.done) adopting = null;
+      return result;
+    },
+    (error) => {
+      adopting = null;
+      throw error;
+    },
+  );
+  return adopting;
+};
+
+export const adoptLocalBoards = client ? () => adopting ?? share(adoptOnce()) : null;

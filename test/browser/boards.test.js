@@ -1,6 +1,8 @@
 import { test, describe, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { randomUUID } from 'node:crypto';
+
 import { LIST_PATH, openApp, supabaseOrigin } from '../helpers/browser.js';
 
 /**
@@ -204,9 +206,19 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
     try {
       await second.waitFor('Boolean(window.app?.cursors)', { label: 'the second page to join' });
 
+      // Delivery is asserted on state and drawing on the DOM, because they
+      // cost differently: a message crosses in about a millisecond, while the
+      // node it produces needs a frame — and headless gives a page that is not
+      // the active one a frame every few seconds. Waiting on the DOM for every
+      // step turned a test about cursors into five seconds of waiting for the
+      // compositor, three times over.
       await page.mouse('mouseMoved', 400, 300);
+      await second.waitFor('window.app.cursors.list().length === 1', {
+        label: "the first page's cursor to arrive",
+      });
       await second.waitFor("document.querySelector('.cursor') !== null", {
-        label: "the first page's cursor to appear",
+        label: 'the cursor to be drawn',
+        timeout: 15_000,
       });
 
       const at = () => second.eval(`(() => {
@@ -236,22 +248,21 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
       // a pointer that leaves the board is gone, not parked at the edge of it
       await page.eval(`document.getElementById('stage').dispatchEvent(
         new PointerEvent('pointerleave', { bubbles: false }))`);
-      await second.waitFor("document.querySelector('.cursor') === null", {
+      await second.waitFor('window.app.cursors.list().length === 0', {
         label: 'the cursor to leave with the pointer',
       });
-      assert.deepEqual(await second.eval('window.app.cursors.list()'), []);
 
-      // and presence is the backstop: someone who has gone takes theirs with them
+      // presence is the backstop: someone who has gone takes theirs with them
       await page.mouse('mouseMoved', 420, 320);
-      await second.waitFor("document.querySelector('.cursor') !== null");
+      await second.waitFor('window.app.cursors.list().length === 1');
       await second.eval('window.app.cursors.setMembers([])');
-      assert.equal(await second.eval(`document.querySelector('.cursor') === null`), true);
+      assert.deepEqual(await second.eval('window.app.cursors.list()'), []);
 
       // Leaving the board takes the whole layer with it. Driven through
       // destroy() rather than by navigating, because a navigation would take
       // the teardown with it and prove nothing about what it unwound.
       await page.mouse('mouseMoved', 440, 340);
-      await second.waitFor("document.querySelector('.cursor') !== null");
+      await second.waitFor('window.app.cursors.list().length === 1');
 
       await second.eval('window.app.destroy()');
       assert.equal(await second.eval(`document.querySelector('.cursor') === null`), true);
@@ -316,12 +327,14 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
      * The ids are unique per run: they end up as rows in a database that
      * outlives the run, and a fixed id adopted by one anonymous user is a
      * primary key the next run's user cannot have — which is a failure of the
-     * fixture, indistinguishable from a failure of adoption.
+     * fixture, indistinguishable from a failure of adoption. A pid is not
+     * enough on its own; operating systems reuse those.
      */
+    const run = randomUUID().replace(/-/g, '').slice(0, 8);
     let seeded = 0;
     const givenABrowserWithBoards = async (titlesById) => {
       const boards = Object.fromEntries(
-        Object.entries(titlesById).map(([name, title]) => [`${name}${process.pid.toString(36)}${seeded++}`, title]),
+        Object.entries(titlesById).map(([name, title]) => [`${name}${run}${seeded++}`, title]),
       );
       await page.eval('localStorage.clear()');
       for (const [id, title] of Object.entries(boards)) {
@@ -380,6 +393,53 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
       // a second visit is the same account and the same list, not a doubled one
       await page.goto(LIST_PATH, { ready: SETTLED });
       assert.deepEqual(await titles(), ['Kept']);
+    });
+
+    /**
+     * An adoption that cannot land must not open the gate on a list with
+     * boards missing from it — that is the thing adoption exists to prevent.
+     *
+     * The failure is real rather than simulated: a board id that already
+     * belongs to somebody else is invisible to this account, so the write
+     * falls through to an insert, loses on the primary key, and is refused the
+     * retry. Exactly what a browser carrying a board someone else now owns
+     * would meet.
+     */
+    test('a board that cannot be moved holds the gate, and can be retried', async () => {
+      // This test provokes a real primary-key conflict, so it owns the console
+      // errors that come with it — consumed here rather than tolerated by the
+      // suite, because an unexplained 409 is what exposed the double-adoption
+      // race and this suite should keep being able to notice one.
+      const before = page.errors.length;
+
+      await page.eval('localStorage.clear()');
+      await page.goto(LIST_PATH, { ready: SETTLED });
+      const taken = await newBoard();
+      await page.goto(LIST_PATH, { ready: SETTLED });
+
+      // a different person, carrying a board with that id in their browser
+      await page.eval('localStorage.clear()');
+      await page.eval(`localStorage.setItem('peerthink:board:' + ${JSON.stringify(taken)}, JSON.stringify({
+        v: 1, id: ${JSON.stringify(taken)}, title: 'mine, allegedly', updatedAt: 1,
+        board: { v: 1, order: [], objects: [] },
+      }))`);
+
+      await page.goto(LIST_PATH, { ready: "Boolean(document.querySelector('[data-unadopted]'))" });
+      assert.equal(await page.eval(`document.querySelector('.board-grid') === null`), true,
+        'the workspace was shown with boards missing from it');
+
+      // and it is a choice rather than a dead end
+      await clickIn(page, '[data-action="skip-adoption"]');
+      await page.waitFor(SETTLED, { label: 'the list, entered deliberately' });
+      assert.deepEqual(await titles(), []);
+
+      const provoked = page.errors.splice(before);
+      assert.deepEqual(
+        provoked.filter((e) => !/status of 409/.test(e)),
+        [],
+        'the test logged something other than the conflict it set out to cause',
+      );
+      assert.ok(provoked.length, 'the conflict this test depends on did not happen');
     });
 
     /**
