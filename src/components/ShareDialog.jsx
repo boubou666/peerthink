@@ -32,11 +32,20 @@ export function ShareDialog({ boardId, title, onClose, onLeave }) {
 
   useEffect(() => {
     let live = true;
-    refresh().then(({ link, members }) => {
-      if (!live) return;
-      setInvite(link);
-      setPeople(members);
-    });
+    refresh()
+      .then(({ link, members }) => {
+        if (!live) return;
+        setInvite(link);
+        setPeople(members);
+      })
+      .catch(() => {
+        // `people === null` is the loading state, so a read that never
+        // resolves leaves the dialog spinning forever. An empty list is the
+        // honest fallback: it is what someone with no access sees.
+        if (!live) return;
+        setPeople([]);
+        setError('Could not read who has access.');
+      });
     return () => {
       live = false;
     };
@@ -47,6 +56,8 @@ export function ShareDialog({ boardId, title, onClose, onLeave }) {
     setError(null);
     try {
       return await fn();
+    } catch {
+      setError('Something went wrong. Try again.');
     } finally {
       setBusy(false);
     }

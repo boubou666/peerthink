@@ -6,7 +6,7 @@
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const COVERAGE = join(ROOT, '.coverage');
@@ -199,7 +199,16 @@ export function report({ threshold = 95, quiet = false, unmeasured = [], note = 
   return { rows, pct, total, covered, pass: pct >= threshold };
 }
 
-if (import.meta.main) {
+/**
+ * Whether this module is what node was asked to run.
+ *
+ * `import.meta.main` says this in one word, and is not available until Node
+ * 22.19 — package.json allows 22.0, where it is silently undefined and the
+ * block below simply never runs. Comparing the URLs works everywhere.
+ */
+const isEntryPoint = (url) => Boolean(process.argv[1]) && url === pathToFileURL(process.argv[1]).href;
+
+if (isEntryPoint(import.meta.url)) {
   const threshold = Number(process.env.COVERAGE_THRESHOLD ?? 95);
   process.exit(report({ threshold }).pass ? 0 : 1);
 }

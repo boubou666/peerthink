@@ -101,6 +101,21 @@ describe('shell', () => {
   const answerPrompt = (value) => page.eval(`window.prompt = () => ${JSON.stringify(value)};`);
   const answerConfirm = (value) => page.eval(`window.confirm = () => ${value};`);
 
+  /**
+   * This suite is about the Web Storage build, and a Vite dev server reads
+   * `.env.local` — so a developer who has run the app against a local stack
+   * would silently be testing the Supabase one instead, and every assertion
+   * here about localStorage would be about the wrong thing. test/run.js blanks
+   * the variables for this origin; this is what notices if it stops.
+   */
+  test('this origin is the build with no project behind it', async () => {
+    assert.equal(
+      await page.eval(`Boolean(document.querySelector('[data-account-gate], .account-menu, [data-action="share"]'))`),
+      false,
+      'the plain origin is serving a Supabase build',
+    );
+  });
+
   describe('board list', () => {
     test('starts empty and says so', async () => {
       assert.equal(await showsEmptyState(), true);

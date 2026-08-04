@@ -114,6 +114,29 @@ describe('supabase auth', () => {
     assert.equal(countOf(names(), 'signInAnonymously'), 0);
   });
 
+  /**
+   * The port's contract is that it answers. One path did not: a client that
+   * throws left RequireAccount's .then() with nowhere to put the rejection,
+   * and the gate sat on "Loading…" with no retry.
+   */
+  test('a client that throws is reported, not propagated', async () => {
+    for (const method of ['getSession', 'signInAnonymously']) {
+      const { client } = stubClient({
+        [method]: () => {
+          throw new Error('the transport gave up');
+        },
+      });
+      const auth = createSupabaseAuth({ client });
+
+      const result = await auth.start();
+      assert.equal(result.ok, false, `${method} threw and start() did not answer`);
+      assert.match(result.message, /transport gave up/);
+
+      // and the memo was dropped, so the retry button is not answering with it
+      assert.equal(auth.current(), null);
+    }
+  });
+
   test('an error with no message still says something', async () => {
     const { client } = stubClient({ signInAnonymously: { data: {}, error: {} } });
     const result = await createSupabaseAuth({ client }).start();

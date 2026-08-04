@@ -225,6 +225,32 @@ describe('sharing', { skip: stack ? false : 'no local supabase (npx supabase sta
       assert.ok(await bob.repository.load(id));
     });
 
+    /**
+     * A delete the policies refuse matches nothing and reports no error, so
+     * "no error" is not "it happened" — the dialog was clearing a link that
+     * was still live.
+     */
+    test('a refused revoke or removal says so', async () => {
+      const id = await aliceBoard();
+      const { token } = await alice.sharing.share(id, 'editor');
+      await bob.sharing.redeem(token);
+
+      assert.equal(await bob.sharing.revoke(id), false, 'a member revoked their owner\'s link');
+      assert.ok(await alice.sharing.invite(id), 'the link was actually revoked');
+
+      assert.equal(await bob.sharing.remove(id, alice.id), false);
+      assert.equal((await alice.sharing.people(id)).length, 2);
+    });
+
+    test('revoking what is not there is not a success', async () => {
+      const id = await aliceBoard();
+      assert.equal(await alice.sharing.revoke(id), false, 'revoked a link that never existed');
+
+      await alice.sharing.share(id, 'editor');
+      assert.equal(await alice.sharing.revoke(id), true);
+      assert.equal(await alice.sharing.revoke(id), false, 'revoked the same link twice');
+    });
+
     /** Sharing is the owner's alone; an editor cannot hand the board on. */
     test('a member cannot mint a link of their own', async () => {
       const id = await aliceBoard();

@@ -1,7 +1,7 @@
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { LOCAL, REMOTE, Store } from '../../src/core/store.js';
+import { LOCAL, REMOTE, Store, isOp } from '../../src/core/store.js';
 
 const card = (id, props = {}) => ({ id, type: 'card', x: 0, y: 0, w: 200, h: 120, text: '', ...props });
 
@@ -258,6 +258,42 @@ describe('Store', () => {
       store.apply([op], false, REMOTE);
 
       assert.equal(order(), once);
+    });
+
+    /**
+     * apply() trusts what it is handed, which is right in-process and wrong
+     * over a wire — an `add` with no `obj` throws on the way in and takes the
+     * receiving session down with it.
+     */
+    describe('isOp', () => {
+      test('accepts the four ops', () => {
+        assert.equal(isOp({ t: 'add', obj: card('a') }), true);
+        assert.equal(isOp({ t: 'del', id: 'a' }), true);
+        assert.equal(isOp({ t: 'set', id: 'a', patch: { x: 1 } }), true);
+        assert.equal(isOp({ t: 'order', order: ['a', 'b'] }), true);
+      });
+
+      test('rejects anything apply would choke on or ignore', () => {
+        for (const junk of [
+          null, undefined, 'add', 42, {},
+          { t: 'nope' },
+          { t: 'add' },                              // the one that throws
+          { t: 'add', obj: 'a card' },
+          { t: 'add', obj: { x: 1 } },               // no id
+          { t: 'del' },
+          { t: 'set', id: 'a' },                     // no patch
+          { t: 'set', patch: {} },
+          { t: 'order' },
+          { t: 'order', order: [1, 2] },             // ids are strings
+        ]) {
+          assert.equal(isOp(junk), false, `accepted ${JSON.stringify(junk)}`);
+        }
+      });
+
+      test('what it rejects is what would have thrown', () => {
+        const store = new Store();
+        assert.throws(() => store.apply([{ t: 'add' }]), 'a malformed add used to be survivable');
+      });
     });
 
     test('a remote op can be kept out of history', () => {

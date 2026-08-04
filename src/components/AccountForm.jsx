@@ -23,11 +23,20 @@ export function AccountForm({ mode, onSwitch, onDone }) {
     setBusy(true);
     setError(null);
 
-    const result = registering
-      ? await auth.register({ email, password })
-      : await auth.signIn({ email, password });
+    // The port answers rather than throws — but a form whose only way out of
+    // `busy` is the happy path is one keystroke of somebody else's bug away
+    // from a permanently disabled button.
+    let result;
+    try {
+      result = registering
+        ? await auth.register({ email, password })
+        : await auth.signIn({ email, password });
+    } catch {
+      result = { ok: false, message: 'Something went wrong. Try again.' };
+    } finally {
+      setBusy(false);
+    }
 
-    setBusy(false);
     if (!result.ok) {
       setError(result.message);
       return;

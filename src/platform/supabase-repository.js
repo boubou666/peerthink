@@ -141,7 +141,11 @@ export function createSupabaseRepository({ client, auth, table = 'boards' }) {
 
       const inserted = await from().insert({ id, owner_id: ownerId, ...patch }).select('version');
       if (!inserted.error) {
-        versions.set(id, inserted.data[0].version);
+        // The row is normally returned; a policy that permits the insert and
+        // not the read would hand back nothing, and indexing that would throw
+        // out of a method whose whole contract is that it answers.
+        const version = inserted.data?.[0]?.version;
+        if (version !== undefined) versions.set(id, version);
         return true;
       }
 

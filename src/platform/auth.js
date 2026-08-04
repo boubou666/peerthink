@@ -42,6 +42,18 @@ export function createSupabaseAuth({ client }) {
   });
 
   const startOnce = async () => {
+    try {
+      return await resolveSession();
+    } catch (error) {
+      // The port promises an answer, and one path did not keep that promise:
+      // a client that *throws* — a transport that never came back, a storage
+      // that blew up — left the gate on "Loading…" with no retry, because the
+      // caller is a .then() with nowhere to put a rejection.
+      return failed(error, 'Could not start a session.');
+    }
+  };
+
+  const resolveSession = async () => {
     const { data, error } = await client.auth.getSession();
     if (error) return failed(error, 'Could not read the stored session.');
     if (data.session) {

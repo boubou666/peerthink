@@ -35,15 +35,29 @@ create table if not exists auth.users (
  * object. `true` on current_setting makes a missing GUC null rather than an
  * error, which is what an unauthenticated request looks like.
  */
-create or replace function auth.uid()
-returns uuid
-language sql
-stable
-as $$
-  select coalesce(
-    nullif(current_setting('request.jwt.claim.sub', true), ''),
-    nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
-  )::uuid;
+-- Created only if it is not already there, and deliberately not `or replace`.
+-- `--stub` is documented for a bare Postgres, but nothing stops it being
+-- pointed at a real project by mistake — and replacing GoTrue's auth.uid()
+-- there would swap the function every RLS policy in the database reads for a
+-- stand-in of it. A stub that can break the thing it stands in for is worse
+-- than no stub.
+do $$
+begin
+  if to_regprocedure('auth.uid()') is null then
+    execute $fn$
+      create function auth.uid()
+      returns uuid
+      language sql
+      stable
+      as $body$
+        select coalesce(
+          nullif(current_setting('request.jwt.claim.sub', true), ''),
+          nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
+        )::uuid;
+      $body$;
+    $fn$;
+  end if;
+end
 $$;
 
 grant usage on schema auth to anon, authenticated;

@@ -46,7 +46,18 @@ if (!findChrome()) {
 // that test is what keeps test/node/** on Node built-ins
 if (await ensureBuild()) console.log('built dist/ for the production-server test');
 
-const { server: vite, base: appBase } = await startDevServer();
+/**
+ * The plain origin, and it has to be made plain rather than left plain.
+ *
+ * Vite reads `.env.local`, which a developer who has run the app against a
+ * local stack certainly has — and it would quietly turn this server into a
+ * Supabase build, so every suite that assumes Web Storage would be talking to
+ * Postgres instead. Blanking the two variables here means the offline suites
+ * are offline because this file says so, not because of what is on disk.
+ */
+const { server: vite, base: appBase } = await startDevServer({
+  env: { VITE_SUPABASE_URL: '', VITE_SUPABASE_ANON_KEY: '' },
+});
 
 /**
  * A second origin, serving the same sources to a build that has been told

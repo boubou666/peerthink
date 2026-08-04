@@ -49,9 +49,30 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
   const join = async (user, boardId, extra = {}) => {
     const store = new Store();
     const scheduler = createManualScheduler();
-    const sync = createBoardSync({ client: user.client, boardId, store, scheduler, ...extra });
+    const taps = new Set();
+    const sync = createBoardSync({
+      client: user.client,
+      boardId,
+      store,
+      scheduler,
+      ...extra,
+      onCursor: (cursor) => {
+        extra.onCursor?.(cursor);
+        for (const tap of taps) tap(cursor);
+      },
+    });
     const status = await sync.ready;
-    return { store, scheduler, sync, status };
+    return {
+      store,
+      scheduler,
+      sync,
+      status,
+      /** Listen in on cursors without displacing whatever else is listening. */
+      onCursor(fn) {
+        taps.add(fn);
+        return () => taps.delete(fn);
+      },
+    };
   };
 
   const card = (id, text = 'hello') => ({ id, type: 'card', x: 0, y: 0, w: 100, h: 60, text });
@@ -77,17 +98,42 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
     return id;
   };
 
-  /** Poll rather than sleep: delivery is a network hop, not a known delay. */
+  /**
+   * Poll rather than sleep: delivery is a network hop, not a known delay.
+   *
+   * Throws on timeout rather than answering false. Returning false made every
+   * bare `await waitFor(...)` a no-op — the thing never arrived, the test
+   * carried on, and whatever it asserted next passed for the wrong reason.
+   */
   const waitFor = async (predicate, label, timeout = 5000) => {
     const deadline = Date.now() + timeout;
-    while (Date.now() < deadline) {
-      if (predicate()) return true;
+    for (;;) {
+      if (predicate()) return;
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
       await new Promise((r) => setTimeout(r, 20));
     }
-    return false;
   };
 
-  const settle = () => new Promise((r) => setTimeout(r, 250));
+  /**
+   * A barrier for "this did not arrive" assertions.
+   *
+   * A fixed sleep is a guess: too short and the assertion passes because the
+   * message was still in flight, too long and every run pays for it. Instead a
+   * cursor is sent — a message on the same channel, in the same order, that
+   * touches no document — and the assertion is made once *that* has landed.
+   * Whatever was supposed not to arrive has had its turn on the wire.
+   */
+  const overtake = async (from, to) => {
+    const seen = [];
+    const stop = to.onCursor((cursor) => seen.push(cursor));
+    from.sync.moveCursor({ x: 1, y: 1 });
+    from.scheduler.flushTimers();
+    try {
+      await waitFor(() => seen.length > 0, 'the barrier message to come through');
+    } finally {
+      stop();
+    }
+  };
 
   before(async () => {
     alice = await signIn();
@@ -117,10 +163,7 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
     hers.store.apply([{ t: 'add', obj: card('c1', 'from alice') }]);
     hers.scheduler.flushTimers();
 
-    assert.ok(
-      await waitFor(() => his.store.has('c1'), 'the op to arrive'),
-      'the card never reached Bob',
-    );
+    await waitFor(() => his.store.has('c1'), 'the card to reach Bob');
     assert.equal(his.store.get('c1').text, 'from alice');
     assert.deepEqual(his.store.order, ['c1']);
 
@@ -138,9 +181,11 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
     await waitFor(() => his.store.has('c1'), 'the op to arrive');
 
     // Applying it locally would have queued a send; the timers are released
-    // so an echo would have every chance to go out.
+    // so an echo would have every chance to go out, and then a message that
+    // *is* expected overtakes it — if that has arrived and the echo has not,
+    // the echo was never sent.
     his.scheduler.flushTimers();
-    await settle();
+    await overtake(his, hers);
 
     assert.equal(his.store.canUndo, false, "someone else's edit landed in Bob's history");
     assert.equal(hers.store.order.length, 1, 'the op came back and was applied twice');
@@ -159,7 +204,7 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
     his.store.apply([{ t: 'add', obj: card('b1', 'his') }]);
     his.scheduler.flushTimers();
 
-    assert.ok(await waitFor(() => his.store.has('a1') && hers.store.has('b1'), 'both ops'));
+    await waitFor(() => his.store.has('a1') && hers.store.has('b1'), 'both ops to cross');
     assert.equal(hers.store.get('b1').text, 'his');
     assert.equal(his.store.get('a1').text, 'hers');
 
@@ -183,9 +228,38 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
     hers.store.apply([{ t: 'set', id: 'c1', patch: { text: 'third' } }], false);
     hers.scheduler.flushTimers();
 
-    assert.ok(await waitFor(() => his.store.get('c1')?.text === 'third', 'the last op'));
+    await waitFor(() => his.store.get('c1')?.text === 'third', 'the last op of the burst');
     // the leading op goes out alone; the two behind it share the next message
     assert.ok(deliveries <= 2, `a burst of 3 ops became ${deliveries} messages`);
+
+    await hers.sync.destroy();
+    await his.sync.destroy();
+  });
+
+  /**
+   * The receiver applies whatever arrives, so what arrives has to be checked.
+   * An `add` with no `obj` used to throw inside apply() and take the session
+   * with it — one bad client wedging everyone else on the board.
+   */
+  test('a malformed batch is dropped, and the next good one still lands', async () => {
+    const id = await sharedBoard();
+    const hers = await join(alice, id);
+    const his = await join(bob, id);
+
+    await hers.sync.ready;
+    // sent past the store, because the store is what would have refused it
+    await alice.client.channel(topicFor(id)).send({
+      type: 'broadcast',
+      event: 'ops',
+      payload: { ops: [{ t: 'add' }, { t: 'add', obj: card('poison') }] },
+    });
+    await new Promise((r) => setTimeout(r, 250));
+
+    assert.equal(his.store.order.length, 0, 'a malformed batch was half applied');
+
+    hers.store.apply([{ t: 'add', obj: card('c1') }]);
+    hers.scheduler.flushTimers();
+    await waitFor(() => his.store.has('c1'), 'the receiver to still be working');
 
     await hers.sync.destroy();
     await his.sync.destroy();
@@ -198,9 +272,18 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
 
     await his.sync.destroy();
 
+    // Positive and deterministic: the channel is gone from the client, which
+    // is the thing destroy() is for. Nothing can be delivered to it after
+    // this, so the store check below needs no waiting to be meaningful.
+    assert.equal(
+      bob.client.getChannels().some((c) => c.topic === `realtime:${his.sync.topic}`),
+      false,
+      'the channel outlived the sync that opened it',
+    );
+
     hers.store.apply([{ t: 'add', obj: card('c1') }]);
     hers.scheduler.flushTimers();
-    await settle();
+    await new Promise((r) => setTimeout(r, 250));
 
     assert.equal(his.store.has('c1'), false, 'a destroyed sync was still listening');
   });
@@ -219,9 +302,12 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
       assert.equal(hers.status, 'SUBSCRIBED');
       assert.notEqual(his.status, 'SUBSCRIBED', 'a stranger was let onto the board');
 
+      // The refusal is the assertion — a channel that was never joined cannot
+      // deliver anything, so the store check is a consequence of it rather
+      // than a race to be waited out.
       hers.store.apply([{ t: 'add', obj: card('c1', 'private') }]);
       hers.scheduler.flushTimers();
-      await settle();
+      await new Promise((r) => setTimeout(r, 250));
       assert.equal(his.store.has('c1'), false, "a stranger received the board's contents");
 
       await hers.sync.destroy();
@@ -238,11 +324,14 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
 
       hers.store.apply([{ t: 'add', obj: card('c1', 'from alice') }]);
       hers.scheduler.flushTimers();
-      assert.ok(await waitFor(() => his.store.has('c1'), 'the op to reach the viewer'));
+      await waitFor(() => his.store.has('c1'), 'the op to reach the viewer');
 
       his.store.apply([{ t: 'set', id: 'c1', patch: { text: 'from bob' } }]);
       his.scheduler.flushTimers();
-      await settle();
+      // Alice sends something to herself-ward that Bob will see, which cannot
+      // land before Bob's refused edit would have; then his edit has had its
+      // chance and demonstrably did not take it.
+      await overtake(hers, his);
 
       assert.equal(hers.store.get('c1').text, 'from alice', "a viewer's edit was broadcast");
 
@@ -268,7 +357,7 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
 
       hers.sync.moveCursor({ x: 120, y: -40 });
 
-      assert.ok(await waitFor(() => seen.length > 0, 'the cursor to arrive'));
+      await waitFor(() => seen.length > 0, 'the cursor to arrive');
       assert.deepEqual(seen[0], { id: hers.sync.clientId, x: 120, y: -40 });
       assert.equal(his.store.order.length, 0, 'a pointer became a change to the board');
       assert.equal(his.store.canUndo, false);
@@ -289,9 +378,9 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
       hers.sync.moveCursor(null);
       hers.scheduler.flushTimers();
 
-      assert.ok(
-        await waitFor(() => seen.some((cursor) => cursor.gone), 'the departure'),
-        'a pointer left the board and its cursor stayed',
+      await waitFor(
+        () => seen.some((cursor) => cursor.gone),
+        'the departure — a pointer left the board and its cursor stayed',
       );
 
       await hers.sync.destroy();
@@ -305,12 +394,9 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
       const his = await join(bob, id, { onMembers: (members) => rosters.push(members) });
       const hers = await join(alice, id, { identity: { label: 'ada@example.com' } });
 
-      assert.ok(
-        await waitFor(
-          () => rosters.at(-1)?.some((member) => member.label === 'ada@example.com'),
-          'alice to appear on the roster',
-        ),
-        'the name never arrived',
+      await waitFor(
+        () => rosters.at(-1)?.some((member) => member.label === 'ada@example.com'),
+        'alice to appear on the roster by name',
       );
       assert.equal(
         rosters.at(-1).some((member) => member.id === his.sync.clientId),
@@ -338,9 +424,9 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
       const his = await join(bob, id);
 
       // both sides have to settle on the same person, from the same state
-      assert.ok(
-        await waitFor(() => his.sync.isWriter() === false, 'bob to stand down'),
-        'two clients both believed they were the writer',
+      await waitFor(
+        () => his.sync.isWriter() === false,
+        'bob to stand down — two clients both believed they were the writer',
       );
       assert.equal(hers.sync.isWriter(), true, 'the incumbent lost authority to a newcomer');
 
@@ -358,9 +444,9 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
 
       await hers.sync.destroy();
 
-      assert.ok(
-        await waitFor(() => his.sync.isWriter(), 'bob to take over'),
-        'nobody was left writing the board',
+      await waitFor(
+        () => his.sync.isWriter(),
+        'bob to take over — nobody was left writing the board',
       );
       // the handover is announced, not just observable — it is what tells the
       // new writer to save what the old one may not have got round to

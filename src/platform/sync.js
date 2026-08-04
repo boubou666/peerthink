@@ -1,5 +1,5 @@
 import { createIdGenerator } from '../core/ids.js';
-import { LOCAL, REMOTE } from '../core/store.js';
+import { LOCAL, REMOTE, isOp } from '../core/store.js';
 
 /**
  * Live collaboration: the op log, on a wire.
@@ -127,6 +127,14 @@ export function createBoardSync({
   channel.on('broadcast', { event: EVENT }, (message) => {
     const ops = message?.payload?.ops;
     if (stopped || !Array.isArray(ops)) return;
+
+    // The whole batch is dropped rather than the bad op filtered out of it.
+    // Everyone on this channel is an authorised editor, so this is not a
+    // security boundary — it is a version boundary. A sender emitting one op
+    // this client cannot read is a sender whose other ops mean something it
+    // does not understand either, and half-applying that is worse than
+    // ignoring it.
+    if (!ops.every(isOp)) return;
 
     // record: false — someone else's edit does not belong in this user's undo
     // stack, and REMOTE is what stops it being sent straight back out.

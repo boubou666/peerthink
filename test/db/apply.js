@@ -9,7 +9,7 @@
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import pg from 'pg';
 
@@ -56,7 +56,16 @@ export async function apply(connectionString, { stub = false } = {}) {
   return applied;
 }
 
-if (import.meta.main) {
+/**
+ * Whether this module is what node was asked to run.
+ *
+ * `import.meta.main` says this in one word, and is not available until Node
+ * 22.19 — package.json allows 22.0, where it is silently undefined and the
+ * block below simply never runs. Comparing the URLs works everywhere.
+ */
+const isEntryPoint = (url) => Boolean(process.argv[1]) && url === pathToFileURL(process.argv[1]).href;
+
+if (isEntryPoint(import.meta.url)) {
   const url = process.env.DATABASE_URL;
   if (!url) {
     console.error('DATABASE_URL is not set.');

@@ -15,6 +15,30 @@
 
 const HISTORY_LIMIT = 300;
 
+/**
+ * Whether an op is one of ours, and complete enough to apply.
+ *
+ * `apply` trusts what it is given, which is right for a caller in this
+ * process and wrong for one that arrived over a wire — an `add` with no `obj`
+ * throws on the way in and takes the receiver's session with it. The vocabulary
+ * is defined here, so the check belongs here too rather than in the transport.
+ */
+export function isOp(op) {
+  if (!op || typeof op !== 'object') return false;
+  switch (op.t) {
+    case 'add':
+      return Boolean(op.obj) && typeof op.obj === 'object' && typeof op.obj.id === 'string';
+    case 'del':
+      return typeof op.id === 'string';
+    case 'set':
+      return typeof op.id === 'string' && Boolean(op.patch) && typeof op.patch === 'object';
+    case 'order':
+      return Array.isArray(op.order) && op.order.every((id) => typeof id === 'string');
+    default:
+      return false;
+  }
+}
+
 /** Where a change came from. Remote ops are applied but never sent back. */
 export const LOCAL = 'local';
 export const REMOTE = 'remote';

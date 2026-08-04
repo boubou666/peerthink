@@ -47,10 +47,19 @@ export function createSharing({ client, auth }) {
       return error || !data ? null : data;
     },
 
-    /** Stop the link working. Everyone who has already joined stays. */
+    /**
+     * Stop the link working. Everyone who has already joined stays.
+     *
+     * The deleted rows are asked for, not just the absence of an error: a
+     * delete the policies refuse matches nothing and reports no error, so
+     * without this a member's revoke came back true and the dialog cleared a
+     * link that was still live. False here means "nothing was revoked",
+     * whether that is because it was not yours or because there was nothing
+     * there — the caller cannot act differently on the two anyway.
+     */
     async revoke(boardId) {
-      const { error } = await invites().delete().eq('board_id', boardId);
-      return !error;
+      const { data, error } = await invites().delete().eq('board_id', boardId).select('board_id');
+      return !error && data.length > 0;
     },
 
     /**
@@ -67,13 +76,14 @@ export function createSharing({ client, auth }) {
 
     /** Take someone off the board. Their access goes; their edits stay. */
     async remove(boardId, userId) {
-      const { error } = await client
+      const { data, error } = await client
         .from('board_members')
         .delete()
         .eq('board_id', boardId)
-        .eq('user_id', userId);
+        .eq('user_id', userId)
+        .select('board_id');
 
-      return !error;
+      return !error && data.length > 0;
     },
 
     /**
