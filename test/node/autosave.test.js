@@ -131,6 +131,68 @@ describe('autosave', () => {
     });
   });
 
+  /**
+   * A write that did not land leaves the document ahead of the stored one, and
+   * nothing else will notice — the next settled edit is what retries it.
+   */
+  describe('dirty', () => {
+    const withRepository = (save) => {
+      const store = new Store();
+      const scheduler = createManualScheduler();
+      const autosave = createAutosave({ store, repository: { load: async () => null, save }, boardId: 'alpha', scheduler });
+      return { store, scheduler, autosave };
+    };
+
+    test('a settled write leaves nothing outstanding', async () => {
+      const { store, scheduler, autosave } = withRepository(async () => true);
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(autosave.dirty, false);
+    });
+
+    test('a refused write stays outstanding', async () => {
+      const { store, scheduler, autosave } = withRepository(async () => false);
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(autosave.dirty, true, 'a save the server refused was forgotten');
+    });
+
+    test('a rejected write stays outstanding, whichever path made it', async () => {
+      const failing = () => withRepository(async () => { throw new Error('offline'); });
+
+      // the debounced path
+      const viaDebounce = failing();
+      viaDebounce.store.apply([{ t: 'add', obj: card('a') }]);
+      viaDebounce.scheduler.flushTimers();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(viaDebounce.autosave.dirty, true);
+
+      // and a direct flush, which is what app.js uses for the replay and for
+      // the save on taking over write authority
+      const viaFlush = failing();
+      viaFlush.store.apply([{ t: 'add', obj: card('a') }]);
+      await assert.rejects(() => viaFlush.autosave.flush());
+      assert.equal(viaFlush.autosave.dirty, true, 'a direct flush that rejected looked clean');
+    });
+
+    test('a client without authority is dirty rather than saved', async () => {
+      const store = new Store();
+      const scheduler = createManualScheduler();
+      const autosave = createAutosave({
+        store, scheduler, boardId: 'alpha', canWrite: () => false,
+        repository: { load: async () => null, save: async () => true },
+      });
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      assert.equal(await autosave.flush(), false);
+      assert.equal(autosave.dirty, true);
+    });
+  });
+
   test('a repository that rejects does not surface an unhandled rejection', async () => {
     const store = new Store();
     const scheduler = createManualScheduler();

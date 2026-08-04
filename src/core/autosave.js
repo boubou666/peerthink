@@ -31,12 +31,25 @@ export function createAutosave({ store, repository, boardId, scheduler, delay = 
       dirty = true;
       return false;
     }
-    const wrote = await repository.save(boardId, store.toJSON());
-    dirty = !wrote;
-    return wrote;
+
+    try {
+      const wrote = await repository.save(boardId, store.toJSON());
+      dirty = !wrote;
+      return wrote;
+    } catch (error) {
+      // Set here rather than in the debounced wrapper below: `flush` is public
+      // and the callers that use it directly — the replay after a load, the
+      // save on taking over write authority — would otherwise leave a board
+      // that failed to write looking clean, and nothing would retry it.
+      dirty = true;
+      throw error;
+    }
   };
 
-  const attempt = () => flush().catch(() => (dirty = true));
+  // Rethrown by flush, and swallowed here: the debounced path fires on every
+  // settled edit with nobody waiting, and a rejected autosave is a dropped
+  // write rather than a reason to take the tab down.
+  const attempt = () => flush().catch(() => false);
   const save = scheduler.debounce(attempt, delay);
   const stop = store.on(save);
 
