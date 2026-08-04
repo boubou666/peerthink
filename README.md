@@ -311,10 +311,22 @@ Ops emitted between reading the snapshot and joining the channel are missed —
 `hydrate()` subscribes after the load, so a change made in that window shows up
 on the next reload rather than immediately.
 
-A refused save is not yet recovered from. The writer keeps its document and
-stops persisting until it reads the board again, which is the safe direction —
-nothing is overwritten — but a client that has been disconnected long enough
-will hold edits it can no longer land.
+A refused save is retried on the next settled edit, and not before — the board
+stays dirty until a write lands, but nothing chases it on a timer, so a board
+whose last edit was refused and then left alone keeps changes that are not
+stored. The same gap closes a tab: a write still inside the autosave debounce
+does not survive the page. Both want a flush on `pagehide`.
+
+Signing in with an emailed confirmation link does not work. `detectSessionInUrl`
+is off because HashRouter owns the fragment, so the tokens in a confirmation
+link are never read — the fix is to handle the fragment in the bootstrap,
+before the router mounts. Local dev has `enable_confirmations = false`, so this
+path is not exercised by anything.
+
+Both repositories answer rather than reject, by contract — but the contract is
+documented, not enforced. Nothing above them is written to survive a rejected
+call: `hydrate()` would leave an editable canvas that saves nowhere, and the
+board list would sit on "Loading…" for good.
 
 Boards already in a browser's Web Storage are not adopted when a project is
 configured — the account and the browser are separate places, and moving boards
