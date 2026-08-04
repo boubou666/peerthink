@@ -1,6 +1,10 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createServer } from 'vite';
+import { build, createServer } from 'vite';
+
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 /**
  * The browser suite runs against Vite's dev server rather than a bundle.
@@ -10,11 +14,11 @@ import { createServer } from 'vite';
  * which is what keeps the coverage report meaningful. The built artifact is
  * covered separately by the build smoke test.
  *
- * Vite is the one framework dependency `test/**` is allowed to import, and it
- * is orchestration rather than subject: this module starts the dev server,
- * `test/run.js` owns its lifetime, and `test/node/server.test.js` builds `dist/`
- * when the production-server test needs something real to serve. The code under
- * test still imports nothing — `src/core/**` stays plain ES modules.
+ * This module is the single place in `test/**` that imports Vite, so the rest
+ * of the suite stays node:test plus raw CDP. It is orchestration rather than
+ * subject: it starts the dev server and builds `dist/`, `test/run.js` drives
+ * both, and no test file imports either. The code under test still imports
+ * nothing — `src/core/**` stays plain ES modules.
  */
 export async function startDevServer() {
   const server = await createServer({
@@ -37,4 +41,16 @@ export async function startDevServer() {
   }
 
   return { server, base: url.replace(/\/$/, '') };
+}
+
+/**
+ * Make sure `dist/` exists, so the production-server test has something real to
+ * serve. `npm test` runs before `npm run build` in CI, and that test asserts a
+ * genuine 200 containing the application root rather than tiptoeing around an
+ * absent build.
+ */
+export async function ensureBuild() {
+  if (existsSync(join(ROOT, 'dist', 'index.html'))) return false;
+  await build({ configFile: join(ROOT, 'vite.config.js'), root: ROOT, logLevel: 'error' });
+  return true;
 }

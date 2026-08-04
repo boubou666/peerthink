@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { launchChrome, findChrome } from './helpers/chrome.js';
-import { startDevServer } from './helpers/vite.js';
+import { ensureBuild, startDevServer } from './helpers/vite.js';
 import { report } from './coverage.js';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -40,6 +40,10 @@ if (!findChrome()) {
   console.error('No Chromium available. Set CHROME_PATH to a Chrome/Chromium binary.');
   process.exit(1);
 }
+
+// the production-server test serves dist/; building it here rather than inside
+// that test is what keeps test/node/** on Node built-ins
+if (await ensureBuild()) console.log('built dist/ for the production-server test');
 
 const { server: vite, base: appBase } = await startDevServer();
 const { child: chrome, base: browserBase } = await launchChrome({

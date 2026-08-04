@@ -5,7 +5,6 @@ import { existsSync } from 'node:fs';
 import { createServer as createSocket } from 'node:net';
 import { basename, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { build } from 'vite';
 
 import { PUBLIC_DIR, createStaticServer, resolveFile } from '../../server.js';
 
@@ -157,15 +156,12 @@ describe('static server', () => {
   });
 });
 
-describe('running server.js directly', () => {
-  before(async () => {
-    // `npm test` runs before `npm run build` in CI, so give the production
-    // server something real to serve rather than asserting around its absence
-    if (!existsSync(join(ROOT, 'dist', 'index.html'))) {
-      await build({ configFile: join(ROOT, 'vite.config.js'), root: ROOT, logLevel: 'error' });
-    }
-  });
+// `npm test` builds dist/ before spawning this file, so the skip is only for a
+// bare `npm run test:node` on a tree that has never been built — this file
+// stays on Node built-ins rather than reaching for a bundler of its own.
+const built = existsSync(join(ROOT, 'dist', 'index.html'));
 
+describe('running server.js directly', { skip: built ? false : 'no dist/ — run `npm test` or `npm run build` first' }, () => {
   test('serves the built application on PORT', async () => {
     // a free port, not a fixed one — a leftover process from an earlier run
     // would otherwise turn this into a phantom failure

@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "start": "node server.js",
     "test": "node test/run.js",
-    "test:node": "node --test test/node/"
+    "test:node": "node --test \"test/node/**/*.test.js\""
   },
   "engines": {
     "node": ">=22"
