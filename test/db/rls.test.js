@@ -263,4 +263,154 @@ describe('row level security', { skip: URL ? false : 'DATABASE_URL is not set' }
       assert.equal((await client.query('select 1 from public.board_members where board_id = $1', [id])).rowCount, 0);
     });
   });
+
+  /**
+   * Sharing by link. The token is the whole secret, so what matters is that
+   * holding it is the only way it can be used — it must not be reachable by
+   * looking, and it must not be usable for anything except the board and the
+   * role its owner chose.
+   */
+  describe('invites', () => {
+    const invite = async (id, role = 'editor') => {
+      const { rows } = await client.query(
+        'insert into public.board_invites (board_id, role, created_by) values ($1, $2, $3) returning token',
+        [id, role, alice],
+      );
+      return rows[0].token;
+    };
+
+    const redeem = (userId, token) =>
+      as(userId, 'select public.redeem_board_invite($1) as board', [token]);
+
+    test('a token is random rather than derived from the board', async () => {
+      const first = await invite(await givenAliceHasABoard('alpha'));
+      const second = await invite(await givenAliceHasABoard('beta'));
+
+      assert.match(first, /^[0-9a-f]{32}$/);
+      assert.notEqual(first, second);
+      assert.ok(!first.includes('alpha'), 'the token gives away the board it opens');
+    });
+
+    test('only the owner can create, read or revoke a link', async () => {
+      const id = await givenAliceHasABoard();
+      await share(id, 'editor');
+      await invite(id);
+
+      // an editor is on the board and still cannot see how to hand it out
+      assert.equal((await as(bob, 'select token from public.board_invites')).rowCount, 0);
+      assert.equal((await as(alice, 'select token from public.board_invites')).rowCount, 1);
+
+      await refuses(
+        bob,
+        'insert into public.board_invites (board_id, role, created_by) values ($1, $2, $3)',
+        [id, 'editor', bob],
+        /row-level security/i,
+      );
+      await as(bob, 'delete from public.board_invites where board_id = $1', [id]);
+      assert.equal((await as(alice, 'select token from public.board_invites')).rowCount, 1,
+        'an editor revoked their owner\'s link');
+    });
+
+    test('redeeming joins the board at the role the link grants', async () => {
+      const id = await givenAliceHasABoard();
+      const token = await invite(id, 'viewer');
+
+      assert.equal((await redeem(bob, token)).rows[0].board, id);
+      assert.equal((await as(bob, 'select id from public.boards where id = $1', [id])).rowCount, 1);
+      assert.equal((await as(bob, `select public.board_role($1)`, [id])).rows[0].board_role, 'viewer');
+    });
+
+    test('redeeming twice is a no-op, not a failure', async () => {
+      const id = await givenAliceHasABoard();
+      const token = await invite(id, 'editor');
+
+      await redeem(bob, token);
+      assert.equal((await redeem(bob, token)).rows[0].board, id);
+      assert.equal(
+        (await client.query('select 1 from public.board_members where board_id = $1', [id])).rowCount,
+        1,
+      );
+    });
+
+    /** Following a weaker link must not cost someone the access they have. */
+    test('a viewer link cannot demote an editor', async () => {
+      const id = await givenAliceHasABoard();
+      await share(id, 'editor');
+      const token = await invite(id, 'viewer');
+
+      await redeem(bob, token);
+      assert.equal((await as(bob, `select public.board_role($1)`, [id])).rows[0].board_role, 'editor');
+    });
+
+    test('the owner redeeming their own link stays the owner', async () => {
+      const id = await givenAliceHasABoard();
+      const token = await invite(id, 'viewer');
+
+      assert.equal((await redeem(alice, token)).rows[0].board, id);
+      assert.equal((await as(alice, `select public.board_role($1)`, [id])).rows[0].board_role, 'owner');
+    });
+
+    test('a token that buys nothing says so quietly', async () => {
+      await givenAliceHasABoard();
+      assert.equal((await redeem(bob, 'deadbeef'.repeat(4))).rows[0].board, null);
+      assert.equal((await redeem(bob, null)).rows[0].board, null);
+      assert.equal((await as(bob, 'select id from public.boards')).rowCount, 0);
+    });
+
+    test('a revoked link stops working, and the people who used it stay', async () => {
+      const id = await givenAliceHasABoard();
+      const token = await invite(id);
+      await redeem(bob, token);
+
+      await as(alice, 'delete from public.board_invites where board_id = $1', [id]);
+
+      assert.equal((await redeem(bob, token)).rows[0].board, null, 'a revoked token still worked');
+      assert.equal((await as(bob, 'select id from public.boards where id = $1', [id])).rowCount, 1,
+        'revoking the link removed someone who had already joined');
+    });
+
+    test('an unauthenticated caller cannot redeem anything', async () => {
+      const token = await invite(await givenAliceHasABoard());
+      await refuses(null, 'select public.redeem_board_invite($1)', [token], /permission denied/i);
+    });
+
+    test('deleting a board takes its link with it', async () => {
+      const id = await givenAliceHasABoard();
+      await invite(id);
+
+      await as(alice, 'delete from public.boards where id = $1', [id]);
+      assert.equal((await client.query('select 1 from public.board_invites')).rowCount, 0);
+    });
+
+    describe('who is on the board', () => {
+      test('the owner sees everyone, with something to call them', async () => {
+        const id = await givenAliceHasABoard();
+        await share(id, 'editor');
+
+        const { rows } = await as(alice, 'select * from public.board_people($1)', [id]);
+        assert.deepEqual(rows.map((r) => [r.email, r.role]), [
+          ['alice@example.test', 'owner'],
+          ['bob@example.test', 'editor'],
+        ]);
+      });
+
+      /** It resolves addresses, so it must not be a way to go looking for one. */
+      test('a member cannot use it to read the other members\' addresses', async () => {
+        const id = await givenAliceHasABoard();
+        await share(id, 'editor');
+
+        assert.equal((await as(bob, 'select * from public.board_people($1)', [id])).rowCount, 0);
+      });
+
+      test('runs with definer rights, or it could not resolve anyone at all', async () => {
+        const { rows } = await client.query(
+          `select prosecdef from pg_proc
+           where proname in ('board_people', 'redeem_board_invite')
+             and pronamespace = 'public'::regnamespace`,
+        );
+        assert.equal(rows.length, 2);
+        assert.ok(rows.every((r) => r.prosecdef), 'both must be SECURITY DEFINER');
+      });
+    });
+  });
 });

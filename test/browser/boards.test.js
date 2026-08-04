@@ -301,6 +301,190 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
   });
 
   /**
+   * Sharing, end to end and between two accounts.
+   *
+   * The second page clears its session first, so it is a different person —
+   * which is what makes the link do any work. Without it the two pages share a
+   * guest and the board would be reachable anyway.
+   */
+  describe('sharing', () => {
+    const shareUrl = async () => {
+      await click('[data-action="share"]');
+      await page.waitFor("document.querySelector('[data-share-dialog]') !== null", {
+        label: 'the share dialog',
+      });
+      await page.waitFor("document.querySelector('[data-action=\"create-link\"], [data-share-url]') !== null", {
+        label: 'the dialog to load',
+      });
+
+      if (await page.eval(`document.querySelector('[data-action="create-link"]') !== null`)) {
+        await click('[data-action="create-link"]');
+      }
+      await page.waitFor("document.querySelector('[data-share-url]') !== null", {
+        label: 'the link to be minted',
+      });
+      return page.eval(`document.querySelector('[data-share-url]').value`);
+    };
+
+    /**
+     * Open a link as somebody else.
+     *
+     * `isolated` is what makes them somebody else: a plain second tab shares
+     * this origin's Web Storage, so signing it in would take the owner's own
+     * session away — which is right for a browser and would quietly turn this
+     * into a test of one person sharing with themselves.
+     */
+    const joinAsSomeoneElse = async (url) => {
+      const other = await openApp({
+        path: `/${url.slice(url.indexOf('#'))}`,
+        origin,
+        isolated: true,
+        readyWhen: `${ON_CANVAS} || Boolean(document.querySelector('[data-join-failed]'))`,
+      });
+      return other;
+    };
+
+    test('a link lets someone else onto the board, and it is listed for them', async () => {
+      const id = await newBoard();
+      await page.eval(`window.app.board.add('card', { x: 20, y: 20, text: 'shared work' })`);
+      await page.waitFor('Boolean(window.app.autosave)');
+      await page.eval('window.app.autosave.flush()');
+
+      const url = await shareUrl();
+      assert.match(url, /#\/join\/[0-9a-f]{32}$/);
+
+      const other = await joinAsSomeoneElse(url);
+      try {
+        assert.equal(await other.eval('location.hash'), `#/b/${id}`, 'the link did not open the board');
+        await other.waitFor('window.app.store.toJSON().objects.length === 1');
+        assert.equal(
+          await other.eval(`window.app.store.toJSON().objects[0].text`),
+          'shared work',
+        );
+
+        // and it is theirs to come back to
+        await other.goto(LIST_PATH, { ready: SETTLED });
+        assert.deepEqual(
+          await other.eval(`[...document.querySelectorAll('.board-card-title')].map(el => el.textContent)`),
+          ['Untitled board'],
+        );
+      } finally {
+        await other.close();
+      }
+    });
+
+    test('the owner sees who joined, and can put them off again', async () => {
+      await newBoard();
+      const url = await shareUrl();
+
+      const other = await joinAsSomeoneElse(url);
+      try {
+        await other.waitFor(ON_CANVAS);
+
+        // the dialog is still open on the owner's page; reopen it to re-read
+        await click('[data-action="close-share"]');
+        await shareUrl();
+        await page.waitFor(`document.querySelectorAll('.share-people li').length === 2`, {
+          label: 'the new member to be listed',
+        });
+
+        assert.deepEqual(
+          await page.eval(`[...document.querySelectorAll('.share-person-role')].map(el => el.textContent)`),
+          ['owner', 'editor'],
+        );
+
+        await click('[data-action="remove-person"]');
+        await page.waitFor(`document.querySelectorAll('.share-people li').length === 1`, {
+          label: 'the member to be removed',
+        });
+
+        // and the board is gone for them on the next read
+        await other.goto(LIST_PATH, { ready: SETTLED });
+        assert.deepEqual(
+          await other.eval(`[...document.querySelectorAll('.board-card-title')].map(el => el.textContent)`),
+          [],
+          'a removed member could still see the board',
+        );
+      } finally {
+        await other.close();
+      }
+    });
+
+    test('the link can be copied, and says so', async () => {
+      await newBoard();
+      const url = await shareUrl();
+
+      // Headless Chrome refuses the clipboard without this, and the refusal is
+      // handled — but "Copied" is the path a person actually takes.
+      await page.session.send('Browser.grantPermissions', {
+        origin,
+        permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite'],
+      });
+
+      await click('[data-action="copy-link"]');
+      await page.waitFor(
+        `document.querySelector('[data-action="copy-link"]').textContent === 'Copied'`,
+        { label: 'the copy to be confirmed' },
+      );
+      assert.equal(await page.eval('navigator.clipboard.readText()'), url);
+    });
+
+    /** Escape closes it, like every other dialog. */
+    test('the dialog closes on escape', async () => {
+      await newBoard();
+      await shareUrl();
+
+      await page.key('Escape', { code: 'Escape', vk: 27 });
+      await page.waitFor("document.querySelector('[data-share-dialog]') === null", {
+        label: 'the dialog to close',
+      });
+    });
+
+    test('a revoked link stops opening the board', async () => {
+      await newBoard();
+      const url = await shareUrl();
+      await click('[data-action="revoke-link"]');
+      await page.waitFor(`document.querySelector('[data-action="create-link"]') !== null`, {
+        label: 'the link to be revoked',
+      });
+
+      const other = await joinAsSomeoneElse(url);
+      try {
+        assert.equal(
+          await other.eval(`document.querySelector('[data-join-failed]') !== null`),
+          true,
+          'a revoked link still opened the board',
+        );
+      } finally {
+        await other.close();
+      }
+    });
+
+    test('someone who is only a member is told it is not theirs to share', async () => {
+      await newBoard();
+      const url = await shareUrl();
+
+      const other = await joinAsSomeoneElse(url);
+      try {
+        await other.waitFor(ON_CANVAS);
+        const box = await other.eval(`(() => {
+          const el = document.querySelector('[data-action="share"]');
+          const r = el.getBoundingClientRect();
+          return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+        })()`);
+        await other.click(box.cx, box.cy);
+
+        await other.waitFor("document.querySelector('[data-not-owner]') !== null", {
+          label: 'the not-yours message',
+        });
+        assert.equal(await other.eval(`document.querySelector('[data-share-url]') === null`), true);
+      } finally {
+        await other.close();
+      }
+    });
+  });
+
+  /**
    * The policies are tested directly in test/db/, and through the repository
    * in test/node/. This is the same claim from the outside: whatever the
    * previous test left behind, the next account does not see it.

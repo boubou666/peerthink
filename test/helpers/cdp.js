@@ -74,6 +74,44 @@ export async function newPage(httpBase) {
   return { session, targetId: target.id };
 }
 
+/**
+ * A tab in a browser context of its own — its own cookies, its own Web
+ * Storage, its own everything.
+ *
+ * Two tabs on one origin share localStorage, which is correct and is exactly
+ * what makes them useless for testing two *people*: signing the second one in
+ * overwrites the session the first is holding. A separate context is the only
+ * honest way to have two accounts in one browser.
+ *
+ * Attaching goes through the page's own WebSocket rather than a flat session
+ * on the browser connection, so nothing here has to route messages by session
+ * id — the target is addressable directly once it exists.
+ */
+export async function newIsolatedPage(httpBase) {
+  const { webSocketDebuggerUrl } = await (await fetch(`${httpBase}/json/version`)).json();
+  const browser = await CDPSession.connect(webSocketDebuggerUrl);
+
+  const { browserContextId } = await browser.send('Target.createBrowserContext', {});
+  const { targetId } = await browser.send('Target.createTarget', {
+    url: 'about:blank',
+    browserContextId,
+  });
+
+  const session = await CDPSession.connect(
+    `${httpBase.replace(/^http/, 'ws')}/devtools/page/${targetId}`,
+  );
+
+  return {
+    session,
+    targetId,
+    /** Disposing the context closes its tabs; the browser itself stays up. */
+    async dispose() {
+      await browser.send('Target.disposeBrowserContext', { browserContextId }).catch(() => {});
+      browser.close();
+    },
+  };
+}
+
 export async function closePage(httpBase, targetId) {
   await fetch(`${httpBase}/json/close/${targetId}`).catch(() => {});
 }

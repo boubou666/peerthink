@@ -22,7 +22,7 @@ npm start        # serve the built site
 | **Envelopes** | Grouping containers — dragging one carries everything fully inside it, transitively |
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
-| **Together** | With a project configured: live edits, and other people's cursors on the board |
+| **Together** | With a project configured: share a board by link, live edits, and other people's cursors |
 
 ### Gestures
 
@@ -68,6 +68,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
                   ├── supabase-repository.js  the same contract over Postgres
                   ├── sync.js        the op log, on a private channel
                   ├── cursors.js     other people's pointers
+                  ├── sharing.js     invite links and who holds them
                   ├── auth.js        accounts, as { id, email, guest }
                   └── supabase.js    the client, and whether there is one
 ```
@@ -227,6 +228,26 @@ total, with a line saying so — an unreachable file averaged into the number
 would quietly lower the bar for every other file. CI starts a stack, so nothing
 merges without them.
 
+### Sharing
+
+A board is handed out by **link**, not by naming a person. There is nothing to
+name them with: `auth.users` is not readable by `authenticated`, and most people
+here are anonymous and have no address. A link needs neither, and the person
+following it needs no account beyond the guest session they already have —
+which is the same reason anonymous sign-in exists.
+
+One live link per board, and it says what it grants. Changing the role changes
+what the outstanding link is worth rather than killing it, because a link
+already pasted into a chat should not quietly stop working. Revoking deletes
+it; the people who already joined stay, because they are rows in
+`board_members` now and the link is not what holds them there.
+
+The token is the whole secret, so it is never derived from the board id and the
+invite row is readable only by the owner. Redeeming goes through a
+`SECURITY DEFINER` function — the point is to act on a row the caller cannot
+see. Every reason a token might not work gives the same answer, so the join
+page is not somewhere to test guesses.
+
 ### The database
 
 `test/db/` is a third world, kept out of `npm test` because it needs a Postgres
@@ -286,10 +307,12 @@ stops persisting until it reads the board again, which is the safe direction —
 nothing is overwritten — but a client that has been disconnected long enough
 will hold edits it can no longer land.
 
-`board_members` has policies and no UI, so a board can be shared by inserting a
-row and no other way. And boards already in a browser's Web Storage are not
-adopted when a project is configured — the account and the browser are separate
-places, and moving boards between them is a decision nobody has made yet.
+Boards already in a browser's Web Storage are not adopted when a project is
+configured — the account and the browser are separate places, and moving boards
+between them is a decision nobody has made yet.
+
+There is no way to leave a board you have been added to, and no notification
+that you have been added to one; a shared board simply appears in the list.
 
 The toolbar is still imperative rather than a React component; converting it
 needs `useSyncExternalStore` over the store and viewport.

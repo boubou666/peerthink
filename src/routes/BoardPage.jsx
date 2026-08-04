@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 
 import { BoardCanvas } from '../components/BoardCanvas.jsx';
+import { ShareDialog } from '../components/ShareDialog.jsx';
 import { DEFAULT_TITLE } from '../platform/storage.js';
+import { sharing } from '../shell/sharing.js';
 import { repository } from '../shell/storage.js';
 
 const EMPTY_BOARD = { v: 1, order: [], objects: [] };
@@ -12,6 +14,7 @@ export function BoardPage() {
   const { boardId } = useParams();
   const [title, setTitle] = useState(DEFAULT_TITLE);
   const [draft, setDraft] = useState(DEFAULT_TITLE);
+  const [showShare, setShowShare] = useState(false);
   const app = useRef(null);
   const cancelled = useRef(false);
   const renamed = useRef(false);
@@ -90,7 +93,17 @@ export function BoardPage() {
             }
           }}
         />
+
+        {sharing && (
+          <button type="button" data-action="share" onClick={() => setShowShare(true)}>
+            Share
+          </button>
+        )}
       </header>
+
+      {showShare && (
+        <ShareDialog boardId={boardId} title={title} onClose={() => setShowShare(false)} />
+      )}
 
       <BoardCanvas boardId={boardId} onReady={handleReady} />
     </div>

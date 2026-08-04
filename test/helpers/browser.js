@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { newPage, closePage } from './cdp.js';
+import { newPage, newIsolatedPage, closePage } from './cdp.js';
 
 // fileURLToPath, not URL.pathname — see the note in ./vite.js
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -53,9 +53,15 @@ export async function openApp({
   // localStorage partitions, so a signed-in session cannot leak into a test
   // that assumes there isn't one.
   origin = endpoints().appBase,
+  // A page for somebody else. Two tabs on one origin share Web Storage, so a
+  // second session signed in here would overwrite the first one's — which is
+  // right for a browser and useless for testing two people.
+  isolated = false,
 } = {}) {
   const { browserBase } = endpoints();
-  const { session, targetId } = await newPage(browserBase);
+  const { session, targetId, dispose } = isolated
+    ? await newIsolatedPage(browserBase)
+    : await newPage(browserBase);
 
   const errors = [];
   session.on('Runtime.exceptionThrown', (p) => {
@@ -233,7 +239,8 @@ export async function openApp({
       writeFileSync(join(COVERAGE_DIR, `${targetId}.json`), JSON.stringify({ result: collected }));
       await session.send('Profiler.stopPreciseCoverage').catch(() => {});
       session.close();
-      await closePage(browserBase, targetId);
+      if (dispose) await dispose();
+      else await closePage(browserBase, targetId);
     },
   };
 
