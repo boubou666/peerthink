@@ -1,8 +1,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { newPage, closePage } from './cdp.js';
 
-const ROOT = new URL('../../', import.meta.url).pathname;
+// fileURLToPath, not URL.pathname — see the note in ./vite.js
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const COVERAGE_DIR = join(ROOT, '.coverage', 'browser');
 
 /** Written by test/run.js before the test files are spawned. */
@@ -18,7 +21,26 @@ const BUTTON_MASK = { none: 0, left: 1, right: 2, middle: 4, back: 8, forward: 1
  * Open a page against the app with V8 coverage recording from the very first
  * script, and return a small driving API.
  */
-export async function openApp({ width = 1280, height = 800, path = '/' } = {}) {
+/** Routing is hash-based; the canvas lives under /#/b/:boardId. */
+export const BOARD_PATH = '/#/b/default';
+export const LIST_PATH = '/#/';
+
+const CANVAS_READY = 'Boolean(window.app?.store)';
+const SHELL_READY = "Boolean(document.querySelector('.shell'))";
+
+/**
+ * Readiness depends on where you are going, not on where the session started.
+ * A board route mounts the canvas; everything else lands on the list, since
+ * unknown routes redirect there.
+ */
+const readinessFor = (to) => (/#\/b\//.test(to) ? CANVAS_READY : SHELL_READY);
+
+export async function openApp({
+  width = 1280,
+  height = 800,
+  path = BOARD_PATH,
+  readyWhen = readinessFor(path),
+} = {}) {
   const { browserBase, appBase } = endpoints();
   const { session, targetId } = await newPage(browserBase);
 
@@ -43,7 +65,7 @@ export async function openApp({ width = 1280, height = 800, path = '/' } = {}) {
   const collected = [];
   const snapshot = async () => {
     const { result } = await session.send('Profiler.takePreciseCoverage');
-    collected.push(...result.filter((s) => s.url.includes('/js/') && s.url.endsWith('.js')));
+    collected.push(...result.filter((s) => /\/src\//.test(s.url)));
   };
 
   const api = {
@@ -52,15 +74,38 @@ export async function openApp({ width = 1280, height = 800, path = '/' } = {}) {
     width,
     height,
 
-    /** Navigate and wait until the app has actually booted, not a fixed delay. */
-    async goto(to = path, { timeout = 15_000 } = {}) {
+    /**
+     * Navigate and wait until the page is actually ready, not a fixed delay.
+     *
+     * Routing is hash-based, so a plain navigate between two routes would not
+     * re-execute the document — hence the explicit reload. Tests depend on a
+     * genuinely fresh app after seeding localStorage.
+     */
+    async goto(to = path, { timeout = 15_000, ready = to === path ? readyWhen : readinessFor(to) } = {}) {
       await snapshot();
+      // Routing is hash-based, so navigating straight to another route would
+      // not re-execute the document — and tests depend on a genuinely fresh
+      // app after seeding localStorage. Bouncing through about:blank forces a
+      // real load without racing an in-flight navigation the way reload does.
+      //
+      // Page.navigate resolving only means the request was accepted, not that
+      // the blank document committed. Firing the second navigate on that
+      // promise alone can replace an uncommitted about:blank and leave the old
+      // document — and its app state — in place, so wait for the main frame to
+      // actually land on about:blank first.
+      const blankCommitted = session.once(
+        'Page.frameNavigated',
+        (p) => !p.frame.parentId && p.frame.url === 'about:blank',
+      );
+      await session.send('Page.navigate', { url: 'about:blank' });
+      await blankCommitted;
+
       await session.send('Page.navigate', { url: appBase + to });
+
       const deadline = Date.now() + timeout;
       for (;;) {
-        const ready = await api.eval('Boolean(window.app?.store)').catch(() => false);
-        if (ready) return;
-        if (Date.now() > deadline) throw new Error(`app did not boot at ${appBase + to}`);
+        if (await api.eval(ready).catch(() => false)) return;
+        if (Date.now() > deadline) throw new Error(`page never became ready at ${appBase + to} (${ready})`);
         await sleep(25);
       }
     },

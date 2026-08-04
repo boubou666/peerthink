@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { ID_LENGTH, createIdGenerator, createSequentialIds } from '../../public/js/core/ids.js';
+import { ID_LENGTH, createIdGenerator, createSequentialIds } from '../../src/core/ids.js';
 
 describe('createIdGenerator', () => {
   test('produces short lowercase hex ids', () => {

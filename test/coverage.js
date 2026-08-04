@@ -5,14 +5,15 @@
 // bytes on disk, so byte offsets are directly comparable.
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const COVERAGE = join(ROOT, '.coverage');
 
 /** Files we hold to the threshold. Test and helper code is not measured. */
-const isMeasured = (rel) => rel === 'server.js' || (rel.startsWith('public/js/') && rel.endsWith('.js'));
+const isMeasured = (rel) =>
+  rel === 'server.js' || (rel.startsWith('src/') && (rel.endsWith('.js') || rel.endsWith('.jsx')));
 
 function readAll(dir) {
   if (!existsSync(dir)) return [];
@@ -27,17 +28,23 @@ function readAll(dir) {
     });
 }
 
-/** Node reports file:// URLs, Chromium reports http:// ones. Normalise both. */
+/**
+ * Node reports file:// URLs, Chromium reports http:// ones. Normalise both to
+ * a repo-relative path with forward slashes — `relative()` hands back
+ * backslashes on Windows, which `isMeasured` would reject as unmeasured and
+ * quietly drop every `src/` file from the report.
+ */
 function toRelative(url) {
   if (url.startsWith('file://')) {
     try {
-      return relative(ROOT, fileURLToPath(url));
+      return relative(ROOT, fileURLToPath(url)).split(sep).join('/');
     } catch {
       return null;
     }
   }
   if (url.startsWith('http://') || url.startsWith('https://')) {
-    return `public${new URL(url).pathname}`;
+    // Vite serves sources at their repo path and appends cache-busting queries
+    return new URL(url).pathname.replace(/^\/+/, '');
   }
   return null;
 }

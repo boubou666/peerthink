@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createManualScheduler, createScheduler } from '../../public/js/core/scheduler.js';
+import { createManualScheduler, createScheduler } from '../../src/core/scheduler.js';
 
 describe('createScheduler', () => {
   test('onFrame collapses a burst into one call with the latest arguments', () => {

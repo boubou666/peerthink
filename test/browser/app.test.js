@@ -26,7 +26,7 @@ describe('createApp', () => {
    * `body` is evaluated with `second`, `host` and `app` in scope.
    */
   const withSecondApp = (options, body) => page.eval(`(async () => {
-    const { createApp } = await import('/js/app.js');
+    const { createApp } = await import('/src/app.js');
     const host = document.createElement('div');
     host.style.cssText = 'position:absolute; left:-9999px; top:0; width:800px; height:600px;';
     host.innerHTML = [
@@ -167,7 +167,7 @@ describe('createApp', () => {
 
   test('destroy detaches the DOM and stops listening', async () => {
     const result = await page.eval(`(async () => {
-      const { createApp } = await import('/js/app.js');
+      const { createApp } = await import('/src/app.js');
       const host = document.createElement('div');
       host.style.cssText = 'position:absolute; left:-9999px; top:0; width:800px; height:600px;';
       host.innerHTML = [

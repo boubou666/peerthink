@@ -3,14 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "PeerThink — an infinite-canvas visual workspace. Zero runtime dependencies.",
+  "description": "PeerThink — an infinite-canvas visual workspace with a React shell.",
   "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "start": "node server.js",
     "test": "node test/run.js",
-    "test:node": "node --test test/node/",
-    "coverage": "node test/run.js"
+    "test:node": "node --test \"test/node/**/*.test.js\""
   },
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router": "^8.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.5",
+    "vite": "^8.2.0"
   }
 }

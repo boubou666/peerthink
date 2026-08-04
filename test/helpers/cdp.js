@@ -26,12 +26,32 @@ export class CDPSession {
       msg.error ? reject(new Error(`${msg.error.message} (${JSON.stringify(msg.error.data ?? {})})`)) : resolve(msg.result);
       return;
     }
-    for (const fn of this.handlers.get(msg.method) ?? []) fn(msg.params);
+    // a copy: a one-shot handler unsubscribes itself while we are iterating
+    for (const fn of [...(this.handlers.get(msg.method) ?? [])]) fn(msg.params);
   }
 
   on(method, fn) {
     if (!this.handlers.has(method)) this.handlers.set(method, []);
     this.handlers.get(method).push(fn);
+  }
+
+  off(method, fn) {
+    const fns = this.handlers.get(method);
+    if (!fns) return;
+    const i = fns.indexOf(fn);
+    if (i !== -1) fns.splice(i, 1);
+  }
+
+  /** Resolve on the next event whose params satisfy `match`. */
+  once(method, match = () => true) {
+    return new Promise((resolve) => {
+      const fn = (params) => {
+        if (!match(params)) return;
+        this.off(method, fn);
+        resolve(params);
+      };
+      this.on(method, fn);
+    });
   }
 
   send(method, params = {}) {

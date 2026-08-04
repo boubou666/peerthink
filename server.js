@@ -4,7 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const PUBLIC_DIR = resolve(fileURLToPath(new URL('./public', import.meta.url)));
+/** The Vite build output. `npm run build` writes it; this serves it verbatim. */
+export const PUBLIC_DIR = resolve(fileURLToPath(new URL('./dist', import.meta.url)));
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',

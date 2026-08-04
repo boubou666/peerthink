@@ -1,7 +1,7 @@
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Store } from '../../public/js/core/store.js';
+import { Store } from '../../src/core/store.js';
 
 const card = (id, props = {}) => ({ id, type: 'card', x: 0, y: 0, w: 200, h: 120, text: '', ...props });
 

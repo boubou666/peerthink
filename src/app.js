@@ -13,23 +13,17 @@ import { createInput } from './platform/input.js';
 import { createToolbar } from './platform/toolbar.js';
 import { DEFAULT_BOARD_ID, createLocalStorageRepository, createNullRepository } from './platform/storage.js';
 
-const ELEMENT_IDS = {
-  stage: 'stage',
-  bg: 'bg',
-  layer: 'layer',
-  overlay: 'overlay',
-  toolbar: 'toolbar',
-  zoomLabel: 'zoom',
-};
-
 /**
  * The composition root.
  *
  * Nothing below this file reaches for a global: the document, the window, the
- * clock and the storage backend all arrive as arguments. That is what lets the
- * whole app be constructed twice on one page, driven by a fake clock in a
- * test, or repointed at a different persistence backend without touching a
- * line of the core.
+ * clock, the elements and the storage backend all arrive as arguments. That is
+ * what lets the whole app be constructed twice on one page, driven by a fake
+ * clock in a test, or repointed at a different persistence backend without
+ * touching a line of the core.
+ *
+ * `elements` is required — the React shell hands over refs, which is the whole
+ * integration between the framework and the imperative canvas.
  */
 export function createApp({
   document,
@@ -46,9 +40,7 @@ export function createApp({
   now,
   seed = seedBoard,
 } = {}) {
-  const dom = elements ?? Object.fromEntries(
-    Object.entries(ELEMENT_IDS).map(([name, id]) => [name, document.getElementById(id)]),
-  );
+  const dom = elements;
 
   const clock = scheduler ?? createScheduler({
     requestAnimationFrame: window.requestAnimationFrame.bind(window),

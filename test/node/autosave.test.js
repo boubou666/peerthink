@@ -1,9 +1,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createAutosave } from '../../public/js/core/autosave.js';
-import { Store } from '../../public/js/core/store.js';
-import { createManualScheduler } from '../../public/js/core/scheduler.js';
+import { createAutosave } from '../../src/core/autosave.js';
+import { Store } from '../../src/core/store.js';
+import { createManualScheduler } from '../../src/core/scheduler.js';
 
 const card = (id) => ({ id, type: 'card', x: 0, y: 0, w: 200, h: 120, text: '' });
 
