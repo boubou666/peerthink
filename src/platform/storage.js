@@ -3,8 +3,14 @@
  *
  * The repository is addressed by board id rather than holding a single board,
  * which is what lets one workspace hold many. The shape here — list / load /
- * save / rename / remove — is the contract a server-backed repository will
- * implement later; nothing above it should know which one it is talking to.
+ * save / rename / remove — is the contract a server-backed repository also
+ * implements; nothing above it should know which one it is talking to.
+ *
+ * Every method is async. Web Storage answers instantly and could have stayed
+ * synchronous, but the contract is the one a network-backed repository has to
+ * satisfy, and a caller written against a synchronous seam is a caller that
+ * has to be rewritten the day the boards live on a server. The cost here is a
+ * resolved promise; the alternative is two shapes of the same interface.
  *
  * Every call is total. Storage can be full, disabled, or hold junk written by
  * an older version, and none of that is worth losing the session over.
@@ -72,7 +78,7 @@ export function createLocalStorageRepository({
      * board, which is fine at Web Storage scale and is exactly the call a
      * server-backed repository answers with a single query instead.
      */
-    list() {
+    async list() {
       return ids()
         .map((id) => [id, read(keyFor(id))])
         .filter(([, record]) => record)
@@ -88,12 +94,12 @@ export function createLocalStorageRepository({
         .sort((a, b) => b.updatedAt - a.updatedAt);
     },
 
-    load(id) {
+    async load(id) {
       return read(keyFor(id));
     },
 
     /** Stamps updatedAt. An existing title survives a save that omits one. */
-    save(id, board, { title } = {}) {
+    async save(id, board, { title } = {}) {
       if (!isBoard(board)) return false;
       const existing = read(keyFor(id));
       return write(keyFor(id), {
@@ -105,13 +111,13 @@ export function createLocalStorageRepository({
       });
     },
 
-    rename(id, title) {
+    async rename(id, title) {
       const record = read(keyFor(id));
       if (!record) return false;
       return write(keyFor(id), { ...record, title, updatedAt: now() });
     },
 
-    remove(id) {
+    async remove(id) {
       try {
         storage.removeItem(keyFor(id));
         return true;
@@ -125,7 +131,7 @@ export function createLocalStorageRepository({
      * only when something was actually moved, and never overwrites a board
      * that already exists under the target id.
      */
-    migrateLegacy({ toId = DEFAULT_BOARD_ID, title = DEFAULT_TITLE } = {}) {
+    async migrateLegacy({ toId = DEFAULT_BOARD_ID, title = DEFAULT_TITLE } = {}) {
       if (!legacyKey) return false;
 
       let legacy;
@@ -137,7 +143,7 @@ export function createLocalStorageRepository({
         return false;
       }
       if (!isBoard(legacy) || read(keyFor(toId))) return false;
-      if (!repository.save(toId, legacy, { title })) return false;
+      if (!(await repository.save(toId, legacy, { title }))) return false;
 
       try {
         storage.removeItem(legacyKey);
@@ -154,11 +160,11 @@ export function createLocalStorageRepository({
 /** Drops everything on the floor. Used when no storage is available at all. */
 export function createNullRepository() {
   return {
-    list: () => [],
-    load: () => null,
-    save: () => false,
-    rename: () => false,
-    remove: () => false,
-    migrateLegacy: () => false,
+    list: async () => [],
+    load: async () => null,
+    save: async () => false,
+    rename: async () => false,
+    remove: async () => false,
+    migrateLegacy: async () => false,
   };
 }

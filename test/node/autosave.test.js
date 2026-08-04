@@ -12,8 +12,8 @@ function harness() {
   const scheduler = createManualScheduler();
   const saved = [];
   const repository = {
-    load: () => null,
-    save(boardId, board) {
+    load: async () => null,
+    async save(boardId, board) {
       saved.push({ boardId, board });
       return true;
     },
@@ -63,11 +63,25 @@ describe('autosave', () => {
   test('a repository that cannot save does not break the session', () => {
     const store = new Store();
     const scheduler = createManualScheduler();
-    const repository = { load: () => null, save: () => false };
+    const repository = { load: async () => null, save: async () => false };
     createAutosave({ store, repository, boardId: 'alpha', scheduler });
 
     store.apply([{ t: 'add', obj: card('a') }]);
     scheduler.flushTimers();
     assert.equal(store.order.length, 1);
+  });
+
+  test('a repository that rejects does not surface an unhandled rejection', async () => {
+    const store = new Store();
+    const scheduler = createManualScheduler();
+    const repository = { load: async () => null, save: async () => { throw new Error('offline'); } };
+    createAutosave({ store, repository, boardId: 'alpha', scheduler });
+
+    store.apply([{ t: 'add', obj: card('a') }]);
+    scheduler.flushTimers();
+
+    // an unhandled rejection would take the process down between these lines
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(store.order.length, 1, 'the board is still there to keep editing');
   });
 });

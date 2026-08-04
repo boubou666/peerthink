@@ -10,6 +10,11 @@ import { repository } from '../shell/storage.js';
  * pan, zoom and drag run at frame rate and have no business going through a
  * reconciler. `createApp` takes the elements as an argument, so handing it
  * refs is the whole integration; `destroy()` is the cleanup.
+ *
+ * Construction is synchronous and loading the board is not, so the effect
+ * mounts an empty canvas and lets `hydrate()` fill it in. There is nothing to
+ * await here: `destroy()` cancels an in-flight hydrate on its own, which is
+ * exactly what unmounting mid-load needs.
  */
 export function BoardCanvas({ boardId, onReady }) {
   const stage = useRef(null);
@@ -37,6 +42,10 @@ export function BoardCanvas({ boardId, onReady }) {
 
     window.app = app; // console and test surface
     onReady?.(app);
+
+    // A board that cannot be loaded leaves the canvas empty and usable rather
+    // than taking the route down with it.
+    app.hydrate().catch(() => {});
 
     return () => {
       app.destroy();

@@ -86,25 +86,54 @@ export function createApp({
   const input = createInput({ document, window, elements: dom, store, selection, viewport, board, commands });
   const toolbar = createToolbar({ window, elements: dom, store, viewport, commands });
 
-  // Adopt anything a single-board version of the app left behind, then load
-  // before autosave is wired so a restore never writes itself back.
-  boardRepository.migrateLegacy({ toId: boardId });
-  const saved = boardRepository.load(boardId);
-  if (saved) store.load(saved.board);
-  else seed(board);
+  let autosave = null;
+  let destroyed = false;
 
-  const autosave = createAutosave({
-    store,
-    repository: boardRepository,
-    boardId,
-    scheduler: clock,
-    delay: autosaveDelay,
-  });
-  commands.fit();
+  /**
+   * Load the stored board — or seed a fresh one — and start autosaving.
+   *
+   * This is split out of construction because it is the only part that talks
+   * to the repository, and a repository can be a network away. Everything
+   * above has already been built and mounted by the time this is called, so
+   * the canvas is on screen and interactive while the board is still in
+   * flight, rather than the whole app waiting on a round trip.
+   */
+  async function hydrate() {
+    // Adopt anything a single-board version of the app left behind, then load
+    // before autosave is wired so a restore never writes itself back.
+    await boardRepository.migrateLegacy({ toId: boardId });
+    const saved = await boardRepository.load(boardId);
 
-  return {
+    // destroy() can run while that is in flight — React unmounts a route far
+    // faster than a round trip completes. Writing to the store now would
+    // repopulate a torn-down app and start an autosave that nothing is left
+    // to stop, so a cancelled hydrate has to stay silent.
+    if (destroyed) return app;
+
+    if (saved) store.load(saved.board);
+    else seed(board);
+
+    app.title = saved?.title ?? null;
+    app.restoredFromStorage = Boolean(saved);
+
+    autosave = createAutosave({
+      store,
+      repository: boardRepository,
+      boardId,
+      scheduler: clock,
+      delay: autosaveDelay,
+    });
+    app.autosave = autosave;
+    commands.fit();
+    return app;
+  }
+
+  const app = {
     boardId,
-    title: saved?.title ?? null,
+    // Both are only meaningful once hydrate() has resolved; before that the
+    // board genuinely is empty and untitled rather than unknown.
+    title: null,
+    restoredFromStorage: false,
     store,
     selection,
     viewport,
@@ -115,12 +144,15 @@ export function createApp({
     toolbar,
     repository: boardRepository,
     autosave,
-    restoredFromStorage: Boolean(saved),
+    hydrate,
     destroy() {
-      autosave.stop();
+      destroyed = true;
+      autosave?.stop();
       toolbar.destroy();
       input.destroy();
       renderer.destroy();
     },
   };
+
+  return app;
 }

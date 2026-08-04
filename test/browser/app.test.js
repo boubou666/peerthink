@@ -23,9 +23,13 @@ describe('createApp', () => {
 
   /**
    * Build a second app in its own offscreen DOM.
-   * `body` is evaluated with `second`, `host` and `app` in scope.
+   * `body` is evaluated with `second`, `host`, `hydrated` and `app` in scope.
+   *
+   * `hydrate: false` hands the body the in-flight promise instead of waiting
+   * on it, which is the only way to observe the app between construction and
+   * the board arriving.
    */
-  const withSecondApp = (options, body) => page.eval(`(async () => {
+  const withSecondApp = (options, body, { hydrate = true } = {}) => page.eval(`(async () => {
     const { createApp } = await import('/src/app.js');
     const host = document.createElement('div');
     host.style.cssText = 'position:absolute; left:-9999px; top:0; width:800px; height:600px;';
@@ -47,7 +51,9 @@ describe('createApp', () => {
 
     const second = createApp({ document, window, elements, ${options} });
     try {
-      return await (${body})({ second, host, elements });
+      const hydrated = second.hydrate();
+      ${hydrate ? 'await hydrated;' : ''}
+      return await (${body})({ second, host, elements, hydrated });
     } finally {
       second.destroy();
       host.remove();
@@ -75,11 +81,11 @@ describe('createApp', () => {
   });
 
   test('with no storage it seeds, and saves nowhere', async () => {
-    const result = await withSecondApp('storage: null', `({ second }) => ({
+    const result = await withSecondApp('storage: null', `async ({ second }) => ({
       seeded: second.store.order.length,
       restored: second.restoredFromStorage,
-      saved: second.repository.save('default', { v: 1, order: [], objects: [] }),
-      listed: second.repository.list(),
+      saved: await second.repository.save('default', { v: 1, order: [], objects: [] }),
+      listed: await second.repository.list(),
     })`);
 
     assert.equal(result.seeded, 7);
@@ -93,9 +99,9 @@ describe('createApp', () => {
     const record = { v: 1, id: 'remote', title: 'From a server', updatedAt: 7, board };
     const result = await withSecondApp(
       `boardId: 'remote', repository: {
-        load: (id) => (id === 'remote' ? ${JSON.stringify(record)} : null),
-        save: () => true,
-        migrateLegacy: () => false,
+        load: async (id) => (id === 'remote' ? ${JSON.stringify(record)} : null),
+        save: async () => true,
+        migrateLegacy: async () => false,
       }`,
       `({ second }) => ({
         count: second.store.order.length,
@@ -110,11 +116,101 @@ describe('createApp', () => {
 
   test('an unknown board id seeds rather than showing an empty canvas', async () => {
     const result = await withSecondApp(
-      `boardId: 'missing', repository: { load: () => null, save: () => true, migrateLegacy: () => false }`,
+      `boardId: 'missing', repository: { load: async () => null, save: async () => true, migrateLegacy: async () => false }`,
       `({ second }) => ({ count: second.store.order.length, restored: second.restoredFromStorage, title: second.title })`,
     );
 
     assert.deepEqual(result, { count: 7, restored: false, title: null });
+  });
+
+  const SLOW_REPOSITORY = `repository: {
+    load: () => new Promise((done) => setTimeout(() => done(null), 40)),
+    save: async () => true,
+    migrateLegacy: async () => false,
+  }`;
+
+  test('the canvas is mounted and usable before the board arrives', async () => {
+    const result = await withSecondApp(
+      SLOW_REPOSITORY,
+      `async ({ second, elements, hydrated }) => {
+        const duringLoad = {
+          objects: second.store.order.length,
+          title: second.title,
+          restored: second.restoredFromStorage,
+          autosave: second.autosave,
+          // the imperative layers are wired, so a gesture lands right now
+          drawnBeforeLoad: elements.layer.querySelectorAll('.obj').length,
+        };
+        second.board.add('card', { x: 0, y: 0, text: 'typed while loading' });
+        duringLoad.acceptsEdits = second.store.order.length === 1;
+
+        await hydrated;
+        return { duringLoad, afterLoad: second.store.order.length };
+      }`,
+      { hydrate: false },
+    );
+
+    assert.deepEqual(result.duringLoad, {
+      objects: 0,
+      title: null,
+      restored: false,
+      autosave: null,
+      drawnBeforeLoad: 0,
+      acceptsEdits: true,
+    }, 'built and interactive, just empty');
+
+    // the seed runs on an empty board; the card added mid-load is not lost to it
+    assert.equal(result.afterLoad, 8, 'the seed landed alongside the mid-load edit');
+  });
+
+  test('destroying mid-load abandons the board instead of resurrecting the app', async () => {
+    const result = await page.eval(`(async () => {
+      const { createApp } = await import('/src/app.js');
+      const host = document.createElement('div');
+      host.style.cssText = 'position:absolute; left:-9999px; top:0; width:800px; height:600px;';
+      host.innerHTML = [
+        '<div id="c-stage" style="position:relative;width:800px;height:600px"><div id="c-bg"></div>',
+        '<div id="c-layer"></div><div id="c-overlay"></div></div>',
+        '<div id="c-toolbar"><button data-add="card"></button></div><span id="c-zoom"></span>',
+      ].join('');
+      document.body.appendChild(host);
+
+      const elements = {
+        stage: host.querySelector('#c-stage'),
+        bg: host.querySelector('#c-bg'),
+        layer: host.querySelector('#c-layer'),
+        overlay: host.querySelector('#c-overlay'),
+        toolbar: host.querySelector('#c-toolbar'),
+        zoomLabel: host.querySelector('#c-zoom'),
+      };
+
+      const writes = [];
+      const second = createApp({
+        document, window, elements, boardId: 'slow', autosaveDelay: 1,
+        repository: {
+          load: () => new Promise((done) => setTimeout(() => done(null), 40)),
+          save: async (id) => { writes.push(id); return true; },
+          migrateLegacy: async () => false,
+        },
+      });
+
+      const hydrated = second.hydrate();
+      second.destroy();          // React unmounting the route mid-load
+      await hydrated;
+      await new Promise((done) => setTimeout(done, 30));
+
+      const result = {
+        objects: second.store.order.length,
+        rendered: elements.layer.querySelectorAll('.obj').length,
+        autosave: second.autosave,
+        writes: writes.length,
+      };
+      host.remove();
+      return result;
+    })()`);
+
+    assert.deepEqual(result, { objects: 0, rendered: 0, autosave: null, writes: 0 },
+      'no seed, no render, and nothing left autosaving a board nobody is looking at');
   });
 
   test('a board id keeps two boards in the same storage apart', async () => {
@@ -122,12 +218,12 @@ describe('createApp', () => {
       `storage: window.localStorage, boardId: 'second-board', autosaveDelay: 1`,
       `async ({ second }) => {
         second.board.add('card', { x: 0, y: 0, text: 'scoped' });
-        second.autosave.flush();
+        await second.autosave.flush();
         return {
           boardId: second.boardId,
           written: JSON.parse(localStorage.getItem('peerthink:board:second-board')).board.objects.some(o => o.text === 'scoped'),
           leaked: (localStorage.getItem('peerthink:board:default') ?? '').includes('scoped'),
-          listed: second.repository.list().map(b => b.id).includes('second-board'),
+          listed: (await second.repository.list()).map(b => b.id).includes('second-board'),
         };
       }`,
     );
@@ -144,7 +240,7 @@ describe('createApp', () => {
       `storage: window.localStorage, namespace: 'scratch', autosaveDelay: 1`,
       `async ({ second }) => {
         second.board.add('card', { x: 0, y: 0, text: 'elsewhere' });
-        second.autosave.flush();
+        await second.autosave.flush();
         return {
           written: localStorage.getItem('scratch:board:default') !== null,
           leaked: (localStorage.getItem('peerthink:board:default') ?? '').includes('elsewhere'),
@@ -187,6 +283,7 @@ describe('createApp', () => {
       };
 
       const second = createApp({ document, window, elements, storage: null });
+      await second.hydrate();
       const rendered = elements.layer.querySelectorAll('.obj').length;
       const zoomBefore = elements.zoomLabel.textContent;
 
