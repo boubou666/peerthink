@@ -147,6 +147,37 @@ finds a system or Playwright-cached build, or point at one:
 CHROME_PATH=/path/to/chrome npm test
 ```
 
+### Accounts
+
+The app decides once, at load, whether there is a backend behind it. Given
+both of
+
+```sh
+VITE_SUPABASE_URL=https://<project>.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon key>
+```
+
+it signs every visitor in — anonymously on a first visit, which is a real row
+in `auth.users` and so a real subject for the row level security policies. With
+either variable missing it runs on Web Storage with no accounts at all, which
+is what the published GitHub Pages site is and what `npm test` runs against.
+Registering attaches an email to the guest who is already signed in, rather
+than creating a second user beside them, so the boards come along.
+
+The account suite in `test/browser/auth.test.js` needs a real stack and skips
+without one:
+
+```sh
+npx supabase start && npm test
+```
+
+`test/run.js` finds it through `supabase status`, serves a second Vite origin
+that has been handed the project, and drives the gate there. Skipping is
+reported rather than silent: the files only that suite can reach are printed
+but left out of the coverage total, with a line saying so — an unreachable file
+averaged into the number would quietly lower the bar for every other file. CI
+starts a stack, so nothing merges without them.
+
 ### The database
 
 `test/db/` is a third world, kept out of `npm test` because it needs a Postgres
@@ -165,7 +196,8 @@ DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres \
 Against a bare Postgres, pass `--stub` to `db:apply` first: `test/db/stub-auth.sql`
 installs the surface the migrations expect — the `auth` schema, `auth.uid()`,
 and the `anon` / `authenticated` roles — which a real Supabase database already
-has. The suite skips itself when `DATABASE_URL` is unset.
+has. The suite skips itself when `DATABASE_URL` is unset. CI sets it from the
+stack it starts, so these run on every pull request.
 
 ---
 
@@ -178,6 +210,7 @@ unchanged without a framework. The additions are the shell and its tooling:
 |---|---|
 | `react`, `react-dom` | the shell |
 | `react-router` | routing — v8 |
+| `@supabase/supabase-js` | accounts, and the boards backend behind them |
 | `vite`, `@vitejs/plugin-react` | dev server and build (dev only) |
 | `pg` | connects the RLS tests to a database (dev only) |
 
@@ -193,9 +226,11 @@ CI fails on any high-severity production advisory.
 
 ## Not built yet
 
-Real-time collaboration, presence cursors, share links, auth, export. The seams
-are in place — `BoardRepository` for persistence, the op log for transport —
-but none of it is written.
+Real-time collaboration, presence cursors, share links, export. The seams are in
+place — `BoardRepository` for persistence, the op log for transport — but none
+of it is written. Accounts exist and the boards table has policies; the boards
+themselves are still written to Web Storage, so signing in on a second device
+finds an empty workspace until `createSupabaseRepository` lands.
 
 The toolbar is still imperative rather than a React component; converting it
 needs `useSyncExternalStore` over the store and viewport.

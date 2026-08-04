@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 
+import { AccountMenu } from '../components/AccountMenu.jsx';
 import { createIdGenerator } from '../core/ids.js';
 import { DEFAULT_TITLE } from '../platform/storage.js';
 import { repository } from '../shell/storage.js';
@@ -92,15 +93,18 @@ export function BoardListPage() {
     <div className="shell" {...(busy ? { 'data-busy': '' } : {})}>
       <header className="shell-header">
         <h1>Boards</h1>
-        <button
-          type="button"
-          className="primary"
-          data-action="new-board"
-          disabled={busy}
-          onClick={create}
-        >
-          New board
-        </button>
+        <div className="shell-header-actions">
+          <AccountMenu />
+          <button
+            type="button"
+            className="primary"
+            data-action="new-board"
+            disabled={busy}
+            onClick={create}
+          >
+            New board
+          </button>
+        </div>
       </header>
 
       {error && <p className="error" role="alert" data-error>{error}</p>}

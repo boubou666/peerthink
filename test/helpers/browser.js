@@ -13,6 +13,14 @@ export function endpoints() {
   return JSON.parse(readFileSync(join(ROOT, '.coverage', 'endpoint.json'), 'utf8'));
 }
 
+/**
+ * The origin serving a build that has a Supabase project behind it, or null
+ * when no local stack was running. A suite that needs accounts skips on null.
+ */
+export function supabaseOrigin() {
+  return endpoints().authBase ?? null;
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const BUTTON_MASK = { none: 0, left: 1, right: 2, middle: 4, back: 8, forward: 16 };
@@ -40,8 +48,13 @@ export async function openApp({
   height = 800,
   path = BOARD_PATH,
   readyWhen = readinessFor(path),
+  // Which build to drive: the plain one, or — for the account suite — the
+  // origin that was handed a Supabase project. Two origins also means two
+  // localStorage partitions, so a signed-in session cannot leak into a test
+  // that assumes there isn't one.
+  origin = endpoints().appBase,
 } = {}) {
-  const { browserBase, appBase } = endpoints();
+  const { browserBase } = endpoints();
   const { session, targetId } = await newPage(browserBase);
 
   const errors = [];
@@ -100,12 +113,12 @@ export async function openApp({
       await session.send('Page.navigate', { url: 'about:blank' });
       await blankCommitted;
 
-      await session.send('Page.navigate', { url: appBase + to });
+      await session.send('Page.navigate', { url: origin + to });
 
       const deadline = Date.now() + timeout;
       for (;;) {
         if (await api.eval(ready).catch(() => false)) return;
-        if (Date.now() > deadline) throw new Error(`page never became ready at ${appBase + to} (${ready})`);
+        if (Date.now() > deadline) throw new Error(`page never became ready at ${origin + to} (${ready})`);
         await sleep(25);
       }
     },

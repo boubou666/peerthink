@@ -15,6 +15,22 @@ const COVERAGE = join(ROOT, '.coverage');
 const isMeasured = (rel) =>
   rel === 'server.js' || (rel.startsWith('src/') && (rel.endsWith('.js') || rel.endsWith('.jsx')));
 
+/**
+ * The account UI, which only mounts in a build that has a Supabase project
+ * behind it — so the browser suite can only reach it when one is running.
+ *
+ * When it is, these are gated like everything else. When it is not, they are
+ * still reported but left out of the total, and `report()` says so in as many
+ * words. Averaging an unreachable file into the number would quietly lower the
+ * bar for every other file to make up the difference, which is the one thing a
+ * coverage gate must not do.
+ */
+export const SUPABASE_ONLY = [
+  'src/components/AccountForm.jsx',
+  'src/components/AccountMenu.jsx',
+  'src/shell/RequireAccount.jsx',
+];
+
 function readAll(dir) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
@@ -122,8 +138,14 @@ function ranges(nums) {
   return out.join(', ');
 }
 
-export function report({ threshold = 95, quiet = false } = {}) {
+/**
+ * `unmeasured` names files to report but not gate — see SUPABASE_ONLY. `note`
+ * is the one-line reason, printed under the table so a green run that skipped
+ * something says which something.
+ */
+export function report({ threshold = 95, quiet = false, unmeasured = [], note = '' } = {}) {
   const scripts = [...readAll(join(COVERAGE, 'node')), ...readAll(join(COVERAGE, 'browser'))];
+  const skipped = new Set(unmeasured);
 
   const byFile = new Map();
   for (const script of scripts) {
@@ -139,8 +161,9 @@ export function report({ threshold = 95, quiet = false } = {}) {
     return { file: rel, total, covered, pct: total ? (covered / total) * 100 : 100, uncovered };
   });
 
-  const total = rows.reduce((n, r) => n + r.total, 0);
-  const covered = rows.reduce((n, r) => n + r.covered, 0);
+  const gated = rows.filter((r) => !skipped.has(r.file));
+  const total = gated.reduce((n, r) => n + r.total, 0);
+  const covered = gated.reduce((n, r) => n + r.covered, 0);
   const pct = total ? (covered / total) * 100 : 0;
 
   if (!quiet) {
@@ -149,13 +172,18 @@ export function report({ threshold = 95, quiet = false } = {}) {
     console.log(`\n${'file'.padEnd(width)}  ${'lines'.padStart(9)}  ${'%'.padStart(7)}  uncovered`);
     console.log(bar);
     for (const r of rows) {
-      const flag = r.pct >= threshold ? ' ' : '!';
+      const out = skipped.has(r.file)
+        ? '(not measured)'
+        : `${ranges(r.uncovered.slice(0, 12))}${r.uncovered.length > 12 ? ' …' : ''}`;
+      const flag = skipped.has(r.file) || r.pct >= threshold ? ' ' : '!';
       console.log(
-        `${r.file.padEnd(width)}  ${`${r.covered}/${r.total}`.padStart(9)}  ${r.pct.toFixed(1).padStart(6)}%${flag} ${ranges(r.uncovered.slice(0, 12))}${r.uncovered.length > 12 ? ' …' : ''}`,
+        `${r.file.padEnd(width)}  ${`${r.covered}/${r.total}`.padStart(9)}  ${r.pct.toFixed(1).padStart(6)}%${flag} ${out}`,
       );
     }
     console.log(bar);
-    console.log(`${'TOTAL'.padEnd(width)}  ${`${covered}/${total}`.padStart(9)}  ${pct.toFixed(1).padStart(6)}%`);
+    const label = rows.length > gated.length ? `TOTAL (of ${gated.length} measured files)` : 'TOTAL';
+    console.log(`${label.padEnd(width)}  ${`${covered}/${total}`.padStart(9)}  ${pct.toFixed(1).padStart(6)}%`);
+    if (note) console.log(`! ${note}`);
     console.log(pct >= threshold ? `\n✔ line coverage ${pct.toFixed(1)}% ≥ ${threshold}%` : `\n✘ line coverage ${pct.toFixed(1)}% < ${threshold}%`);
   }
 

@@ -19,6 +19,12 @@
   letter-spacing: -0.01em;
 }
 
+.shell-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 button.primary {
   font: inherit;
   font-size: 13px;
@@ -45,6 +51,103 @@ button.primary:hover { opacity: .85; }
   background: color-mix(in srgb, #d83a52 12%, transparent);
   border: 1px solid color-mix(in srgb, #d83a52 30%, transparent);
   border-radius: 9px;
+}
+
+/* ---------- accounts ---------- */
+
+button.link {
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+button.link:hover { color: var(--ink); }
+
+.account-gate {
+  max-width: 340px;
+  padding-top: 96px;
+}
+.account-gate h1 {
+  margin: 0 0 20px;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+}
+
+.account-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.account-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.account-form input {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.account-form input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+}
+
+.account-menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.account-email {
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.account-menu > button {
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.account-menu > button:hover {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--ink);
+}
+
+.account-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 3;
+  width: 260px;
+  padding: 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  box-shadow: var(--shadow);
+}
+
+.account-pending {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
 }
 
 .board-grid {

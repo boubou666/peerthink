@@ -39,10 +39,29 @@ jobs:
           echo "CHROME_PATH=$CHROME" >> "$GITHUB_ENV"
           "$CHROME" --version
 
+      # Accounts and row level security are tested against a real stack, not a
+      # stand-in — so the stack has to exist here, or both suites would skip
+      # and a green run would mean less than it looks like. `supabase start`
+      # applies supabase/migrations on the way up, which is also what makes
+      # DATABASE_URL below point at an already-migrated database.
+      - name: Start Supabase
+        run: |
+          npx supabase start
+          echo "DATABASE_URL=$(npx supabase status -o json | jq -r .DB_URL)" >> "$GITHUB_ENV"
+
       - name: Run tests with the coverage gate
         run: npm test
         env:
           COVERAGE_THRESHOLD: '95'
+
+      - name: Run the row level security tests
+        run: npm run test:db
+
+      # Frees the runner's ports and containers for any later step, and keeps a
+      # cancelled run from leaving the stack up on a self-hosted runner.
+      - name: Stop Supabase
+        if: always()
+        run: npx supabase stop --no-backup
 
       # The suite runs against Vite's dev server so that coverage maps back to
       # real source files. This proves the artifact we actually ship builds.
