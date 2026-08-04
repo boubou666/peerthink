@@ -44,7 +44,7 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
   };
 
   const board = (extra = {}) => ({ v: 1, order: [], objects: [], ...extra });
-  const card = (id) => ({ id, type: 'card', x: 0, y: 0, w: 100, h: 60, text: 'hello' });
+  const card = (id, text = 'hello') => ({ id, type: 'card', x: 0, y: 0, w: 100, h: 60, text });
 
   // Ids are client-generated and the column constrains their shape, so these
   // look like the real thing rather than being anything the test made up.
@@ -212,6 +212,107 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
    * insert. One loses on the primary key and has to notice that the row it
    * wanted now exists rather than reporting a failed save.
    */
+  /**
+   * The half of write authority that election cannot provide.
+   *
+   * Election stops the overwrite while everyone can see each other. This stops
+   * it when they cannot: a client that has lost the live channel elects itself
+   * and keeps autosaving a document that has fallen behind. It writes the
+   * version it last read, and there is no longer a row at that version.
+   */
+  describe('write authority', () => {
+    /** Bob, editing the same board as an invited editor. */
+    const shared = async () => {
+      const id = newId();
+      await alice.repository.save(id, board(), { title: 'Shared' });
+      const { error } = await alice.client
+        .from('board_members')
+        .insert({ board_id: id, user_id: bob.id, role: 'editor' });
+      assert.ok(!error, `could not share: ${error?.message}`);
+      return id;
+    };
+
+    test('a save from a version that has moved on is refused', async () => {
+      const id = await shared();
+      await alice.repository.load(id);
+      await bob.repository.load(id);
+
+      const his = board({ objects: [card('b1')], order: ['b1'] });
+      assert.equal(await bob.repository.save(id, his), true);
+
+      // Alice has not seen Bob's write; hers is the document she loaded
+      assert.equal(await alice.repository.save(id, board({ objects: [card('a1')], order: ['a1'] })), false);
+      assert.deepEqual((await bob.repository.load(id)).board, his, "Bob's work was overwritten");
+    });
+
+    test('a writer that keeps up keeps writing', async () => {
+      const id = await shared();
+      await alice.repository.load(id);
+
+      for (const text of ['one', 'two', 'three']) {
+        assert.equal(
+          await alice.repository.save(id, board({ objects: [card('c1', text)], order: ['c1'] })),
+          true,
+          `save "${text}" was refused`,
+        );
+      }
+      assert.equal((await alice.repository.load(id)).board.objects[0].text, 'three');
+    });
+
+    test('a refused writer can carry on once it has read the board again', async () => {
+      const id = await shared();
+      await alice.repository.load(id);
+      await bob.repository.load(id);
+      await bob.repository.save(id, board({ objects: [card('b1')], order: ['b1'] }));
+
+      assert.equal(await alice.repository.save(id, board()), false);
+
+      // re-reading is what re-earns the claim
+      await alice.repository.load(id);
+      assert.equal(await alice.repository.save(id, board({ objects: [card('a1')], order: ['a1'] })), true);
+    });
+
+    /**
+     * The counter is on the document. A rename is not a competing edit to it,
+     * and treating one as though it were would refuse the next honest save.
+     */
+    test('a rename by someone else does not refuse the writer', async () => {
+      const id = await shared();
+      await alice.repository.load(id);
+
+      assert.equal(await bob.repository.rename(id, 'Renamed by Bob'), true);
+
+      assert.equal(await alice.repository.save(id, board({ objects: [card('a1')], order: ['a1'] })), true);
+      assert.equal((await alice.repository.load(id)).title, 'Renamed by Bob', 'the rename was lost');
+    });
+
+    test('a save of an unchanged document does not spend a version', async () => {
+      const id = await shared();
+      await alice.repository.load(id);
+      const same = board({ objects: [card('c1')], order: ['c1'] });
+
+      assert.equal(await alice.repository.save(id, same), true);
+      assert.equal(await bob.repository.load(id) && await bob.repository.save(id, same), true);
+      // Bob's save changed nothing, so Alice's claim is still current
+      assert.equal(await alice.repository.save(id, same), true);
+    });
+
+    /**
+     * Deleting is not an edit to race with — it is the board being gone. The
+     * insert that creates a board must not be reachable from a client that
+     * has one open, or a stray autosave brings back what its owner deleted.
+     */
+    test('a board deleted underneath a writer is not resurrected', async () => {
+      const id = newId();
+      await alice.repository.save(id, board(), { title: 'Doomed' });
+      await alice.repository.load(id);
+      await alice.repository.remove(id);
+
+      assert.equal(await alice.repository.save(id, board({ objects: [card('c1')], order: ['c1'] })), false);
+      assert.equal(await alice.repository.load(id), null, 'the board came back');
+    });
+  });
+
   test('two writers racing the same new board both come away saved', async () => {
     const id = newId();
     const [first, second] = await Promise.all([

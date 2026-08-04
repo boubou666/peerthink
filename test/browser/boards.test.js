@@ -176,6 +176,48 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
   });
 
   /**
+   * The reason write authority exists, from the outside.
+   *
+   * Two pages on one board both have the whole document and both have an
+   * autosave. Only one of them writes it, so the other cannot save a view of
+   * the board that is missing what it has not applied yet — and what survives
+   * a reload is everything, from both of them.
+   */
+  test('two pages on one board do not overwrite each other', async () => {
+    const id = await newBoard();
+    await page.waitFor('Boolean(window.app?.sync)', { label: 'the first page to join' });
+
+    const second = await openApp({ path: `/#/b/${id}`, origin, readyWhen: ON_CANVAS });
+    try {
+      await second.waitFor('Boolean(window.app?.sync)', { label: 'the second page to join' });
+      await second.waitFor('window.app.sync.isWriter() === false', {
+        label: 'the second page to stand down',
+      });
+      assert.equal(await page.eval('window.app.sync.isWriter()'), true, 'nobody was writing');
+
+      await page.eval(`window.app.board.add('card', { x: 10, y: 10, text: 'from the first' })`);
+      await second.waitFor('window.app.store.toJSON().objects.length === 1');
+      await second.eval(`window.app.board.add('card', { x: 200, y: 10, text: 'from the second' })`);
+      await page.waitFor('window.app.store.toJSON().objects.length === 2');
+
+      // the page without authority declines rather than writing its own view
+      assert.equal(await second.eval('window.app.autosave.flush()'), false);
+      assert.equal(await page.eval('window.app.autosave.flush()'), true);
+
+      await second.goto(`/#/b/${id}`, { ready: ON_CANVAS });
+      await second.waitFor('window.app.restoredFromStorage === true');
+
+      assert.deepEqual(
+        (await second.eval('window.app.store.toJSON().objects.map(o => o.text)')).sort(),
+        ['from the first', 'from the second'],
+        'a reload lost one of the two edits',
+      );
+    } finally {
+      await second.close();
+    }
+  });
+
+  /**
    * The policies are tested directly in test/db/, and through the repository
    * in test/node/. This is the same claim from the outside: whatever the
    * previous test left behind, the next account does not see it.

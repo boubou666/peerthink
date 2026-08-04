@@ -71,6 +71,66 @@ describe('autosave', () => {
     assert.equal(store.order.length, 1);
   });
 
+  /**
+   * With several people on a board, every one of them holds the same document
+   * and only one of them writes it. A client that has been outvoted holds its
+   * peace rather than taking turns overwriting the others.
+   */
+  describe('write authority', () => {
+    const gated = (canWrite) => {
+      const store = new Store();
+      const scheduler = createManualScheduler();
+      const saved = [];
+      const repository = {
+        load: async () => null,
+        save: async (boardId, board) => {
+          saved.push({ boardId, board });
+          return true;
+        },
+      };
+      const autosave = createAutosave({ store, repository, boardId: 'alpha', scheduler, canWrite });
+      return { store, scheduler, saved, autosave };
+    };
+
+    test('a client without authority does not write', () => {
+      const { store, scheduler, saved } = gated(() => false);
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      assert.deepEqual(saved, []);
+    });
+
+    test('an explicit flush is not a claim of authority either', async () => {
+      const { store, saved, autosave } = gated(() => false);
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      assert.equal(await autosave.flush(), false);
+      assert.deepEqual(saved, []);
+    });
+
+    test('authority is read at write time, not at construction', () => {
+      let writer = false;
+      const { store, scheduler, saved } = gated(() => writer);
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      assert.deepEqual(saved, [], 'wrote before it had authority');
+
+      writer = true;
+      store.apply([{ t: 'set', id: 'a', patch: { x: 1 } }]);
+      scheduler.flushTimers();
+      assert.equal(saved.length, 1, 'did not write once it had authority');
+    });
+
+    test('no gate at all is a board this client writes', () => {
+      const { store, scheduler, saved } = gated(undefined);
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      assert.equal(saved.length, 1);
+    });
+  });
+
   test('a repository that rejects does not surface an unhandled rejection', async () => {
     const store = new Store();
     const scheduler = createManualScheduler();

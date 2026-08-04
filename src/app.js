@@ -127,6 +127,8 @@ export function createApp({
       boardId,
       scheduler: clock,
       delay: autosaveDelay,
+      // Alone, or with no channel to be elected on, this client writes.
+      canWrite: () => sync?.isWriter() ?? true,
     });
     app.autosave = autosave;
 
@@ -135,7 +137,17 @@ export function createApp({
     // window where another editor's change is missed until the next reload —
     // narrow, and the price of loading a snapshot rather than replaying a log.
     if (createSync) {
-      sync = createSync({ boardId, store, scheduler: clock });
+      sync = createSync({
+        boardId,
+        store,
+        scheduler: clock,
+        // Taking over means the previous writer has gone, possibly mid-edit
+        // and possibly before its own debounce fired. This client has those
+        // ops — it just was not allowed to write them until now.
+        onWriter: (isWriter) => {
+          if (isWriter) autosave?.flush().catch(() => {});
+        },
+      });
       app.sync = sync;
     }
 

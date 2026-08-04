@@ -119,6 +119,17 @@ Ops carry an origin. A remote one is applied with `record: false`, which keeps
 somebody else's edit out of your undo stack, and marked `REMOTE`, which is what
 stops it being sent straight back out.
 
+Ops keep the live documents identical; the *row* is written by whole-document
+save, so several editors autosaving one is several editors overwriting each
+other. Exactly one of them writes it — the earliest joiner, elected from
+presence, which every client computes from the same state and agrees on without
+anyone deciding — and the rest hold their peace. Election cannot see the case
+that matters most, though: a client that has lost the channel elects itself and
+carries on saving a document that has fallen behind. So a save also carries the
+version it is replacing, and the update matches nothing if that version has
+moved on. The counter belongs to `doc` alone, so a rename is not a competing
+edit and does not refuse the next honest save.
+
 The one thing an absolute op could not survive was replication. `{ t: 'order' }`
 names the whole z-order, and a sender cannot name an object they have not
 received yet — taking their array literally would drop a concurrent addition out
@@ -256,16 +267,14 @@ CI fails on any high-severity production advisory.
 
 Presence cursors, share links, export.
 
-Live editing works — ops cross a private channel and land in the other canvas —
-but the *snapshot* behind it does not know about it yet: every editor autosaves
-the whole document on their own timer, so the last writer wins and a change can
-be undone by someone else's stale save. That is the next piece of work, and
-until it lands two people on one board should expect to lose the occasional
-edit on reload.
-
 Ops emitted between reading the snapshot and joining the channel are missed —
 `hydrate()` subscribes after the load, so a change made in that window shows up
 on the next reload rather than immediately.
+
+A refused save is not yet recovered from. The writer keeps its document and
+stops persisting until it reads the board again, which is the safe direction —
+nothing is overwritten — but a client that has been disconnected long enough
+will hold edits it can no longer land.
 
 `board_members` has policies and no UI, so a board can be shared by inserting a
 row and no other way. And boards already in a browser's Web Storage are not

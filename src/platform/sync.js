@@ -1,3 +1,4 @@
+import { createIdGenerator } from '../core/ids.js';
 import { LOCAL, REMOTE } from '../core/store.js';
 
 /**
@@ -32,10 +33,43 @@ export const EVENT = 'ops';
 /** A board's topic. The id shape excludes ':', so this parses unambiguously. */
 export const topicFor = (boardId) => `board:${boardId}`;
 
-export function createBoardSync({ client, boardId, store, scheduler, onStatus, sendEvery = 50 }) {
+/**
+ * Who, of everyone on the board, writes the snapshot.
+ *
+ * Ops keep the live documents identical, but the row in Postgres is written by
+ * whole-document save, and every editor autosaving one is every editor able to
+ * overwrite the others. So exactly one of them does it, and the rest stop.
+ *
+ * The rule is earliest joiner, ties broken by id: every client computes it
+ * from the same presence state and reaches the same answer without anyone
+ * deciding, and someone arriving does not take the job from whoever is already
+ * doing it. The clocks are self-reported and need not agree — this is a total
+ * order, not a measurement, and choosing the wrong writer is not a failure.
+ */
+export function electWriter(members) {
+  return [...members].sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1))[0] ?? null;
+}
+
+export function createBoardSync({
+  client,
+  boardId,
+  store,
+  scheduler,
+  onStatus,
+  onWriter,
+  sendEvery = 50,
+  clientId = createIdGenerator()(),
+  now = () => Date.now(),
+}) {
   const topic = topicFor(boardId);
   const queue = [];
   let stopped = false;
+
+  // True until presence says otherwise — a board nobody else is on is a board
+  // this client writes, and so is one where the channel never came up. The
+  // version guard in the repository is what covers the case where that is
+  // wrong, which is exactly the case presence cannot see.
+  let writer = true;
 
   /**
    * Ops go out immediately, and then at most every `sendEvery` ms while they
@@ -64,6 +98,10 @@ export function createBoardSync({ client, boardId, store, scheduler, onStatus, s
     flush();
   });
 
+  // One sync per client per board. `client.channel()` hands back the channel
+  // it already has for a topic rather than a second one, and a channel that
+  // has been subscribed refuses new listeners — so building two of these for
+  // the same board on one client throws here rather than quietly sharing.
   const channel = client.channel(topic, {
     config: { private: true, broadcast: { self: false } },
   });
@@ -77,6 +115,26 @@ export function createBoardSync({ client, boardId, store, scheduler, onStatus, s
     store.apply(ops, false, REMOTE);
   });
 
+  /** Everyone currently on the board, as the election needs them. */
+  const members = () =>
+    Object.values(channel.presenceState())
+      .flat()
+      .filter((meta) => typeof meta?.id === 'string' && Number.isFinite(meta.at))
+      .map(({ id, at }) => ({ id, at }));
+
+  const settleWriter = () => {
+    if (stopped) return;
+    const elected = electWriter(members());
+    // No presence state yet is not "somebody else writes" — it is nobody
+    // having reported in, which leaves this client as the only one it knows.
+    const next = elected ? elected.id === clientId : true;
+    if (next === writer) return;
+    writer = next;
+    onWriter?.(writer);
+  };
+
+  channel.on('presence', { event: 'sync' }, settleWriter);
+
   /**
    * Resolves with the subscription status rather than rejecting. A board that
    * cannot be joined — offline, or a policy that says no — still opens, still
@@ -89,6 +147,11 @@ export function createBoardSync({ client, boardId, store, scheduler, onStatus, s
     // join the policy refuses reports CLOSED, not an error.
     channel.subscribe((status) => {
       onStatus?.(status);
+      // Announcing presence is what makes this client electable — and what
+      // tells the incumbent it is no longer alone. Until it lands, everyone
+      // already here has an answer that does not include us, which is the
+      // right answer for a client that has not arrived.
+      if (status === 'SUBSCRIBED') channel.track({ id: clientId, at: now() });
       resolve(status);
     });
   });
@@ -96,6 +159,10 @@ export function createBoardSync({ client, boardId, store, scheduler, onStatus, s
   return {
     topic,
     ready,
+    clientId,
+
+    /** Whether this client is the one that writes the snapshot. */
+    isWriter: () => writer,
 
     async destroy() {
       stopped = true;

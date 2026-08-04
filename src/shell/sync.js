@@ -7,5 +7,6 @@ import { client } from './auth.js';
  * The same load-time decision the repository and the auth gate make.
  */
 export const createSync = client
-  ? ({ boardId, store, scheduler }) => createBoardSync({ client, boardId, store, scheduler })
+  ? ({ boardId, store, scheduler, onWriter }) =>
+      createBoardSync({ client, boardId, store, scheduler, onWriter })
   : null;

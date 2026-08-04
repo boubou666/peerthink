@@ -6,7 +6,7 @@ import { createClient } from '@supabase/supabase-js';
 import { REMOTE, Store } from '../../src/core/store.js';
 import { createManualScheduler } from '../../src/core/scheduler.js';
 import { createSupabaseRepository } from '../../src/platform/supabase-repository.js';
-import { createBoardSync, topicFor } from '../../src/platform/sync.js';
+import { createBoardSync, electWriter, topicFor } from '../../src/platform/sync.js';
 import { localSupabase } from '../helpers/supabase.js';
 
 /**
@@ -46,10 +46,10 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
    * first op of a burst goes out on its own; `flushTimers()` is what releases
    * the ones the throttle held back.
    */
-  const join = async (user, boardId) => {
+  const join = async (user, boardId, extra = {}) => {
     const store = new Store();
     const scheduler = createManualScheduler();
-    const sync = createBoardSync({ client: user.client, boardId, store, scheduler });
+    const sync = createBoardSync({ client: user.client, boardId, store, scheduler, ...extra });
     const status = await sync.ready;
     return { store, scheduler, sync, status };
   };
@@ -253,5 +253,85 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
 
   test('the topic is the board, and nothing else', () => {
     assert.equal(topicFor('abc123'), 'board:abc123');
+  });
+
+  /**
+   * One writer, chosen by everyone independently and reaching the same answer.
+   * Election is what stops several editors autosaving over each other; the
+   * version guard in the repository is what covers the case it cannot see.
+   */
+  describe('write authority', () => {
+    test('the earliest joiner writes, and a newcomer does not take over', async () => {
+      const id = await sharedBoard();
+      const hers = await join(alice, id);
+      await waitFor(() => hers.sync.isWriter(), 'alice to take authority');
+      assert.equal(hers.sync.isWriter(), true, 'the only client on a board does not write it');
+
+      const his = await join(bob, id);
+
+      // both sides have to settle on the same person, from the same state
+      assert.ok(
+        await waitFor(() => his.sync.isWriter() === false, 'bob to stand down'),
+        'two clients both believed they were the writer',
+      );
+      assert.equal(hers.sync.isWriter(), true, 'the incumbent lost authority to a newcomer');
+
+      await hers.sync.destroy();
+      await his.sync.destroy();
+    });
+
+    test('authority passes on when the writer leaves', async () => {
+      const id = await sharedBoard();
+      const taken = [];
+      const hers = await join(alice, id);
+      await waitFor(() => hers.sync.isWriter(), 'alice to take authority');
+      const his = await join(bob, id, { onWriter: (is) => taken.push(is) });
+      await waitFor(() => his.sync.isWriter() === false, 'bob to stand down');
+
+      await hers.sync.destroy();
+
+      assert.ok(
+        await waitFor(() => his.sync.isWriter(), 'bob to take over'),
+        'nobody was left writing the board',
+      );
+      // the handover is announced, not just observable — it is what tells the
+      // new writer to save what the old one may not have got round to
+      assert.deepEqual(taken, [false, true]);
+
+      await his.sync.destroy();
+    });
+
+    /**
+     * A board this client cannot join is a board it is alone on as far as it
+     * can tell — and it must keep saving, or an unshared board would stop
+     * being written the moment realtime was unreachable.
+     */
+    test('a client that cannot join the channel still writes', async () => {
+      const id = await sharedBoard({ role: null });
+      const his = await join(bob, id);
+
+      assert.notEqual(his.status, 'SUBSCRIBED');
+      assert.equal(his.sync.isWriter(), true);
+
+      await his.sync.destroy();
+    });
+  });
+});
+
+describe('electWriter', () => {
+  const at = (id, when) => ({ id, at: when });
+
+  test('picks the earliest joiner', () => {
+    assert.equal(electWriter([at('b', 20), at('a', 10), at('c', 30)]).id, 'a');
+  });
+
+  test('breaks a tie on id, so every client agrees', () => {
+    const members = [at('b', 10), at('a', 10)];
+    assert.equal(electWriter(members).id, 'a');
+    assert.equal(electWriter([...members].reverse()).id, 'a');
+  });
+
+  test('an empty board elects nobody', () => {
+    assert.equal(electWriter([]), null);
   });
 });
