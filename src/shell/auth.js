@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 import { createOfflineAuth, createSupabaseAuth } from '../platform/auth.js';
 import { createSupabaseClient, readSupabaseConfig } from '../platform/supabase.js';
-import { safeLocalStorage } from './storage.js';
+import { safeLocalStorage } from './web-storage.js';
 
 /**
  * One auth for the whole shell, chosen once at load.

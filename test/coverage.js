@@ -16,8 +16,9 @@ const isMeasured = (rel) =>
   rel === 'server.js' || (rel.startsWith('src/') && (rel.endsWith('.js') || rel.endsWith('.jsx')));
 
 /**
- * The account UI, which only mounts in a build that has a Supabase project
- * behind it — so the browser suite can only reach it when one is running.
+ * The account UI and the server-backed repository, which only run in a build
+ * that has a Supabase project behind it — so the suite can only reach them
+ * when one is running.
  *
  * When it is, these are gated like everything else. When it is not, they are
  * still reported but left out of the total, and `report()` says so in as many
@@ -28,6 +29,7 @@ const isMeasured = (rel) =>
 export const SUPABASE_ONLY = [
   'src/components/AccountForm.jsx',
   'src/components/AccountMenu.jsx',
+  'src/platform/supabase-repository.js',
   'src/shell/RequireAccount.jsx',
 ];
 

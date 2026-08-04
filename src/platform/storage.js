@@ -24,7 +24,12 @@ export const DEFAULT_TITLE = 'Untitled board';
 /** Where single-board versions of the app kept their state. */
 export const LEGACY_KEY = 'peerthink:board';
 
-const isBoard = (board) => Array.isArray(board?.objects) && Array.isArray(board?.order);
+/**
+ * What every repository agrees a board looks like. Exported so the
+ * server-backed one rejects the same documents this one does, and so the
+ * check constraint in the migration has something to mirror.
+ */
+export const isBoard = (board) => Array.isArray(board?.objects) && Array.isArray(board?.order);
 
 export function createLocalStorageRepository({
   storage,

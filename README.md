@@ -63,7 +63,10 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
                   ├── input.js       pointer and keyboard gestures
                   ├── views.js       per-type markup
                   ├── toolbar.js     buttons and view shortcuts
-                  └── storage.js     BoardRepository over Web Storage
+                  ├── storage.js     BoardRepository over Web Storage
+                  ├── supabase-repository.js  the same contract over Postgres
+                  ├── auth.js        accounts, as { id, email, guest }
+                  └── supabase.js    the client, and whether there is one
 ```
 
 ### React renders the shell, not the canvas
@@ -92,7 +95,8 @@ the `ResizeObserver` all arrive as arguments. The practical consequences:
 - two independent boards can be composed on one page, each with its own DOM
   subtree and state — [`test/browser/app.test.js`](test/browser/app.test.js) does exactly that;
 - the persistence backend is one argument, so the Web Storage implementation
-  swaps for an HTTP or WebSocket one without touching the core;
+  and the Postgres one are the same code path to everything above them — which
+  is what made adding the second a new file rather than an edit to the first;
 - timing is a `Scheduler`, so debounce and frame behaviour are driven by hand
   in tests instead of by `setTimeout` and luck.
 
@@ -158,11 +162,18 @@ VITE_SUPABASE_ANON_KEY=<anon key>
 ```
 
 it signs every visitor in — anonymously on a first visit, which is a real row
-in `auth.users` and so a real subject for the row level security policies. With
-either variable missing it runs on Web Storage with no accounts at all, which
-is what the published GitHub Pages site is and what `npm test` runs against.
-Registering attaches an email to the guest who is already signed in, rather
-than creating a second user beside them, so the boards come along.
+in `auth.users` and so a real subject for the row level security policies — and
+keeps the boards in Postgres. With either variable missing it runs on Web
+Storage with no accounts at all, which is what the published GitHub Pages site
+is and what `npm test` runs against. Registering attaches an email to the guest
+who is already signed in, rather than creating a second user beside them, so
+the boards come along.
+
+The two repositories satisfy one contract, so nothing above `shell/storage.js`
+knows which is in front of it. `list()` is one indexed query rather than a parse
+of every stored board, and access is not enforced in the client: a `select` with
+no `where` clause is the correct way to ask for "my boards", because the
+policies are what answer it.
 
 The account suite in `test/browser/auth.test.js` needs a real stack and skips
 without one:
@@ -226,11 +237,14 @@ CI fails on any high-severity production advisory.
 
 ## Not built yet
 
-Real-time collaboration, presence cursors, share links, export. The seams are in
-place — `BoardRepository` for persistence, the op log for transport — but none
-of it is written. Accounts exist and the boards table has policies; the boards
-themselves are still written to Web Storage, so signing in on a second device
-finds an empty workspace until `createSupabaseRepository` lands.
+Real-time collaboration, presence cursors, share links, export. The seam is in
+place — the op log is the wire format — but none of it is written: two people
+on one board today are two people overwriting each other's snapshot.
+
+`board_members` has policies and no UI, so a board can be shared by inserting a
+row and no other way. And boards already in a browser's Web Storage are not
+adopted when a project is configured — the account and the browser are separate
+places, and moving boards between them is a decision nobody has made yet.
 
 The toolbar is still imperative rather than a React component; converting it
 needs `useSyncExternalStore` over the store and viewport.
