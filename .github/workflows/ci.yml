@@ -15,6 +15,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # this job runs a fork's code on pull_request; no step needs an
+          # authenticated git, so the token stays out of .git/config
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:

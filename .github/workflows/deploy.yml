@@ -38,6 +38,10 @@ jobs:
           # a workflow_run event checks out the default branch by default, which
           # need not be the commit CI just passed — build exactly what was tested
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # npm ci and vite both run code from the checked-out ref, and this job
+          # holds pages:write and id-token:write. Nothing here needs an
+          # authenticated git, so don't leave the token in .git/config for it.
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
