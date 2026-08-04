@@ -394,6 +394,19 @@ describe('row level security', { skip: URL ? false : 'DATABASE_URL is not set' }
         ]);
       });
 
+      /**
+       * With an editor the old ordering passed by luck — descending on the
+       * role text happens to put 'owner' above 'editor'. A viewer is what
+       * exposes it: 'viewer' sorts above 'owner', so the owner was not first.
+       */
+      test('the owner leads even when a viewer would sort above them', async () => {
+        const id = await givenAliceHasABoard();
+        await share(id, 'viewer');
+
+        const { rows } = await as(alice, 'select * from public.board_people($1)', [id]);
+        assert.deepEqual(rows.map((r) => r.role), ['owner', 'viewer']);
+      });
+
       /** It resolves addresses, so it must not be a way to go looking for one. */
       test('a member cannot use it to read the other members\' addresses', async () => {
         const id = await givenAliceHasABoard();

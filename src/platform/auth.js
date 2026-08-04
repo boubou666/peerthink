@@ -22,6 +22,20 @@ const toAccount = (session) => {
 /** Supabase's errors are already written for people; a fallback covers the rest. */
 const failed = (error, fallback) => ({ ok: false, message: error?.message || fallback });
 
+/**
+ * Run a call that is supposed to answer with `{ error }`, and make sure it
+ * does. A transport that rejects instead — no network, a request that never
+ * came back — would otherwise escape as an unhandled rejection out of a port
+ * whose whole contract is that it answers.
+ */
+const answering = async (fallback, call) => {
+  try {
+    return await call();
+  } catch (error) {
+    return failed(error, fallback);
+  }
+};
+
 export function createSupabaseAuth({ client }) {
   let account = null;
   let starting = null;
@@ -41,17 +55,9 @@ export function createSupabaseAuth({ client }) {
     publish(session);
   });
 
-  const startOnce = async () => {
-    try {
-      return await resolveSession();
-    } catch (error) {
-      // The port promises an answer, and one path did not keep that promise:
-      // a client that *throws* — a transport that never came back, a storage
-      // that blew up — left the gate on "Loading…" with no retry, because the
-      // caller is a .then() with nowhere to put a rejection.
-      return failed(error, 'Could not start a session.');
-    }
-  };
+  // The gate is a .then() with nowhere to put a rejection: a client that
+  // throws here left it on "Loading…" for good, with no retry.
+  const startOnce = () => answering('Could not start a session.', resolveSession);
 
   const resolveSession = async () => {
     const { data, error } = await client.auth.getSession();
@@ -95,8 +101,10 @@ export function createSupabaseAuth({ client }) {
     },
 
     async signIn({ email, password }) {
-      const { error } = await client.auth.signInWithPassword({ email, password });
-      return error ? failed(error, 'Could not sign in.') : { ok: true };
+      return answering('Could not sign in.', async () => {
+        const { error } = await client.auth.signInWithPassword({ email, password });
+        return error ? failed(error, 'Could not sign in.') : { ok: true };
+      });
     },
 
     /**
@@ -113,17 +121,19 @@ export function createSupabaseAuth({ client }) {
      * email" — the session itself is usable either way.
      */
     async register({ email, password }) {
-      if (!account) {
-        const { data, error } = await client.auth.signUp({ email, password });
-        return error
-          ? failed(error, 'Could not create an account.')
-          : { ok: true, pending: !data.session };
-      }
+      return answering('Could not create an account.', async () => {
+        if (!account) {
+          const { data, error } = await client.auth.signUp({ email, password });
+          return error
+            ? failed(error, 'Could not create an account.')
+            : { ok: true, pending: !data.session };
+        }
 
-      const { data, error } = await client.auth.updateUser({ email, password });
-      return error
-        ? failed(error, 'Could not save the account.')
-        : { ok: true, pending: data.user?.email !== email };
+        const { data, error } = await client.auth.updateUser({ email, password });
+        return error
+          ? failed(error, 'Could not save the account.')
+          : { ok: true, pending: data.user?.email !== email };
+      });
     },
 
     /**
@@ -133,7 +143,9 @@ export function createSupabaseAuth({ client }) {
      * them is the wrong end of the trade.
      */
     async signOut() {
-      await client.auth.signOut();
+      // Answered rather than awaited bare: a rejected sign-out must not stop
+      // the session being dropped locally, which is the part that matters.
+      await answering('', () => client.auth.signOut());
       publish(null); // the state-change callback publishes too; this is idempotent
       starting = null;
       return { ok: true };

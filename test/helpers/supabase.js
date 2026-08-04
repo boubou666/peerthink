@@ -25,7 +25,10 @@ export function localSupabase() {
     // `status` answers from the running containers; with none up it exits
     // non-zero, which is the whole signal. stderr is dropped because "not
     // running" is an expected answer here, not a problem to report.
-    const out = execFileSync('npx', ['supabase', 'status', '-o', 'json'], {
+    // `npx` is npx.cmd on Windows, which execFileSync will not resolve on its
+    // own — and this failing silently would look exactly like "no stack", so
+    // the suites would skip rather than report anything.
+    const out = execFileSync(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['supabase', 'status', '-o', 'json'], {
       cwd: ROOT,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],

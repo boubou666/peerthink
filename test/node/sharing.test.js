@@ -154,13 +154,27 @@ describe('sharing', { skip: stack ? false : 'no local supabase (npx supabase sta
       assert.ok(await alice.repository.load(id), 'removing a member removed the board');
     });
 
-    test('a member cannot remove anyone else', async () => {
+    /**
+     * The target has to be someone with a membership row. Aiming this at the
+     * owner proves nothing: they have no row in board_members, so the delete
+     * matches nothing whether or not the policy would have allowed it, and the
+     * test passes with the policy dropped entirely.
+     */
+    test('a member cannot remove another member', async () => {
       const id = await aliceBoard();
       const { token } = await alice.sharing.share(id, 'editor');
       await bob.sharing.redeem(token);
 
-      await bob.sharing.remove(id, alice.id);
-      assert.equal((await alice.sharing.people(id)).length, 2, 'an editor removed the owner');
+      const carol = await signIn();
+      await carol.sharing.redeem(token);
+      assert.equal((await alice.sharing.people(id)).length, 3, 'carol did not join');
+
+      assert.equal(await bob.sharing.remove(id, carol.id), false);
+      assert.equal((await alice.sharing.people(id)).length, 3, 'an editor removed another member');
+
+      // nor the owner, who has no membership row to take away in the first place
+      assert.equal(await bob.sharing.remove(id, alice.id), false);
+      assert.equal((await alice.sharing.people(id)).length, 3);
     });
 
     test('revoking stops the link and keeps the people', async () => {

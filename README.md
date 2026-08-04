@@ -305,7 +305,7 @@ CI fails on any high-severity production advisory.
 
 ## Not built yet
 
-Share links and export.
+Export.
 
 Ops emitted between reading the snapshot and joining the channel are missed —
 `hydrate()` subscribes after the load, so a change made in that window shows up

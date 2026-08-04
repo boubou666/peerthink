@@ -91,15 +91,28 @@ export async function newIsolatedPage(httpBase) {
   const { webSocketDebuggerUrl } = await (await fetch(`${httpBase}/json/version`)).json();
   const browser = await CDPSession.connect(webSocketDebuggerUrl);
 
-  const { browserContextId } = await browser.send('Target.createBrowserContext', {});
-  const { targetId } = await browser.send('Target.createTarget', {
-    url: 'about:blank',
-    browserContextId,
-  });
-
-  const session = await CDPSession.connect(
-    `${httpBase.replace(/^http/, 'ws')}/devtools/page/${targetId}`,
-  );
+  // Anything from here on can fail, and the browser-level socket is already
+  // open — leaking it keeps the runner's event loop alive and turns a setup
+  // error into a hang with a different symptom than its cause.
+  let browserContextId;
+  let targetId;
+  let session;
+  try {
+    ({ browserContextId } = await browser.send('Target.createBrowserContext', {}));
+    ({ targetId } = await browser.send('Target.createTarget', {
+      url: 'about:blank',
+      browserContextId,
+    }));
+    session = await CDPSession.connect(
+      `${httpBase.replace(/^http/, 'ws')}/devtools/page/${targetId}`,
+    );
+  } catch (error) {
+    if (browserContextId) {
+      await browser.send('Target.disposeBrowserContext', { browserContextId }).catch(() => {});
+    }
+    browser.close();
+    throw error;
+  }
 
   return {
     session,

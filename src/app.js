@@ -167,6 +167,12 @@ export function createApp({
     });
     app.autosave = autosave;
 
+    // Autosave subscribes *after* the load, so that a restore never writes
+    // itself straight back — which also means the replay above happened with
+    // nobody listening. Those ops are the user's own edits and nothing else
+    // will save them, so the write they should have scheduled is made here.
+    if (early.length) autosave.flush().catch(() => {});
+
     // After the load, not before: ops that arrive while the snapshot is still
     // in flight would be overwritten by it. The gap between the two is a
     // window where another editor's change is missed until the next reload —

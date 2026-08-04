@@ -122,18 +122,26 @@ stable
 security definer
 set search_path = public, pg_temp
 as $$
-  select b.owner_id, u.email::text, 'owner'::text
-  from public.boards b
-  join auth.users u on u.id = b.owner_id
-  where b.id = board and public.board_role(board) = 'owner'
+  -- The union is wrapped so the ordering has named columns to sort on: across
+  -- a UNION, `order by` can only see the output list, and an expression over
+  -- it is not resolvable there at all.
+  select * from (
+    select b.owner_id as user_id, u.email::text as email, 'owner'::text as role
+    from public.boards b
+    join auth.users u on u.id = b.owner_id
+    where b.id = board and public.board_role(board) = 'owner'
 
-  union all
+    union all
 
-  select m.user_id, u.email::text, m.role
-  from public.board_members m
-  join auth.users u on u.id = m.user_id
-  where m.board_id = board and public.board_role(board) = 'owner'
-  order by 3 desc, 2 nulls last;
+    select m.user_id, u.email::text, m.role
+    from public.board_members m
+    join auth.users u on u.id = m.user_id
+    where m.board_id = board and public.board_role(board) = 'owner'
+  ) people
+  -- Not `order by role desc`: that sort is lexical, and descending puts
+  -- 'viewer' above 'owner'. The owner leads because they are the owner, so
+  -- say that rather than rely on where the word happens to fall.
+  order by (people.role <> 'owner'), people.role, people.email nulls last;
 $$;
 
 revoke execute on function public.board_people(text) from public, anon;

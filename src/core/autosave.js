@@ -18,8 +18,35 @@
  * flush, because a caller asking to save is not a caller claiming authority.
  */
 export function createAutosave({ store, repository, boardId, scheduler, delay = 400, canWrite }) {
-  const flush = async () => (canWrite?.() === false ? false : repository.save(boardId, store.toJSON()));
-  const save = scheduler.debounce(() => flush().catch(() => false), delay);
+  // A write that did not land leaves the document dirty. Without this, a save
+  // refused because someone else's version is current — or dropped because the
+  // network was — is never retried, and the last edits are lost on reload by a
+  // session that had them the whole time. The retry rides the next settled
+  // edit rather than a timer of its own, so a board nobody is touching does
+  // not sit there hammering a server that just said no.
+  let dirty = false;
+
+  const flush = async () => {
+    if (canWrite?.() === false) {
+      dirty = true;
+      return false;
+    }
+    const wrote = await repository.save(boardId, store.toJSON());
+    dirty = !wrote;
+    return wrote;
+  };
+
+  const attempt = () => flush().catch(() => (dirty = true));
+  const save = scheduler.debounce(attempt, delay);
   const stop = store.on(save);
-  return { stop, flush, boardId };
+
+  return {
+    stop,
+    flush,
+    boardId,
+    /** Whether the document on screen is ahead of the one that was stored. */
+    get dirty() {
+      return dirty;
+    },
+  };
 }
