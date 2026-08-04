@@ -123,6 +123,41 @@ describe('createApp', () => {
     assert.deepEqual(result, { count: 7, restored: false, title: null });
   });
 
+  /**
+   * A repository is contracted to answer rather than throw, and both of the
+   * ones in this app do. The contract is documented, not enforced, and the
+   * failure it papers over is the worst one available: a canvas that takes
+   * edits all afternoon and has nowhere to put them, behind a bar that looks
+   * exactly like a working board.
+   */
+  test('a board that could not be loaded stops claiming to be saved', async () => {
+    const result = await withSecondApp(
+      `boardId: 'remote', repository: {
+        load: async () => { throw new Error('offline'); },
+        save: async () => true,
+        migrateLegacy: async () => false,
+      }`,
+      `async ({ second, hydrated }) => {
+        const rejected = await hydrated.then(() => false, () => true);
+        second.board.add('card', { x: 0, y: 0, text: 'typed into a board that saves nowhere' });
+        return {
+          rejected,
+          status: second.saveStatus.get(),
+          autosave: Boolean(second.autosave),
+          stillUsable: second.store.order.length,
+        };
+      }`,
+      { hydrate: false },
+    );
+
+    assert.deepEqual(result, {
+      rejected: true,
+      status: 'unloaded',
+      autosave: false,
+      stillUsable: 1,
+    }, 'the canvas is kept — it is the only copy of the work — and says it is not being stored');
+  });
+
   const SLOW_REPOSITORY = `repository: {
     load: () => new Promise((done) => setTimeout(() => done(null), 40)),
     save: async () => true,

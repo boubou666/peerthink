@@ -67,6 +67,19 @@ export function createScheduler({ requestAnimationFrame, setTimeout, clearTimeou
     nextFrame(fn) {
       requestAnimationFrame(fn);
     },
+
+    /**
+     * Run once after `ms`, and hand back the cancel.
+     *
+     * `debounce` cannot express a retry: restarting it needs another call to
+     * the debounced function, and there is nothing to call — the caller is a
+     * write that failed and wants to happen again on its own. The cancel is
+     * what stops a torn-down board from waking up to save itself.
+     */
+    after(fn, ms) {
+      const timer = setTimeout(fn, ms);
+      return () => clearTimeout(timer);
+    },
   };
 }
 

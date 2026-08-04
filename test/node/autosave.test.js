@@ -1,7 +1,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createAutosave } from '../../src/core/autosave.js';
+import { RETRY_DELAYS, createAutosave } from '../../src/core/autosave.js';
+import { FAILED, PENDING, SAVED, SAVING } from '../../src/core/save-status.js';
 import { Store } from '../../src/core/store.js';
 import { createManualScheduler } from '../../src/core/scheduler.js';
 
@@ -190,6 +191,235 @@ describe('autosave', () => {
       store.apply([{ t: 'add', obj: card('a') }]);
       assert.equal(await autosave.flush(), false);
       assert.equal(autosave.dirty, true);
+    });
+  });
+
+  /**
+   * A board is only as safe as the last write that landed, and the one thing
+   * that must never happen is a board saying it is stored when it is not.
+   */
+  describe('what the person is told', () => {
+    const watched = (save, { canWrite } = {}) => {
+      const store = new Store();
+      const scheduler = createManualScheduler();
+      const seen = [];
+      const autosave = createAutosave({
+        store,
+        repository: { load: async () => null, save },
+        boardId: 'alpha',
+        scheduler,
+        canWrite,
+        onStatus: (status) => seen.push(status),
+      });
+      return { store, scheduler, autosave, seen };
+    };
+
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+    test('an edit is pending, a landed write is saved', async () => {
+      const { store, scheduler, autosave, seen } = watched(async () => true);
+      assert.equal(autosave.status, SAVED, 'a board nobody has touched is stored');
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      assert.deepEqual(seen, [PENDING]);
+
+      scheduler.flushTimers();
+      await settle();
+      assert.deepEqual(seen, [PENDING, SAVING, SAVED]);
+      assert.equal(autosave.status, SAVED);
+    });
+
+    test('a refused write says so and stays saying it', async () => {
+      const { store, scheduler, autosave, seen } = watched(async () => false);
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      await settle();
+      assert.deepEqual(seen, [PENDING, SAVING, FAILED]);
+
+      // The next edit does not get to look like a fresh start: the previous
+      // one is still not stored, and pending would say that it was.
+      store.apply([{ t: 'set', id: 'a', patch: { x: 1 } }]);
+      assert.equal(autosave.status, FAILED);
+    });
+
+    test('a rejected write is a failure like any other', async () => {
+      const { store, scheduler, autosave } = watched(async () => { throw new Error('offline'); });
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      await settle();
+      assert.equal(autosave.status, FAILED);
+    });
+
+    test('a client that is not the writer is not told anything is wrong', async () => {
+      const { store, scheduler, autosave, seen } = watched(async () => true, { canWrite: () => false });
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      await settle();
+
+      assert.deepEqual(seen, [PENDING, SAVED], 'someone else writes this board; that is not a problem');
+      assert.equal(autosave.dirty, true, 'but this client still owes the write if it takes over');
+    });
+
+    test('a recovered write clears the warning', async () => {
+      let working = false;
+      const { store, scheduler, autosave } = watched(async () => working);
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      await settle();
+      assert.equal(autosave.status, FAILED);
+
+      working = true;
+      assert.equal(await autosave.flush(), true);
+      assert.equal(autosave.status, SAVED);
+      assert.equal(autosave.dirty, false);
+    });
+  });
+
+  /**
+   * The board that loses data is the one whose last write failed and was then
+   * left alone. Riding the next settled edit cannot save it — there is no next
+   * edit, and the tab is about to be closed.
+   */
+  describe('retry', () => {
+    const failing = (results) => {
+      const store = new Store();
+      const scheduler = createManualScheduler();
+      const attempts = [];
+      const autosave = createAutosave({
+        store,
+        scheduler,
+        boardId: 'alpha',
+        repository: {
+          load: async () => null,
+          save: async () => {
+            attempts.push(1);
+            return results.shift() ?? false;
+          },
+        },
+      });
+      return { store, scheduler, autosave, attempts };
+    };
+
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+    test('a refused write is tried again with nobody touching the board', async () => {
+      const { store, scheduler, attempts } = failing([false, true]);
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      await settle();
+      assert.equal(attempts.length, 1);
+
+      // no edit, no interaction — just the timer the failure armed
+      scheduler.flushTimers();
+      await settle();
+      assert.equal(attempts.length, 2, 'the board sat there holding an unsaved edit');
+    });
+
+    test('it keeps trying, and stops once one lands', async () => {
+      const { store, scheduler, autosave, attempts } = failing([false, false, true]);
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      await settle();
+
+      for (let i = 0; i < 4; i++) {
+        scheduler.flushTimers();
+        await settle();
+      }
+
+      assert.equal(attempts.length, 3, 'either it gave up early or it never stopped');
+      assert.equal(autosave.status, SAVED);
+      assert.equal(autosave.dirty, false);
+    });
+
+    test('the delays back off rather than hammering a server that said no', async () => {
+      const timers = [];
+      const scheduler = createManualScheduler();
+      const spy = { ...scheduler, after: (fn, ms) => { timers.push(ms); return scheduler.after(fn, ms); } };
+      const store = new Store();
+      createAutosave({
+        store,
+        scheduler: spy,
+        boardId: 'alpha',
+        repository: { load: async () => null, save: async () => false },
+      });
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      // each round is one refused write and the timer it arms for the next
+      for (let i = 0; i < RETRY_DELAYS.length + 2; i++) {
+        scheduler.flushTimers();
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      assert.deepEqual(timers.slice(0, RETRY_DELAYS.length), RETRY_DELAYS);
+      assert.equal(timers.at(-1), RETRY_DELAYS.at(-1), 'the last delay repeats rather than growing');
+    });
+
+    test('stop takes the timer with it', async () => {
+      const { store, scheduler, autosave, attempts } = failing([false]);
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      await settle();
+      assert.equal(attempts.length, 1);
+
+      autosave.stop();
+      scheduler.flushTimers();
+      await settle();
+      assert.equal(attempts.length, 1, 'a closed board woke up to save itself');
+    });
+  });
+
+  /**
+   * A write is a snapshot of the document at the moment it started. Anything
+   * typed while it is in flight is not in it.
+   */
+  describe('edits made during a write', () => {
+    test('are not marked saved by the write that missed them', async () => {
+      const store = new Store();
+      const scheduler = createManualScheduler();
+      const saved = [];
+      let release;
+      const autosave = createAutosave({
+        store,
+        scheduler,
+        boardId: 'alpha',
+        repository: {
+          load: async () => null,
+          save: async (id, board) => {
+            saved.push(board);
+            await new Promise((resolve) => { release = resolve; });
+            return true;
+          },
+        },
+      });
+
+      store.apply([{ t: 'add', obj: card('a') }]);
+      scheduler.flushTimers();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(saved.length, 1, 'the first write is in flight');
+
+      store.apply([{ t: 'set', id: 'a', patch: { x: 99 } }]);
+      release();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(autosave.dirty, true, 'the edit was marked saved by a write it was not in');
+      assert.equal(autosave.status, PENDING);
+
+      // and the follow-up needs no further edit to be scheduled
+      scheduler.flushTimers();
+      await new Promise((resolve) => setImmediate(resolve));
+      release();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      assert.equal(saved.length, 2);
+      assert.equal(saved[1].objects[0].x, 99);
+      assert.equal(autosave.dirty, false);
     });
   });
 

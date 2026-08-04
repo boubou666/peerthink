@@ -10,6 +10,17 @@ import { repository } from '../shell/storage.js';
 const newId = createIdGenerator();
 const EMPTY_BOARD = { v: 1, order: [], objects: [] };
 
+/**
+ * A repository is allowed to reject — the contract says it answers rather than
+ * throws, but the contract is a promise made by two implementations and not
+ * something this page can enforce. Every call it makes now says so when it
+ * fails, because the alternative is what this page used to do: sit on
+ * "Loading…" for good, and throw an unhandled rejection on the way.
+ */
+const COULD_NOT_LIST = 'Could not load your boards. Check your connection and try again.';
+const COULD_NOT_CREATE = 'Could not create a board — storage is full or unavailable.';
+const COULD_NOT_CHANGE = 'That change did not go through. Nothing was altered.';
+
 const formatDate = (ms) =>
   new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -22,13 +33,30 @@ export function BoardListPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
-  const refresh = useCallback(() => repository.list().then(setBoards), []);
+  // A read that failed is not an empty workspace. `boards` keeps whatever it
+  // last had — nothing, on a first load — so the page never claims there are
+  // no boards on the strength of a request that did not arrive.
+  const refresh = useCallback(
+    () => repository.list().then(
+      (found) => {
+        setBoards(found);
+        setError(null);
+      },
+      () => setError(COULD_NOT_LIST),
+    ),
+    [],
+  );
 
   useEffect(() => {
     let live = true;
-    repository.list().then((found) => {
-      if (live) setBoards(found);
-    });
+    repository.list().then(
+      (found) => {
+        if (live) setBoards(found);
+      },
+      () => {
+        if (live) setError(COULD_NOT_LIST);
+      },
+    );
     return () => {
       live = false;
     };
@@ -45,6 +73,10 @@ export function BoardListPage() {
     try {
       await fn();
       await refresh();
+    } catch {
+      // Only the mutation can land here — `refresh` reports its own failure —
+      // so this is the one message that can promise nothing changed.
+      setError(COULD_NOT_CHANGE);
     } finally {
       setBusy(false);
     }
@@ -63,11 +95,15 @@ export function BoardListPage() {
     try {
       const id = newId();
       if (!(await repository.save(id, EMPTY_BOARD, { title: DEFAULT_TITLE }))) {
-        setError('Could not create a board — storage is full or unavailable.');
+        setError(COULD_NOT_CREATE);
         return;
       }
       setError(null);
       navigate(`/b/${id}`);
+    } catch {
+      // Refusing and rejecting are the same event to the person clicking the
+      // button, and neither one navigated anywhere.
+      setError(COULD_NOT_CREATE);
     } finally {
       setBusy(false);
     }
@@ -119,10 +155,22 @@ export function BoardListPage() {
         </div>
       </header>
 
-      {error && <p className="error" role="alert" data-error>{error}</p>}
+      {error && (
+        <p className="error" role="alert" data-error>
+          {error}
+          {error === COULD_NOT_LIST && (
+            <button type="button" data-action="retry-list" disabled={busy} onClick={refresh}>
+              Try again
+            </button>
+          )}
+        </p>
+      )}
 
       {boards === null ? (
-        <p className="empty" data-loading>Loading…</p>
+        // A first read that failed has no list to show, and "no boards yet" is
+        // a claim about someone's account that a request which never arrived
+        // cannot support. The message above is the whole of what is known.
+        error ? null : <p className="empty" data-loading>Loading…</p>
       ) : boards.length === 0 ? (
         <p className="empty" data-empty>No boards yet. Create one to get started.</p>
       ) : (
