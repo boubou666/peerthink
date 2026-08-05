@@ -88,6 +88,24 @@ export function createSupabaseAuth({ client, captcha = null }) {
     publish(session);
   });
 
+  /**
+   * A fresh CAPTCHA token wrapped as credentials, or nothing.
+   *
+   * Which calls need one is not a judgement — it is written into the client's
+   * types. `signInAnonymously`, `signUp` and `signInWithPassword` all take an
+   * `options.captchaToken`; `updateUser` takes only `emailRedirectTo`, because
+   * `PUT /auth/v1/user` is not one of the endpoints CAPTCHA protection guards.
+   * So the guest turning into an account needs no token and the two email
+   * doors do.
+   *
+   * Taken per call rather than once: a token is single-use and short-lived, so
+   * one fetched at construction would be spent by the time anything wanted it.
+   * Nothing at all when there is no CAPTCHA, rather than an empty options bag
+   * — a shape nobody asked for is how the next version starts refusing it.
+   */
+  const captchaOptions = async () =>
+    captcha ? { options: { captchaToken: await captcha() } } : undefined;
+
   // The gate is a .then() with nowhere to put a rejection: a client that
   // throws here left it on "Loading…" for good, with no retry.
   const startOnce = () => answering('Could not start a session.', resolveSession);
@@ -100,18 +118,11 @@ export function createSupabaseAuth({ client, captcha = null }) {
       return { ok: true };
     }
 
-    // The token is taken here rather than at construction: it is single-use and
-    // short-lived, so one fetched at load would already be spent or stale by
-    // the time a retry needed it. A CAPTCHA that will not issue one fails the
-    // start the same way a refused sign-in does — answered, not thrown, so the
-    // gate shows it and offers the retry.
     let options;
-    if (captcha) {
-      try {
-        options = { options: { captchaToken: await captcha() } };
-      } catch (error) {
-        return failed(error, 'Could not verify this browser.');
-      }
+    try {
+      options = await captchaOptions();
+    } catch (error) {
+      return failed(error, 'Could not verify this browser.');
     }
 
     const created = await client.auth.signInAnonymously(options);
@@ -149,7 +160,11 @@ export function createSupabaseAuth({ client, captcha = null }) {
 
     async signIn({ email, password }) {
       return answering('Could not sign in.', async () => {
-        const { error } = await client.auth.signInWithPassword({ email, password });
+        const { error } = await client.auth.signInWithPassword({
+          email,
+          password,
+          ...(await captchaOptions()),
+        });
         return error ? failed(error, 'Could not sign in.') : { ok: true };
       });
     },
@@ -170,7 +185,11 @@ export function createSupabaseAuth({ client, captcha = null }) {
     async register({ email, password }) {
       return answering('Could not create an account.', async () => {
         if (!account) {
-          const { data, error } = await client.auth.signUp({ email, password });
+          const { data, error } = await client.auth.signUp({
+            email,
+            password,
+            ...(await captchaOptions()),
+          });
           if (error) {
             return TAKEN.has(error.code)
               ? alreadyTaken(false)

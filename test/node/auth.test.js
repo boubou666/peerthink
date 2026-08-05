@@ -22,10 +22,15 @@ function stubClient({ session = null, ...responses } = {}) {
   const calls = [];
   let emit = () => {};
 
-  const answer = (name, fallback) => async (arg) => {
-    calls.push([name, arg]);
+  // Every argument is recorded, not just the first. A test asserting that a
+  // call was *not* given something — updateUser and its absent captchaToken —
+  // can only say so if the stub can see a second argument arriving.
+  const answer = (name, fallback) => async (...args) => {
+    const entry = [name, args[0]];
+    entry.args = args;
+    calls.push(entry);
     const reply = responses[name] ?? fallback;
-    return typeof reply === 'function' ? reply(arg) : reply;
+    return typeof reply === 'function' ? reply(args[0]) : reply;
   };
 
   const client = {
@@ -219,6 +224,53 @@ describe('supabase auth', () => {
         await createSupabaseAuth({ client }).register({ email: 'a@b.co', password: 'secret1' }),
         { ok: true, pending: true },
       );
+    });
+
+    test('every captcha-guarded door gets its own fresh token', async () => {
+      // signInAnonymously, signUp and signInWithPassword each take an
+      // options.captchaToken; updateUser does not, because PUT /auth/v1/user
+      // is not a protected endpoint. Enabling protection with any of the
+      // first three unsent is what locks everyone out.
+      const { client, calls } = stubClient();
+      let issued = 0;
+      const auth = createSupabaseAuth({ client, captcha: async () => `token-${++issued}` });
+
+      await auth.start(); // signInAnonymously
+      await auth.signIn({ email: 'ada@example.com', password: 'secret1' });
+
+      const anonArgs = calls.find(([n]) => n === 'signInAnonymously')[1];
+      const inArgs = calls.find(([n]) => n === 'signInWithPassword')[1];
+      assert.equal(anonArgs.options.captchaToken, 'token-1');
+      assert.equal(inArgs.options.captchaToken, 'token-2');
+      assert.equal(inArgs.email, 'ada@example.com', 'the credentials survived the spread');
+
+      // and a signed-out registration, which is the signUp branch
+      const fresh = stubClient();
+      let more = 0;
+      await createSupabaseAuth({
+        client: fresh.client,
+        captcha: async () => `fresh-${++more}`,
+      }).register({ email: 'ada@example.com', password: 'secret1' });
+
+      const upArgs = fresh.calls.find(([n]) => n === 'signUp')[1];
+      assert.equal(upArgs.options.captchaToken, 'fresh-1');
+      assert.equal(upArgs.password, 'secret1');
+    });
+
+    test('a guest attaching an email sends no token, because that door is not guarded', async () => {
+      const { client, calls } = stubClient();
+      const auth = createSupabaseAuth({ client, captcha: async () => 'token' });
+      await auth.start();
+
+      await auth.register({ email: 'ada@example.com', password: 'secret1' });
+
+      // updateUser takes only emailRedirectTo — a captchaToken here would be
+      // an argument the client has no field for. Asserted on the whole
+      // argument list, because a token smuggled into a second parameter is
+      // exactly the mistake this test exists to catch, and reading only the
+      // first argument would not see it.
+      const call = calls.find(([n]) => n === 'updateUser');
+      assert.deepEqual(call.args, [{ email: 'ada@example.com', password: 'secret1' }]);
     });
 
     test('a captcha token is taken per sign-in and handed to Supabase', async () => {
