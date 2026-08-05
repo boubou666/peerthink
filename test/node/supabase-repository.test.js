@@ -189,6 +189,61 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
     });
   });
 
+  /**
+   * The failure that could destroy a document rather than misreport one.
+   *
+   * A null load is answered upstream by seeding a starter board, and a board
+   * this repository never read has no version recorded — so saving it back is
+   * unguarded and lands on whatever is there. Rejecting is what keeps a failed
+   * read from becoming a write.
+   */
+  describe('a load that fails', () => {
+    const broken = (who) => createSupabaseRepository({
+      client: who.client,
+      auth: { current: () => ({ id: who.id }) },
+      table: 'boards_that_do_not_exist',
+    });
+
+    test('rejects instead of reporting a board that is not there', async () => {
+      const id = newId();
+      await alice.repository.save(id, board({ objects: [card('c1')], order: ['c1'] }));
+
+      await assert.rejects(() => broken(alice).load(id), /could not load board/);
+    });
+
+    test('a board that is genuinely absent still answers null', async () => {
+      assert.equal(await alice.repository.load(newId()), null);
+    });
+
+    /**
+     * What the rejection is protecting against, stated as the write it stops.
+     *
+     * This is the second half of the danger and it is real on its own: a
+     * repository that never read a board writes without a version guard, so
+     * the starter document a caller would seed lands on top of the stored one.
+     * That behaviour is correct — it is how a board gets created — which is
+     * exactly why `load()` must not hand back null for a read that failed.
+     *
+     * `app.js` is where the two halves meet, and the browser test there holds
+     * the other end: a throwing load never wires autosave.
+     */
+    test('an unread board is written unguarded, which is what the rejection prevents', async () => {
+      const id = newId();
+      await alice.repository.save(id, board({ objects: [card('c1', 'the real work')], order: ['c1'] }));
+
+      // A second repository on the same account, exactly like a fresh page
+      // load — it has read nothing, so it holds no version for this board.
+      const fresh = createSupabaseRepository({
+        client: alice.client,
+        auth: { current: () => ({ id: alice.id }) },
+      });
+
+      assert.equal(await fresh.save(id, board()), true, 'the unguarded write did not land');
+      const reread = await alice.repository.load(id);
+      assert.deepEqual(reread.board.objects, [], 'the starter board did not overwrite');
+    });
+  });
+
   describe('rename', () => {
     test('renames, and stamps the board as touched', async () => {
       const id = newId();

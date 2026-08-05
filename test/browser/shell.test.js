@@ -489,6 +489,76 @@ describe('shell', () => {
         assert.equal(await page.eval(`document.querySelector('[data-error]') === null`), true);
       });
 
+      /**
+       * The board route reads twice — the canvas loads the document, the bar
+       * loads its name — and both used to treat a failed read as an answer.
+       * The bar's was the quieter half: the component is reused when only
+       * :boardId changes, so a failed read left the *previous* board's title
+       * sitting over this one.
+       */
+      test('a board whose read failed is not labelled with the last one\'s name', async () => {
+        await page.eval(`(() => {
+          const board = { v: 1, order: [], objects: [] };
+          localStorage.setItem('peerthink:board:one', JSON.stringify({ v: 1, id: 'one', title: 'Board One', updatedAt: 2, board }));
+          localStorage.setItem('peerthink:board:two', JSON.stringify({ v: 1, id: 'two', title: 'Board Two', updatedAt: 1, board }));
+        })()`);
+
+        await page.goto('/#/b/one');
+        assert.equal(await page.eval(`document.querySelector('.board-bar-title').value`), 'Board One');
+
+        await reject('load');
+        await page.eval(`location.hash = '#/b/two'`);
+        await page.waitFor(`window.app?.boardId === 'two'`, { label: 'board two to mount' });
+
+        await page.waitFor(
+          `document.querySelector('[data-save-status="unloaded"]') !== null`,
+          { label: 'the board to stop claiming it is stored' },
+        );
+        assert.equal(
+          await page.eval(`document.querySelector('.board-bar-title').value`),
+          'Untitled board',
+          'wore the previous board\'s name',
+        );
+
+        await unpatch('load');
+      });
+
+      /**
+       * The title read resolves into the field, so it has to lose to the
+       * person using it. A failure is the sharp case: it arrives as fast as
+       * the request can fail, which is easily mid-word, where a slow success
+       * at least tends to land before anyone has typed.
+       */
+      test('a read that fails mid-keystroke does not take the name being typed', async () => {
+        await newBoard();
+        await backToList();
+
+        await patch(
+          'load',
+          `() => new Promise((_, no) => setTimeout(() => no(new Error('offline')), 250))`,
+        );
+        await clickAndWaitFor('.board-card-open', onCanvas, 'the board to open');
+
+        // typed while the read above is still in flight
+        await typeInBar('Named during a failing read');
+        await page.waitFor(
+          `document.querySelector('[data-save-status="unloaded"]') !== null`,
+          { label: 'the failed read to land' },
+        );
+
+        assert.equal(
+          await page.eval(`document.querySelector('.board-bar-title').value`),
+          'Named during a failing read',
+          'the failure reset a field the user was typing in',
+        );
+
+        // Abandon the edit rather than leaving it half-made: unmounting the
+        // field blurs it, and blur commits, so a test that walked away here
+        // would rename this board from inside the next one.
+        await page.key('Escape');
+        await unpatch('load');
+      });
+
       test('a failed change says nothing was changed', async () => {
         await newBoard();
         await backToList();

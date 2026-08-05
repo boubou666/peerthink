@@ -180,8 +180,10 @@ describe('local storage repository', () => {
       storage.failOn = 'get';
       await assert.rejects(() => repo.list(), 'knew the board was there and said nothing');
 
-      // The same failure through a method that owes an answer, not a throw.
-      assert.equal(await repo.load('alpha'), null, 'load stays total');
+      // Both reads refuse to guess. The writes still answer: rename finds
+      // nothing it can confirm and says so rather than throwing.
+      await assert.rejects(() => repo.load('alpha'));
+      assert.equal(await repo.rename('alpha', 'Renamed'), false, 'a write stopped answering');
     });
 
     test('one unreadable record does not sink the list around it', async () => {
@@ -230,12 +232,22 @@ describe('local storage repository', () => {
   });
 
   describe('failure modes', () => {
-    test('unreadable storage reads as null', async () => {
+    /**
+     * Null from load() is what the app answers by seeding a fresh board and
+     * saving it back, so it has to mean the board is not there. A store that
+     * would not answer says nothing of the kind.
+     */
+    test('unreadable storage rejects rather than reading as null', async () => {
       await repo.save('alpha', board());
       storage.failOn = 'get';
-      assert.equal(await repo.load('alpha'), null);
+      await assert.rejects(() => repo.load('alpha'));
     });
 
+    test('a board that is genuinely absent still reads as null', async () => {
+      assert.equal(await repo.load('never-existed'), null);
+    });
+
+    /** Junk is a bad record, not a broken store: null, and the app reseeds. */
     test('corrupt JSON reads as null', async () => {
       storage.data.set('peerthink:board:alpha', '{not json');
       assert.equal(await repo.load('alpha'), null);

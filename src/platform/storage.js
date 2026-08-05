@@ -16,11 +16,16 @@
  * written by an older version, and none of that is worth losing the session
  * over — a refused write answers false, an unreadable board answers null.
  *
- * `list()` is the exception, and rejects when the store will not answer at
- * all. Every other method has something honest to fall back on; a list does
- * not. An empty one is a claim about someone's whole workspace, and a read
- * that never happened cannot support it — the caller has to be able to tell
- * "you have no boards" from "I could not find out".
+ * The two reads are the exception, and reject when the store will not answer
+ * at all. Every other method has something honest to fall back on; a read does
+ * not. `list()`'s empty array is a claim about someone's whole workspace and
+ * `load()`'s null is a claim that a particular board does not exist — and a
+ * request that never happened cannot support either. Both are acted on: an
+ * empty list renders as "No boards yet", and a null load seeds a fresh board
+ * over the top of one that was only unreachable.
+ *
+ * So null from `load()` means the board is genuinely not there, and nothing
+ * else.
  */
 
 export const RECORD_VERSION = 1;
@@ -69,7 +74,12 @@ export function createLocalStorageRepository({
     }
   };
 
-  /** Total, for the calls that must answer: both failures come back as null. */
+  /**
+   * Total, for the writes — save, rename, migrateLegacy — which look at what is
+   * already stored but answer false rather than throwing. Both failures come
+   * back as null. The reads use `parse` directly and let the store's own
+   * failure out.
+   */
   const read = (key) => {
     try {
       return parse(storage.getItem(key));
@@ -134,8 +144,14 @@ export function createLocalStorageRepository({
         .sort((a, b) => b.updatedAt - a.updatedAt);
     },
 
+    /**
+     * The stored board, or null when there is none. Throws when the store will
+     * not answer — `read()` is not used here for the same reason `list()` does
+     * not use it: null has to mean "no such board", because that is what the
+     * caller acts on by seeding a new one in its place.
+     */
     async load(id) {
-      return read(keyFor(id));
+      return parse(storage.getItem(keyFor(id)));
     },
 
     /** Stamps updatedAt. An existing title survives a save that omits one. */
