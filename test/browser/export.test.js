@@ -385,6 +385,26 @@ describe('export', () => {
       assert.deepEqual(await page.eval('window.__downloads'), [], 'downloaded a file anyway');
     });
 
+    /**
+     * This banner floats over the canvas rather than sitting above a list, so
+     * unlike the board list's errors it has to be possible to put away — one
+     * parked over someone's board until they happen to try exporting again is
+     * furniture, not a report.
+     */
+    test('the report can be dismissed', async () => {
+      await page.eval(`app.store.load({ v: 1, order: [], objects: [] })`);
+
+      await clickExport();
+      await page.waitFor(`document.querySelector('[data-export-error]') !== null`, {
+        label: 'the error',
+      });
+
+      await page.eval(`document.querySelector('[data-action="dismiss-export-error"]').click()`);
+      await page.waitFor(`document.querySelector('[data-export-error]') === null`, {
+        label: 'the error to go away',
+      });
+    });
+
     test('a canvas the browser will not encode is reported too', async () => {
       await page.eval(`app.board.add('card', { x: 0, y: 0, text: 'anything' })`);
       // the one failure that is genuinely the browser's to have: toBlob

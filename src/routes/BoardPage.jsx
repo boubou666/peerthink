@@ -190,8 +190,17 @@ export function BoardPage() {
       </header>
 
       {exportError && (
-        <p className="error" role="alert" data-export-error>
-          {exportError}
+        <p className="error board-export-error" role="alert" data-export-error>
+          <span>{exportError}</span>
+          {/*
+            Dismissible, unlike the list's errors: this one floats over the
+            canvas rather than sitting above a list, and a red banner parked
+            on someone's board until they happen to try exporting again is
+            not a report, it is furniture.
+          */}
+          <button type="button" data-action="dismiss-export-error" onClick={() => setExportError(null)}>
+            Dismiss
+          </button>
         </p>
       )}
 

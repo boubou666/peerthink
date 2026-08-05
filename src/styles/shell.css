@@ -326,7 +326,14 @@ button.link:hover { color: var(--ink); }
 
 /* ---------- sharing ---------- */
 
-.board-bar button[data-action="share"] {
+/*
+ * The board-level actions, sharing one rule because they are one kind of
+ * thing. Ghost buttons: the bar is a small floating pill and the title beside
+ * them carries no border either, so a bordered control in here reads as
+ * something that arrived from somewhere else.
+ */
+.board-bar button[data-action="share"],
+.board-bar button[data-action="export"] {
   font: inherit;
   font-size: 12px;
   font-weight: 500;
@@ -337,10 +344,47 @@ button.link:hover { color: var(--ink); }
   padding: 6px 9px;
   cursor: pointer;
 }
-.board-bar button[data-action="share"]:hover {
+.board-bar button[data-action="share"]:hover,
+.board-bar button[data-action="export"]:hover:not(:disabled) {
   background: color-mix(in srgb, var(--ink) 8%, transparent);
   color: var(--ink);
 }
+/* A large board spends a moment in toBlob, and the button holds still. */
+.board-bar button[data-action="export"]:disabled {
+  cursor: default;
+  opacity: .55;
+}
+
+/*
+ * The export error sits under the bar that caused it, not in the page flow.
+ * The board page has no flow to speak of — the canvas is fixed behind it — so
+ * a banner left in it lands in the top-left corner, the one place nothing
+ * about this button is.
+ */
+.board-export-error {
+  position: fixed;
+  top: 56px;
+  right: 14px;
+  z-index: 2;
+  max-width: min(340px, calc(100vw - 28px));
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.board-export-error button {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 2px 6px;
+  cursor: pointer;
+  opacity: .75;
+}
+.board-export-error button:hover { opacity: 1; }
 
 .share-backdrop {
   position: fixed;
