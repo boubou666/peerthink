@@ -297,9 +297,11 @@ the store will not answer at all. A write has something honest to fail with and
 a read does not, and both of the values they used to fail with mean something
 else that the caller acts on:
 
-- `list()` returning `[]` is what the board list renders as **"No boards yet"** —
-  an account reported empty because the query never arrived, which to the person
-  reading it is indistinguishable from having lost everything.
+- `[]` from `list()` is also how the repository says *"you have no boards"*, and
+  the board list can only render it as **"No boards yet"**. Answering a failed
+  query with it therefore reported an empty account on the strength of a request
+  that never arrived — which to the person reading it is indistinguishable from
+  having lost everything.
 - `load()` returning `null` is also how the repository says *"there is no such
   board"*, so `app.js` did what null means and seeded a starter board. Nothing
   guards the save that follows — a board that was never read has no version to
