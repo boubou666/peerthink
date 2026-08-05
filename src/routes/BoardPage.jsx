@@ -10,6 +10,14 @@ import { sharing } from '../shell/sharing.js';
 import { repository } from '../shell/storage.js';
 
 const EMPTY_BOARD = { v: 1, order: [], objects: [] };
+
+/**
+ * The board's stored name. A board with no record yet — one seeded on a first
+ * visit — has no name to read, and the placeholder is the right answer for it.
+ *
+ * Rejects when the read itself failed, which is a different thing and is
+ * handled at the call site rather than flattened into the placeholder here.
+ */
 const titleOf = async (boardId) => (await repository.load(boardId))?.title ?? DEFAULT_TITLE;
 
 export function BoardPage() {
@@ -25,7 +33,13 @@ export function BoardPage() {
   const [saveStatus, setSaveStatus] = useState(SAVED);
   const app = useRef(null);
   const cancelled = useRef(false);
-  const renamed = useRef(false);
+  /**
+   * The user has taken the field over for this board, by typing in it or by
+   * committing a rename. Set on the first keystroke rather than at commit: a
+   * read still in flight resolves into `setDraft`, and half-typed text is just
+   * as much theirs to keep as a finished rename.
+   */
+  const claimed = useRef(false);
 
   // The router reuses this component when only :boardId changes, so both the
   // committed title and the field have to follow the parameter. A controlled
@@ -33,17 +47,34 @@ export function BoardPage() {
   // ignored afterwards.
   useEffect(() => {
     let live = true;
-    renamed.current = false;
+    claimed.current = false;
 
-    titleOf(boardId).then((current) => {
-      // Two ways this result is no longer wanted: the route moved on, or the
-      // user renamed the board while the read was still in flight. Applying it
-      // in either case puts a stale title back on screen — invisible against
-      // Web Storage, routine once the repository is a network away.
-      if (!live || renamed.current) return;
-      setTitle(current);
-      setDraft(current);
-    });
+    titleOf(boardId).then(
+      (current) => {
+        // Two ways this result is no longer wanted: the route moved on, or the
+        // user is editing the name while the read was still in flight. Applying
+        // it in either case puts a stale title back on screen — invisible
+        // against Web Storage, routine once the repository is a network away.
+        if (!live || claimed.current) return;
+        setTitle(current);
+        setDraft(current);
+      },
+      () => {
+        // A read that failed knows nothing about the name — but this component
+        // is reused when only :boardId changes, so leaving the field alone
+        // would label this board with the previous one's title. The
+        // placeholder claims nothing; SaveIndicator is what reports that the
+        // board did not load.
+        //
+        // Guarded exactly like the success path, and for a sharper reason: a
+        // failure arrives as fast as the request can fail, which is easily
+        // mid-keystroke, and resetting the field then would take the name the
+        // user was in the middle of typing.
+        if (!live || claimed.current) return;
+        setTitle(DEFAULT_TITLE);
+        setDraft(DEFAULT_TITLE);
+      },
+    );
 
     return () => {
       live = false;
@@ -76,7 +107,7 @@ export function BoardPage() {
       return;
     }
     setTitle(trimmed);
-    renamed.current = true;
+    claimed.current = true;
 
     if (await repository.rename(boardId, trimmed)) return;
 
@@ -95,7 +126,12 @@ export function BoardPage() {
           className="board-bar-title"
           aria-label="Board title"
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            // The field is theirs from the first keystroke, so a read that is
+            // still in flight cannot land on top of what they are typing.
+            claimed.current = true;
+            setDraft(e.target.value);
+          }}
           onBlur={commit}
           onKeyDown={(e) => {
             if (e.key === 'Enter') e.currentTarget.blur();

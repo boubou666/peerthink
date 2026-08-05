@@ -12,8 +12,20 @@
  * has to be rewritten the day the boards live on a server. The cost here is a
  * resolved promise; the alternative is two shapes of the same interface.
  *
- * Every call is total. Storage can be full, disabled, or hold junk written by
- * an older version, and none of that is worth losing the session over.
+ * Every call is total but one. Storage can be full, disabled, or hold junk
+ * written by an older version, and none of that is worth losing the session
+ * over — a refused write answers false, an unreadable board answers null.
+ *
+ * The two reads are the exception, and reject when the store will not answer
+ * at all. Every other method has something honest to fall back on; a read does
+ * not. `list()`'s empty array is a claim about someone's whole workspace and
+ * `load()`'s null is a claim that a particular board does not exist — and a
+ * request that never happened cannot support either. Both are acted on: an
+ * empty list renders as "No boards yet", and a null load seeds a fresh board
+ * over the top of one that was only unreachable.
+ *
+ * So null from `load()` means the board is genuinely not there, and nothing
+ * else.
  */
 
 export const RECORD_VERSION = 1;
@@ -43,12 +55,34 @@ export function createLocalStorageRepository({
   const prefix = `${namespace}:board:`;
   const keyFor = (id) => `${prefix}${id}`;
 
-  const read = (key) => {
+  /**
+   * The two ways a record fails to arrive are not the same thing, and only one
+   * of them is the record's fault.
+   *
+   * Junk that will not parse is a bad record: skip it and the rest of the store
+   * is still good. A `getItem` that throws is the store itself refusing, which
+   * says nothing about what is in it. Keeping them apart is what lets `list()`
+   * drop the first and report the second.
+   */
+  const parse = (raw) => {
+    if (!raw) return null;
     try {
-      const raw = storage.getItem(key);
-      if (!raw) return null;
       const record = JSON.parse(raw);
       return isBoard(record?.board) ? record : null;
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * Total, for the writes — save, rename, migrateLegacy — which look at what is
+   * already stored but answer false rather than throwing. Both failures come
+   * back as null. The reads use `parse` directly and let the store's own
+   * failure out.
+   */
+  const read = (key) => {
+    try {
+      return parse(storage.getItem(key));
     } catch {
       return null;
     }
@@ -63,16 +97,18 @@ export function createLocalStorageRepository({
     }
   };
 
-  /** Board ids present in storage. Enumeration is a Web Storage detail. */
+  /**
+   * Board ids present in storage. Enumeration is a Web Storage detail.
+   *
+   * Throws when the store will not be enumerated. It used to swallow that and
+   * answer with the ids it had — which is to say none — and the only caller
+   * turned that into "No boards yet" for a browser with boards in it.
+   */
   const ids = () => {
     const found = [];
-    try {
-      for (let i = 0; i < storage.length; i++) {
-        const key = storage.key(i);
-        if (key?.startsWith(prefix)) found.push(key.slice(prefix.length));
-      }
-    } catch {
-      // storage that cannot be enumerated still supports get/set by id
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (key?.startsWith(prefix)) found.push(key.slice(prefix.length));
     }
     return found;
   };
@@ -82,10 +118,15 @@ export function createLocalStorageRepository({
      * Summaries for a board picker, newest first. This parses every stored
      * board, which is fine at Web Storage scale and is exactly the call a
      * server-backed repository answers with a single query instead.
+     *
+     * Deliberately not wrapped in a try: `ids()` and `getItem` throwing both
+     * mean the store would not answer, and that has to reach the caller rather
+     * than be flattened into an empty list. `parse` — not `read` — is what
+     * reads each record here, so a single unparseable one is still skipped.
      */
     async list() {
       return ids()
-        .map((id) => [id, read(keyFor(id))])
+        .map((id) => [id, parse(storage.getItem(keyFor(id)))])
         .filter(([, record]) => record)
         // the key is the record's real address — an `id` field written by an
         // older version, or edited by hand, may disagree with it. A missing
@@ -103,8 +144,14 @@ export function createLocalStorageRepository({
         .sort((a, b) => b.updatedAt - a.updatedAt);
     },
 
+    /**
+     * The stored board, or null when there is none. Throws when the store will
+     * not answer — `read()` is not used here for the same reason `list()` does
+     * not use it: null has to mean "no such board", because that is what the
+     * caller acts on by seeding a new one in its place.
+     */
     async load(id) {
-      return read(keyFor(id));
+      return parse(storage.getItem(keyFor(id)));
     },
 
     /** Stamps updatedAt. An existing title survives a save that omits one. */
@@ -166,7 +213,15 @@ export function createLocalStorageRepository({
   return repository;
 }
 
-/** Drops everything on the floor. Used when no storage is available at all. */
+/**
+ * Drops everything on the floor. Used when no storage is available at all.
+ *
+ * `list()` answers empty rather than rejecting, and that is not the lie the
+ * other two implementations had to stop telling. Nothing can be read here
+ * because nothing was ever written — `save()` refuses every time — so "no
+ * boards" is the truth about this session, not a failure to find out. There is
+ * also nothing a retry could do differently.
+ */
 export function createNullRepository() {
   return {
     list: async () => [],

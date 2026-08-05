@@ -137,6 +137,58 @@ describe('adopting a browser\'s boards', () => {
     assert.equal(storage.getItem(ADOPTED_KEY), 'the moment it happened');
   });
 
+  /**
+   * A store that will not answer is not a store with nothing in it. Swallowing
+   * the difference here would mark the adoption done and strand every board in
+   * the browser, which is the failure adoption exists to prevent.
+   */
+  test('a browser whose boards cannot be read leaves the job unfinished', async () => {
+    const unreadable = {
+      ...local,
+      list: () => Promise.reject(new Error('unavailable')),
+    };
+
+    await assert.rejects(() => adoptBoards({ local: unreadable, remote: fakeAccount(), storage }));
+    assert.equal(storage.getItem(ADOPTED_KEY), null, 'marked done without reading anything');
+  });
+
+  /**
+   * "Does the account already have this?" is the question that stops a stale
+   * browser copy landing on a board other people have edited since. A read
+   * that failed is not an answer to it, and taking it for "no" is how the copy
+   * lands anyway — so the board is left alone and the run stays unfinished.
+   */
+  describe('when the account cannot be asked', () => {
+    const unreadable = (ids) => {
+      const account = fakeAccount();
+      return {
+        ...account,
+        load: async (id) => {
+          if (ids.includes(id)) throw new Error('offline');
+          return account.load(id);
+        },
+      };
+    };
+
+    test('the board is not adopted over, and nothing is marked finished', async () => {
+      const remote = unreadable(['a']);
+
+      const result = await adoptBoards({ local, remote, storage });
+
+      assert.deepEqual(result, { adopted: 1, kept: 0, failed: 1, done: false });
+      assert.deepEqual(remote.calls.saves.map((s) => s.id), ['b'], 'wrote a board it could not read');
+      assert.equal(storage.getItem(ADOPTED_KEY), null);
+    });
+
+    test('the boards that could be settled still move', async () => {
+      const remote = unreadable(['a']);
+
+      await adoptBoards({ local, remote, storage });
+
+      assert.deepEqual([...remote.boards.keys()], ['b'], 'one bad read stopped the others');
+    });
+  });
+
   test('a browser with nothing in it is finished immediately', async () => {
     const empty = fakeStorage();
     const result = await adoptBoards({

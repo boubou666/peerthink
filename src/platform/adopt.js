@@ -27,8 +27,9 @@ const isDone = (storage, key) => {
   try {
     return storage.getItem(key) !== null;
   } catch {
-    // Storage that cannot be read cannot be adopted from either, and `list()`
-    // below will say so by answering nothing.
+    // Not "already adopted" — just unknown. Storage that cannot be read cannot
+    // be adopted from either, and `list()` below rejects rather than answering
+    // nothing, so the run ends as unfinished and the gate offers it again.
     return false;
   }
 };
@@ -44,8 +45,14 @@ const markDone = (storage, key, now) => {
 
 /**
  * Returns what it did: `{ adopted, kept, failed, done }`. `kept` counts boards
- * the account already had, `failed` counts writes that did not land — and any
- * failure leaves the marker unset, so the next sign-in tries again.
+ * the account already had, `failed` counts the ones that could not be settled
+ * — a write that did not land, or a read that did not answer — and any failure
+ * leaves the marker unset, so the next sign-in tries again.
+ *
+ * Rejects only when the browser's board *list* cannot be read, because then
+ * there is nothing to iterate and no count to report. The caller reads that the
+ * same way it reads an unfinished run: the marker stays unset, and the boards
+ * stay where they are.
  */
 export async function adoptBoards({
   local,
@@ -61,19 +68,31 @@ export async function adoptBoards({
   if (isDone(storage, key)) return { ...result, done: true };
 
   for (const summary of await local.list()) {
-    // Asking the account first is what stops a stale browser copy landing on
-    // top of a board that has moved on without it.
-    if (await remote.load(summary.id)) {
-      result.kept += 1;
-      continue;
+    try {
+      // Asking the account first is what stops a stale browser copy landing on
+      // top of a board that has moved on without it. A read that failed is not
+      // an answer to that question — taking it for "the account does not have
+      // this" is how the copy lands anyway — so it throws, and the board is
+      // counted unfinished instead of overwritten.
+      if (await remote.load(summary.id)) {
+        result.kept += 1;
+        continue;
+      }
+
+      // Null, not a failure: the browser listed this board and no longer has
+      // it, or what it has will not parse. Neither is adoptable and neither
+      // gets better on a retry, so it is skipped rather than counted.
+      const record = await local.load(summary.id);
+      if (!record) continue;
+
+      const saved = await remote.save(summary.id, record.board, { title: record.title });
+      if (saved) result.adopted += 1;
+      else result.failed += 1;
+    } catch {
+      // One board that could not be settled does not stop the others: the rest
+      // still move, and the marker stays unset so this one is tried again.
+      result.failed += 1;
     }
-
-    const record = await local.load(summary.id);
-    if (!record) continue;
-
-    const saved = await remote.save(summary.id, record.board, { title: record.title });
-    if (saved) result.adopted += 1;
-    else result.failed += 1;
   }
 
   if (!result.failed) {

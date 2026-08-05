@@ -161,13 +161,38 @@ describe('local storage repository', () => {
       ]);
     });
 
-    test('storage that cannot be enumerated degrades to an empty list', async () => {
+    /**
+     * The board here exists. Answering [] would have the page tell its owner
+     * they have no boards, on the strength of a read that did not happen — so
+     * the failure has to come out, and the rest of the repository stays total.
+     */
+    test('storage that cannot be enumerated rejects rather than reporting none', async () => {
       await repo.save('alpha', board());
       storage.failOn = 'enumerate';
-      assert.deepEqual(await repo.list(), []);
+      await assert.rejects(() => repo.list());
 
       storage.failOn = null;
       assert.equal((await repo.load('alpha')).id, 'alpha', 'load by id still works');
+    });
+
+    test('storage that can be enumerated but not read rejects too', async () => {
+      await repo.save('alpha', board());
+      storage.failOn = 'get';
+      await assert.rejects(() => repo.list(), 'knew the board was there and said nothing');
+
+      // Both reads refuse to guess. The writes still answer: rename finds
+      // nothing it can confirm and says so rather than throwing.
+      await assert.rejects(() => repo.load('alpha'));
+      assert.equal(await repo.rename('alpha', 'Renamed'), false, 'a write stopped answering');
+    });
+
+    test('one unreadable record does not sink the list around it', async () => {
+      await repo.save('good', board());
+      storage.data.set('peerthink:board:broken', '{not json');
+
+      // A record that will not parse is a bad record, not a broken store: the
+      // distinction the two tests above depend on.
+      assert.deepEqual((await repo.list()).map((b) => b.id), ['good']);
     });
   });
 
@@ -207,12 +232,22 @@ describe('local storage repository', () => {
   });
 
   describe('failure modes', () => {
-    test('unreadable storage reads as null', async () => {
+    /**
+     * Null from load() is what the app answers by seeding a fresh board and
+     * saving it back, so it has to mean the board is not there. A store that
+     * would not answer says nothing of the kind.
+     */
+    test('unreadable storage rejects rather than reading as null', async () => {
       await repo.save('alpha', board());
       storage.failOn = 'get';
-      assert.equal(await repo.load('alpha'), null);
+      await assert.rejects(() => repo.load('alpha'));
     });
 
+    test('a board that is genuinely absent still reads as null', async () => {
+      assert.equal(await repo.load('never-existed'), null);
+    });
+
+    /** Junk is a bad record, not a broken store: null, and the app reseeds. */
     test('corrupt JSON reads as null', async () => {
       storage.data.set('peerthink:board:alpha', '{not json');
       assert.equal(await repo.load('alpha'), null);

@@ -431,14 +431,18 @@ describe('shell', () => {
     });
 
     /**
-     * Both repositories answer rather than throw — that is the contract, and
-     * both of them keep it. It is still only a promise made in a comment, and
-     * the page above it used to be written as though it could not be broken:
-     * a rejected read left "Loading…" on screen for good and an unhandled
-     * rejection in the console.
+     * The contract is that a repository answers rather than throws, with one
+     * carve-out both implementations now use: `list()` rejects when the store
+     * would not answer, because an empty list reads as "you have no boards"
+     * and a failed read has not earned that. So the first test below drives a
+     * path the shipped code really takes.
      *
-     * Patching the shell's repository is the only way to see that, precisely
-     * because no shipped implementation does it. The object is a module
+     * The others do not — no implementation rejects from `save` or `remove` —
+     * and they stay because the page used to be written as though none of this
+     * could happen: a rejected call left "Loading…" on screen for good and an
+     * unhandled rejection in the console.
+     *
+     * Patching is how both get exercised here. The repository is a module
      * singleton, so replacing a method on it is what the page is holding.
      */
     describe('a repository that rejects', () => {
@@ -483,6 +487,97 @@ describe('shell', () => {
         await settle();
         assert.deepEqual(await titles(), ['Untitled board']);
         assert.equal(await page.eval(`document.querySelector('[data-error]') === null`), true);
+      });
+
+      /**
+       * The board route reads twice — the canvas loads the document, the bar
+       * loads its name — and both used to treat a failed read as an answer.
+       * The bar's was the quieter half: the component is reused when only
+       * :boardId changes, so a failed read left the *previous* board's title
+       * sitting over this one.
+       */
+      test('a board whose read failed is not labelled with the last one\'s name', async () => {
+        await page.eval(`(() => {
+          const board = { v: 1, order: [], objects: [] };
+          localStorage.setItem('peerthink:board:one', JSON.stringify({ v: 1, id: 'one', title: 'Board One', updatedAt: 2, board }));
+          localStorage.setItem('peerthink:board:two', JSON.stringify({ v: 1, id: 'two', title: 'Board Two', updatedAt: 1, board }));
+        })()`);
+
+        await page.goto('/#/b/one');
+        assert.equal(await page.eval(`document.querySelector('.board-bar-title').value`), 'Board One');
+
+        await reject('load');
+        await page.eval(`location.hash = '#/b/two'`);
+        await page.waitFor(`window.app?.boardId === 'two'`, { label: 'board two to mount' });
+
+        await page.waitFor(
+          `document.querySelector('[data-save-status="unloaded"]') !== null`,
+          { label: 'the board to stop claiming it is stored' },
+        );
+        assert.equal(
+          await page.eval(`document.querySelector('.board-bar-title').value`),
+          'Untitled board',
+          'wore the previous board\'s name',
+        );
+
+        await unpatch('load');
+      });
+
+      /**
+       * The title read resolves into the field, so it has to lose to the
+       * person using it. A failure is the sharp case: it arrives as fast as
+       * the request can fail, which is easily mid-word, where a slow success
+       * at least tends to land before anyone has typed.
+       */
+      test('a read that fails mid-keystroke does not take the name being typed', async () => {
+        await newBoard();
+        await backToList();
+
+        // Held open rather than timed out. A read that fails on a timer can
+        // fail before the typing starts, and then the typing simply overwrites
+        // the reset field — the assertion below would hold whether or not the
+        // guard exists. Keeping the rejection in hand is what puts it
+        // *after* the keystrokes, which is the only ordering that tests
+        // anything.
+        await patch('load', `() => new Promise((_, no) => { (window.__loads ??= []).push(no); })`);
+        await clickAndWaitFor('.board-card-open', onCanvas, 'the board to open');
+
+        await typeInBar('Named during a failing read');
+        await page.waitFor(
+          `document.querySelector('.board-bar-title').value === 'Named during a failing read'`,
+          { label: 'the name to be typed' },
+        );
+
+        await page.eval(`(() => {
+          const waiting = window.__loads ?? [];
+          window.__loads = [];
+          waiting.forEach((no) => no(new Error('offline')));
+        })()`);
+
+        await page.waitFor(
+          `document.querySelector('[data-save-status="unloaded"]') !== null`,
+          { label: 'the failed read to land' },
+        );
+
+        assert.equal(
+          await page.eval(`document.querySelector('.board-bar-title').value`),
+          'Named during a failing read',
+          'the failure reset a field the user was typing in',
+        );
+
+        // Abandon the edit rather than leaving it half-made: unmounting the
+        // field blurs it, and blur commits, so a test that walked away here
+        // would rename this board from inside the next one.
+        await page.key('Escape');
+        await unpatch('load');
+
+        // Any read taken out after the drain above is still being held; left
+        // pending it would outlive this test attached to a torn-down page.
+        await page.eval(`(() => {
+          const waiting = window.__loads ?? [];
+          window.__loads = [];
+          waiting.forEach((no) => no(new Error('offline')));
+        })()`);
       });
 
       test('a failed change says nothing was changed', async () => {
