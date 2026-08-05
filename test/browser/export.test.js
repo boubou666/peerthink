@@ -312,7 +312,84 @@ describe('export', () => {
   });
 
   /**
-   * The button, the download and the two ways it can produce no file. A click
+   * The blob is handed to the browser through an object URL, and an object URL
+   * that is never revoked holds its blob for the life of the page — tens of
+   * megabytes, for a large board. The next frame is the usual moment to revoke
+   * it, but `requestAnimationFrame` is suspended entirely while the document is
+   * hidden, which is exactly what happens when someone clicks Export and
+   * immediately switches tab.
+   */
+  describe('the object URL', () => {
+    /**
+     * Both the document and the window are stand-ins here.
+     *
+     * The window so the frame and the timer can be held and fired by hand —
+     * that ordering is the whole subject. The document because a real anchor
+     * pointed at a blob URL that was never a blob is a real navigation: the
+     * browser tries it, fails, and logs, which the suite counts as the page
+     * having errored. Nothing about this test needs a live anchor.
+     */
+    const saveWith = (behaviour) => page.eval(`(async () => {
+      const { createPngExporter } = await import('/src/platform/export-png.js');
+
+      const calls = { revoked: [], timeoutMs: null, clicked: 0, download: null };
+      let frame = null;
+
+      const fakeWindow = {
+        URL: {
+          createObjectURL: () => 'blob:pretend',
+          revokeObjectURL: (url) => calls.revoked.push(url),
+        },
+        requestAnimationFrame: (fn) => { frame = fn; },
+        setTimeout: (fn, ms) => { calls.timeoutMs = ms; calls.timer = fn; },
+      };
+
+      const fakeDocument = {
+        createElement: () => ({
+          click: () => { calls.clicked += 1; },
+          remove: () => {},
+          set download(name) { calls.download = name; },
+        }),
+        body: { appendChild: () => {} },
+      };
+
+      const exporter = createPngExporter({ document: fakeDocument, window: fakeWindow });
+      exporter.save(new Blob(['x']), 'board.png');
+      return await (${behaviour})({ calls, runFrame: () => frame?.(), runTimer: () => calls.timer?.() });
+    })()`);
+
+    test('is handed to an anchor that carries the file name', async () => {
+      const calls = await saveWith(`({ calls }) => calls`);
+
+      assert.equal(calls.clicked, 1);
+      assert.equal(calls.download, 'board.png');
+    });
+
+    test('is revoked by the timer when no frame ever comes', async () => {
+      const calls = await saveWith(`({ calls, runTimer }) => {
+        const beforeTimer = calls.revoked.length;
+        runTimer();
+        return { beforeTimer, revoked: calls.revoked, timeoutMs: calls.timeoutMs };
+      }`);
+
+      assert.equal(calls.beforeTimer, 0, 'revoked before anything had a chance to run');
+      assert.deepEqual(calls.revoked, ['blob:pretend'], 'a hidden tab kept the blob for good');
+      assert.ok(calls.timeoutMs > 0, 'no backstop was armed at all');
+    });
+
+    test('is revoked once, whichever of the two arrives first', async () => {
+      const calls = await saveWith(`({ calls, runFrame, runTimer }) => {
+        runFrame();
+        runTimer();
+        return { revoked: calls.revoked };
+      }`);
+
+      assert.deepEqual(calls.revoked, ['blob:pretend'], 'revoked twice for one download');
+    });
+  });
+
+  /**
+   * The button, the download and the ways it can produce no file. A click
    * that quietly does nothing is indistinguishable from a broken button, so
    * every ending has to say which one it was.
    */
@@ -403,6 +480,45 @@ describe('export', () => {
       await page.waitFor(`document.querySelector('[data-export-error]') === null`, {
         label: 'the error to go away',
       });
+    });
+
+    /**
+     * The router reuses this component when only :boardId changes, so a banner
+     * left standing would report a failure belonging to a board that is no
+     * longer on screen — against a button that would now export a different
+     * one.
+     */
+    test('a report does not follow you to the next board', async () => {
+      await page.eval(`(() => {
+        const empty = { v: 1, order: [], objects: [] };
+        localStorage.setItem('peerthink:board:one', JSON.stringify({
+          v: 1, id: 'one', title: 'One', updatedAt: 2, board: empty,
+        }));
+        const card = {
+          v: 1,
+          order: ['c1'],
+          objects: [{ id: 'c1', type: 'card', x: 0, y: 0, w: 100, h: 60, text: 'here' }],
+        };
+        localStorage.setItem('peerthink:board:two', JSON.stringify({
+          v: 1, id: 'two', title: 'Two', updatedAt: 1, board: card,
+        }));
+      })()`);
+
+      await page.goto('/#/b/one');
+      await clickExport();
+      await page.waitFor(`document.querySelector('[data-export-error]') !== null`, {
+        label: 'the empty board to be reported',
+      });
+
+      // in-place param change: the router reuses the component
+      await page.eval(`location.hash = '#/b/two'`);
+      await page.waitFor(`window.app?.boardId === 'two'`, { label: 'board two to mount' });
+
+      assert.equal(
+        await page.eval(`document.querySelector('[data-export-error]') === null`),
+        true,
+        "board one's failure was still on screen over board two",
+      );
     });
 
     test('a canvas the browser will not encode is reported too', async () => {

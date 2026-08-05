@@ -28,6 +28,13 @@
 /** Mirrors the `data-color` values `canvas.css` gives a card. */
 export const CARD_COLORS = ['yellow', 'blue', 'green', 'pink', 'white'];
 
+/**
+ * How long the object URL is kept alive as a backstop, in ms. Long enough that
+ * the download has certainly started, short enough that a blob is not sitting
+ * in memory for any length of time.
+ */
+export const REVOKE_AFTER_MS = 2_000;
+
 /** Geometry from `canvas.css`, in world units. Colour is never copied here. */
 const RADIUS = 8;
 const CARD = { pad: 12, size: 14, line: 1.4 };
@@ -390,9 +397,16 @@ export function createPngExporter({ document, window }) {
     /**
      * Hand the blob to the browser as a download.
      *
-     * The object URL is revoked on the next frame rather than immediately:
-     * revoking it in the same turn as the click races the navigation that the
-     * click starts, and the download arrives empty often enough to matter.
+     * The object URL is not revoked in the same turn as the click, which races
+     * the navigation the click starts and lands an empty file often enough to
+     * matter. The next frame is the usual moment for that — but a frame is not
+     * a guarantee: `requestAnimationFrame` is suspended entirely while the
+     * document is hidden, so someone who switches tab straight after clicking
+     * would keep the blob for the life of the page, and for a large board that
+     * is tens of megabytes of it.
+     *
+     * So both, and whichever comes first wins. The timer still fires in a
+     * background tab — throttled, not suspended — and is only ever the floor.
      */
     save(blob, filename) {
       const url = window.URL.createObjectURL(blob);
@@ -402,7 +416,16 @@ export function createPngExporter({ document, window }) {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      window.requestAnimationFrame(() => window.URL.revokeObjectURL(url));
+
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        window.URL.revokeObjectURL(url);
+      };
+
+      window.requestAnimationFrame(release);
+      window.setTimeout(release, REVOKE_AFTER_MS);
     },
   };
 }

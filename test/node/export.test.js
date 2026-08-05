@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { MAX_EDGE, PADDING, SCALE, exportFrame, fileName } from '../../src/core/export.js';
+import { MAX_EDGE, MAX_PIXELS, PADDING, SCALE, exportFrame, fileName } from '../../src/core/export.js';
 
 /**
  * What an export covers, decided without a canvas.
@@ -70,6 +70,32 @@ describe('export frame', () => {
 
     test('a board within the cap is left at full scale', () => {
       const frame = exportFrame([at(0, 0, 400, 300)], { padding: 0 });
+      assert.equal(frame.scale, SCALE);
+    });
+
+    /**
+     * A per-side cap is not the whole constraint. Safari before iOS 18 refuses
+     * any canvas over 16,777,216 pixels however its sides are arranged, so a
+     * board inside MAX_EDGE on both sides can still be too large — and would
+     * fail on a phone for a picture that exports fine on a desktop.
+     */
+    test('the total area is capped as well as each side', () => {
+      // 8192 × 4096 at scale 1: both sides legal, the area is twice the limit
+      const frame = exportFrame([at(0, 0, MAX_EDGE, 4096)], { padding: 0, scale: 1 });
+
+      assert.ok(frame.width <= MAX_EDGE && frame.height <= MAX_EDGE, 'a side went over');
+      assert.ok(
+        frame.width * frame.height <= MAX_PIXELS,
+        `area still over the cap: ${frame.width} × ${frame.height}`,
+      );
+      // and it shrank rather than cropping — every object is still covered
+      assert.equal(frame.rect.w, MAX_EDGE);
+      assert.equal(frame.rect.h, 4096);
+    });
+
+    test('a board inside the area cap keeps its scale', () => {
+      // 1000 × 800 at 2× is 3.2M pixels, comfortably under
+      const frame = exportFrame([at(0, 0, 1000, 800)], { padding: 0 });
       assert.equal(frame.scale, SCALE);
     });
   });

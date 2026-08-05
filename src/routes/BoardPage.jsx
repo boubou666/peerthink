@@ -51,6 +51,13 @@ export function BoardPage() {
     let live = true;
     claimed.current = false;
 
+    // The router reuses this component when only :boardId changes, so anything
+    // said about the last board has to go with it. An export banner left up
+    // would be reporting a failure that belongs to a board no longer on
+    // screen, against a button that would now do something different.
+    setExportError(null);
+    setExporting(false);
+
     titleOf(boardId).then(
       (current) => {
         // Two ways this result is no longer wanted: the route moved on, or the
@@ -108,7 +115,17 @@ export function BoardPage() {
     setExporting(true);
     setExportError(null);
     try {
-      const result = await app.current?.commands.exportPng();
+      // The bar renders before the canvas hands its instance back, so this is
+      // reachable — briefly — by a fast click on a slow load. It is its own
+      // message: naming a size or an empty board would be inventing a cause
+      // for something that has not been attempted yet.
+      const board = app.current;
+      if (!board) {
+        setExportError('The board is still opening — try again in a moment.');
+        return;
+      }
+
+      const result = await board.commands.exportPng();
       if (result === 'empty') setExportError('Nothing to export — this board is empty.');
       else if (result !== 'ok') setExportError('Could not export this board. It may be too large.');
     } catch {

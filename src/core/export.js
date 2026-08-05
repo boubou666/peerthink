@@ -33,6 +33,20 @@ export const SCALE = 2;
 export const MAX_EDGE = 8192;
 
 /**
+ * The most pixels a canvas may hold in total, however its sides are arranged.
+ *
+ * A per-side cap is not the whole constraint: Safari before iOS 18 refuses any
+ * canvas over 16,777,216 pixels, so an 8192 × 2100 board sits inside `MAX_EDGE`
+ * on both sides and is still too large. Without this the export would fail on a
+ * phone for a board that exports fine on a desktop — reported honestly, but
+ * reported rather than delivered.
+ *
+ * The answer is the same one `MAX_EDGE` gives: reduce the scale, keep every
+ * object.
+ */
+export const MAX_PIXELS = 16_777_216;
+
+/**
  * Characters a file system will not take, plus the control range. Accents and
  * scripts other than Latin are left alone — a board called "Rétrospective"
  * should arrive as itself, not as a transliteration of itself.
@@ -63,7 +77,12 @@ export function fileName(title, extension = 'png') {
  * requested one unless the cap intervened — and the pixel dimensions that
  * follow from the two.
  */
-export function exportFrame(objects, { padding = PADDING, scale = SCALE, maxEdge = MAX_EDGE } = {}) {
+export function exportFrame(objects, {
+  padding = PADDING,
+  scale = SCALE,
+  maxEdge = MAX_EDGE,
+  maxPixels = MAX_PIXELS,
+} = {}) {
   const content = bbox(objects ?? []);
   if (!content) return null;
 
@@ -74,9 +93,19 @@ export function exportFrame(objects, { padding = PADDING, scale = SCALE, maxEdge
     h: content.h + padding * 2,
   };
 
-  // Both sides are checked against the cap, and the smaller allowance wins —
-  // a board that is wide and short is limited by its width alone.
-  const room = Math.min(1, maxEdge / (rect.w * scale), maxEdge / (rect.h * scale));
+  // Both sides are checked against the per-side cap, and the smaller allowance
+  // wins — a board that is wide and short is limited by its width alone.
+  //
+  // Area is the third constraint and takes a square root, because shrinking by
+  // a linear factor takes the pixel count down by its square: halving the scale
+  // quarters the canvas.
+  const area = rect.w * scale * rect.h * scale;
+  const room = Math.min(
+    1,
+    maxEdge / (rect.w * scale),
+    maxEdge / (rect.h * scale),
+    Math.sqrt(maxPixels / area),
+  );
   const applied = scale * room;
 
   return {
