@@ -35,11 +35,14 @@ export function readTurnstileConfig(env = {}) {
  */
 const loaders = new WeakMap();
 
-export function loadTurnstile(doc) {
+export function loadTurnstile(doc, consumer) {
   if (doc?.defaultView?.turnstile) return Promise.resolve(doc.defaultView.turnstile);
 
   const pending = loaders.get(doc);
-  if (pending) return pending.loading;
+  if (pending) {
+    if (consumer) pending.consumers.add(consumer);
+    return pending.loading;
+  }
 
   let script;
   const loading = new Promise((resolve, reject) => {
@@ -67,21 +70,35 @@ export function loadTurnstile(doc) {
       if (loaders.get(doc)?.loading === settled) loaders.delete(doc);
     });
 
-  loaders.set(doc, { loading: settled, script });
+  loaders.set(doc, {
+    loading: settled,
+    script,
+    consumers: new Set(consumer ? [consumer] : []),
+  });
   return settled;
 }
 
 /**
- * Drop a load that has not settled.
+ * Drop a load that has not settled, once nobody is waiting on it.
  *
  * A pending script outlives whoever asked for it: its handlers hold a closure
  * over a promise nobody is waiting for any more, and the tag sits in the head
  * of a document the app has finished with. Removing it is what makes destroy()
  * mean destroyed. Safe to call twice, and safe after the load has landed.
+ *
+ * The script is shared per document, and two apps on one page share the
+ * document — so a provider being destroyed says only that *it* has stopped
+ * waiting. Pulling the script out from under the other one would leave it
+ * awaiting a promise that can now never settle, which is a worse leak than
+ * the one this is here to fix.
  */
-export function cancelTurnstileLoad(doc) {
+export function cancelTurnstileLoad(doc, consumer) {
   const pending = loaders.get(doc);
   if (!pending) return;
+  if (consumer) {
+    pending.consumers.delete(consumer);
+    if (pending.consumers.size > 0) return;
+  }
   loaders.delete(doc);
   if (!pending.script) return;
   pending.script.onload = null;
@@ -105,8 +122,12 @@ export function createTurnstileCaptcha(config, { doc, load = loadTurnstile, canc
   // A function with a lifecycle rather than an object, so the port that calls
   // it stays a call rather than a protocol. destroy() drops a script still in
   // flight; a token already taken needs nothing undone.
+  // This provider's identity in the shared loader, so destroy() withdraws only
+  // this one rather than cancelling for everybody on the page.
+  const self = Symbol('turnstile-consumer');
+
   const captcha = async () => {
-    const turnstile = await load(doc);
+    const turnstile = await load(doc, self);
     const container = doc.createElement('div');
     container.setAttribute('data-turnstile', '');
     doc.body.appendChild(container);
@@ -125,6 +146,6 @@ export function createTurnstileCaptcha(config, { doc, load = loadTurnstile, canc
     }
   };
 
-  captcha.destroy = () => cancel(doc);
+  captcha.destroy = () => cancel(doc, self);
   return captcha;
 }

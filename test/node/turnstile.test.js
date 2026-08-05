@@ -129,6 +129,32 @@ describe('turnstile', () => {
       taking.catch(() => {});
     });
 
+    test('one provider being destroyed does not cancel the load another is waiting on', async () => {
+      // Two apps on one page share a document, and the script is per document.
+      // Cancelling it out from under the other would leave it awaiting a
+      // promise that can never settle — a worse leak than the one destroy()
+      // exists to fix.
+      const doc = fakeDoc();
+      const first = createTurnstileCaptcha({ siteKey: '0xAAA' }, { doc });
+      const second = createTurnstileCaptcha({ siteKey: '0xAAA' }, { doc });
+
+      const a = first();
+      const b = second();
+      await Promise.resolve();
+      const script = doc.appended.find((n) => 'onload' in n);
+
+      first.destroy();
+      assert.notEqual(script.onload, null, 'cancelled a load the other still wants');
+      assert.notEqual(script.removed, true, 'removed a script the other still wants');
+
+      second.destroy();
+      assert.equal(script.onload, null, 'the last consumer left and the script stayed');
+      assert.equal(script.removed, true);
+
+      a.catch(() => {});
+      b.catch(() => {});
+    });
+
     test('destroy is safe twice, and after the load has landed', () => {
       const doc = fakeDoc({ turnstile: { render() {} } });
       const captcha = createTurnstileCaptcha({ siteKey: '0xAAA' }, { doc });

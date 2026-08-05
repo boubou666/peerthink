@@ -15,7 +15,7 @@
 // here and the failure reads as a foreign key bug in the sweep rather than as
 // two suites sharing a table.
 
-import { test, describe, before, after, beforeEach } from 'node:test';
+import { test, describe, before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
@@ -59,14 +59,24 @@ describe('sweeping anonymous users', { skip: URL ? false : 'DATABASE_URL is not 
   });
 
   after(async () => {
-    if (!client) return;
-    await client.query('delete from public.boards where owner_id = any($1)', [mine]);
-    await client.query('delete from auth.users where id = any($1)', [mine]);
-    await client.end();
+    if (client) await client.end();
   });
 
-  beforeEach(() => {
+  // Every test runs inside a transaction that is rolled back.
+  //
+  // Not tidiness — safety. `sweep_anonymous_users()` deletes every eligible
+  // row in the database, not only the ones made here, and with autocommit on
+  // it would do that for real against whatever DATABASE_URL happens to name.
+  // Point it at the hosted project and an unwary `npm run test:db` deletes
+  // real people's guests. Rolling back means the sweep is exercised without
+  // its effects outliving the assertion.
+  beforeEach(async () => {
     mine.length = 0;
+    await client.query('begin');
+  });
+
+  afterEach(async () => {
+    await client.query('rollback');
   });
 
   test('an old guest with nothing to their name is swept', async () => {
@@ -125,15 +135,18 @@ describe('sweeping anonymous users', { skip: URL ? false : 'DATABASE_URL is not 
   test('no visitor can call it', async () => {
     // authenticated covers every signed-in visitor, anonymous ones included —
     // a callable sweep would be a button each guest could press on the others.
+    // Savepoints, not transactions: the whole test is already inside one, and
+    // a rejected statement poisons the block it is in until something unwinds.
     for (const role of ['anon', 'authenticated']) {
-      await client.query('begin');
+      await client.query('savepoint as_role');
       await client.query(`set local role ${role}`);
       await assert.rejects(
         () => client.query('select public.sweep_anonymous_users()'),
         /permission denied/i,
         `${role} must not be able to run the sweep`,
       );
-      await client.query('rollback');
+      await client.query('rollback to savepoint as_role');
+      await client.query('reset role');
     }
   });
 });
