@@ -24,7 +24,12 @@ export const client = config
  * and every local dev server runs in, because the project only demands a token
  * once CAPTCHA protection is switched on for it.
  */
-const captcha = createTurnstileCaptcha(readTurnstileConfig(import.meta.env));
+const captcha = createTurnstileCaptcha(readTurnstileConfig(import.meta.env), {
+  // The document arrives here, at the composition boundary, rather than being
+  // reached for inside the adapter — same reason the Supabase client and the
+  // storage do.
+  doc: globalThis.document,
+});
 
 export const auth = client ? createSupabaseAuth({ client, captcha }) : createOfflineAuth();
 

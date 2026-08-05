@@ -13,12 +13,17 @@ const fakeDoc = ({ turnstile } = {}) => {
     head: { appendChild: (node) => appended.push(node) },
     body: { appendChild: (node) => appended.push(node) },
     defaultView: { turnstile },
-    createElement: () => ({
-      setAttribute() {},
-      remove() {
-        doc.removed = true;
-      },
-    }),
+    createElement: () => {
+      const node = {
+        onload: undefined,
+        setAttribute() {},
+        remove() {
+          node.removed = true;
+          doc.removed = true;
+        },
+      };
+      return node;
+    },
   };
   return doc;
 };
@@ -103,6 +108,34 @@ describe('turnstile', () => {
       const loading = loadTurnstile(doc);
       doc.appended[0].onload();
       await assert.rejects(loading, /without an API/i);
+    });
+
+    test('destroy drops a script still in flight, handlers and all', async () => {
+      const doc = fakeDoc();
+      const captcha = createTurnstileCaptcha({ siteKey: '0xAAA' }, { doc });
+
+      const taking = captcha();
+      // let loadTurnstile append its script before pulling the rug
+      await Promise.resolve();
+      const script = doc.appended.find((n) => 'onload' in n);
+      assert.ok(script, 'no script was appended to cancel');
+
+      captcha.destroy();
+      assert.equal(script.onload, null, 'onload outlived destroy');
+      assert.equal(script.onerror, null, 'onerror outlived destroy');
+      assert.equal(script.removed, true, 'the tag outlived destroy');
+
+      // the abandoned promise must not be left to reject unhandled
+      taking.catch(() => {});
+    });
+
+    test('destroy is safe twice, and after the load has landed', () => {
+      const doc = fakeDoc({ turnstile: { render() {} } });
+      const captcha = createTurnstileCaptcha({ siteKey: '0xAAA' }, { doc });
+      assert.doesNotThrow(() => {
+        captcha.destroy();
+        captcha.destroy();
+      });
     });
 
     test('a failed load is not remembered as the answer', async () => {

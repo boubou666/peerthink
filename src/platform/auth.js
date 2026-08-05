@@ -207,6 +207,10 @@ export function createSupabaseAuth({ client, captcha = null }) {
     destroy() {
       subscription?.subscription?.unsubscribe();
       listeners.clear();
+      // A CAPTCHA script still loading has handlers holding a promise nobody
+      // is waiting for any more. It was given to this port, so it is this
+      // port's to put down.
+      captcha?.destroy?.();
     },
   };
 }

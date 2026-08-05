@@ -35,14 +35,15 @@ export function readTurnstileConfig(env = {}) {
  */
 const loaders = new WeakMap();
 
-export function loadTurnstile(doc = globalThis.document) {
+export function loadTurnstile(doc) {
   if (doc?.defaultView?.turnstile) return Promise.resolve(doc.defaultView.turnstile);
 
   const pending = loaders.get(doc);
-  if (pending) return pending;
+  if (pending) return pending.loading;
 
+  let script;
   const loading = new Promise((resolve, reject) => {
-    const script = doc.createElement('script');
+    script = doc.createElement('script');
     script.src = SCRIPT_SRC;
     script.async = true;
     script.onload = () => {
@@ -54,13 +55,38 @@ export function loadTurnstile(doc = globalThis.document) {
     };
     script.onerror = () => reject(new Error('Could not load Turnstile.'));
     doc.head.appendChild(script);
-  }).catch((error) => {
-    loaders.delete(doc);
-    throw error;
   });
 
-  loaders.set(doc, loading);
-  return loading;
+  const settled = loading
+    .catch((error) => {
+      loaders.delete(doc);
+      throw error;
+    })
+    // Nothing to cancel once it has landed, so the record goes either way.
+    .finally(() => {
+      if (loaders.get(doc)?.loading === settled) loaders.delete(doc);
+    });
+
+  loaders.set(doc, { loading: settled, script });
+  return settled;
+}
+
+/**
+ * Drop a load that has not settled.
+ *
+ * A pending script outlives whoever asked for it: its handlers hold a closure
+ * over a promise nobody is waiting for any more, and the tag sits in the head
+ * of a document the app has finished with. Removing it is what makes destroy()
+ * mean destroyed. Safe to call twice, and safe after the load has landed.
+ */
+export function cancelTurnstileLoad(doc) {
+  const pending = loaders.get(doc);
+  if (!pending) return;
+  loaders.delete(doc);
+  if (!pending.script) return;
+  pending.script.onload = null;
+  pending.script.onerror = null;
+  pending.script.remove?.();
 }
 
 /**
@@ -73,10 +99,13 @@ export function loadTurnstile(doc = globalThis.document) {
  * the container is attached, sized to nothing, and removed when the token
  * arrives.
  */
-export function createTurnstileCaptcha(config, { doc = globalThis.document, load = loadTurnstile } = {}) {
+export function createTurnstileCaptcha(config, { doc, load = loadTurnstile, cancel = cancelTurnstileLoad } = {}) {
   if (!config) return null;
 
-  return async () => {
+  // A function with a lifecycle rather than an object, so the port that calls
+  // it stays a call rather than a protocol. destroy() drops a script still in
+  // flight; a token already taken needs nothing undone.
+  const captcha = async () => {
     const turnstile = await load(doc);
     const container = doc.createElement('div');
     container.setAttribute('data-turnstile', '');
@@ -95,4 +124,7 @@ export function createTurnstileCaptcha(config, { doc = globalThis.document, load
       container.remove();
     }
   };
+
+  captcha.destroy = () => cancel(doc);
+  return captcha;
 }

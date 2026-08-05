@@ -127,6 +127,10 @@ export function AccountForm({ mode, onSwitch, onDone }) {
           data-action="switch-mode"
           onClick={() => {
             setError(null);
+            // Cleared with the error it belongs to. Left set, a trip to
+            // sign-in and back would put the "sign in as …" button under a
+            // form with nothing wrong with it.
+            setTaken(false);
             onSwitch(registering ? 'sign-in' : 'register');
           }}
         >
