@@ -23,6 +23,7 @@ npm start        # serve the built site
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
 | **Saving** | The bar says whether your work is stored — a refused write retries itself, and closing the tab flushes what the debounce is still holding |
+| **Export** | The board as a PNG — the selection if there is one, everything otherwise |
 | **Together** | With a project configured: share a board by link, live edits, and other people's cursors |
 
 ### Gestures
@@ -57,6 +58,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
               │   ├── viewport.js    the camera
               │   ├── autosave.js    persistence policy, and its retries
               │   ├── save-status.js whether the work is stored, subscribably
+              │   ├── export.js      what a picture covers, and how big it is
               │   ├── scheduler.js   timing, behind an interface
               │   ├── geometry.js    rectangle maths
               │   ├── ids.js         id generation
@@ -65,6 +67,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
                   ├── renderer.js    reconciles the store into the DOM
                   ├── input.js       pointer and keyboard gestures
                   ├── views.js       per-type markup
+                  ├── export-png.js  the same objects, drawn to a canvas
                   ├── toolbar.js     buttons and view shortcuts
                   ├── storage.js     BoardRepository over Web Storage
                   ├── supabase-repository.js  the same contract over Postgres
@@ -208,6 +211,33 @@ work is viewport culling. Geometry inside an object (padding, radius, font) is
 in world units and scales with the canvas, while affordances (selection ring,
 handles, hairlines) are counter-scaled by a `--z` custom property so they stay
 constant on screen at any zoom.
+
+### Exporting a picture
+
+Nothing in a browser turns a live DOM subtree into an image. `foreignObject`
+comes closest and renders inconsistently outside a browser, and the libraries
+that do it properly are libraries, which the canvas layer does not have. So the
+export draws the store a **second time**, in 2D context calls.
+
+That is a second renderer, and the cost is real: how an object looks now lives
+in two places. It is kept as small as it can be by making the stylesheet the
+only place colour is decided. `canvas.css` is *read* rather than copied — theme
+tokens off `:root`, and probe elements for the two things a token cannot
+answer, since `--card-bg` is chosen by an attribute selector and the envelope's
+background is a `color-mix` only the browser can resolve. Retuning a colour or
+adding a theme needs no change here; only geometry is restated.
+
+What it deliberately does not reproduce: selection rings, handles and guides,
+which are affordances for someone working rather than part of the document; the
+exact two-layer CSS shadow, because a 2D context has one shadow; and flexbox,
+which lists lay out by hand.
+
+`core/export.js` holds the half that needs no browser — which rectangle the
+picture covers, and how many pixels that is. A board is infinite and a canvas
+is not, so past 8192 pixels a side the scale is reduced rather than the frame
+cropped: a soft picture of the whole board beats a sharp picture of part of one,
+and a browser handed an over-large canvas returns a null blob, which the bar
+reports rather than downloading an empty file.
 
 ---
 
@@ -360,8 +390,6 @@ those APIs, and the `^8.3.0` pin is on the patched side regardless.
 CI fails on any high-severity production advisory.
 
 ## Not built yet
-
-Export.
 
 Ops emitted between reading the snapshot and joining the channel are missed —
 `hydrate()` subscribes after the load, so a change made in that window shows up

@@ -7,6 +7,7 @@ import { createIdGenerator } from './core/ids.js';
 import { UNLOADED, createSaveStatus } from './core/save-status.js';
 import { createScheduler } from './core/scheduler.js';
 import { seedBoard } from './core/seed.js';
+import { exportFrame, fileName } from './core/export.js';
 
 import { createViews } from './platform/views.js';
 import { createRenderer } from './platform/renderer.js';
@@ -14,6 +15,7 @@ import { createInput } from './platform/input.js';
 import { createToolbar } from './platform/toolbar.js';
 import { createCursors } from './platform/cursors.js';
 import { createFlushOnHide } from './platform/lifecycle.js';
+import { createPngExporter } from './platform/export-png.js';
 import { DEFAULT_BOARD_ID, createLocalStorageRepository, createNullRepository } from './platform/storage.js';
 
 /**
@@ -81,6 +83,33 @@ export function createApp({
       return commands.addAt(type, viewport.center(...stageSize()));
     },
     duplicate: () => board.duplicate(),
+
+    /**
+     * The board as a PNG — the selection when there is one, everything
+     * otherwise, which is the same rule every other command here follows.
+     *
+     * Answers what happened rather than throwing, because three different
+     * things can stop a download and the bar above has to say which: `empty`
+     * for a board with nothing on it, `failed` for a canvas the browser would
+     * not encode, `ok` for a file that was handed over. Reporting nothing is
+     * the one option that is not available — a button that silently does
+     * nothing is indistinguishable from a broken one.
+     */
+    async exportPng() {
+      const chosen = selection.size
+        ? selection.list().map((id) => store.get(id)).filter(Boolean)
+        : store.all();
+
+      const frame = exportFrame(chosen);
+      if (!frame) return 'empty';
+
+      const blob = await exporter.render(chosen, frame);
+      if (!blob) return 'failed';
+
+      exporter.save(blob, fileName(app.title));
+      return 'ok';
+    },
+
     fit: () => viewport.fit(board.bounds(), ...stageSize()),
     resetZoom: () => {
       const [w, h] = stageSize();
@@ -88,6 +117,7 @@ export function createApp({
     },
   };
 
+  const exporter = createPngExporter({ document, window });
   const views = createViews({ document });
   const renderer = createRenderer({ document, elements: dom, store, viewport, selection, views, scheduler: clock, ResizeObserver });
   const input = createInput({ document, window, elements: dom, store, selection, viewport, board, commands });
@@ -236,6 +266,7 @@ export function createApp({
     renderer,
     input,
     toolbar,
+    exporter,
     repository: boardRepository,
     autosave,
     sync,

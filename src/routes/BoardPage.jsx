@@ -31,6 +31,8 @@ export function BoardPage() {
   // mounts the canvas, tearing down and rebuilding the board on every keystroke
   // in the title field.
   const [saveStatus, setSaveStatus] = useState(SAVED);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState(null);
   const app = useRef(null);
   const cancelled = useRef(false);
   /**
@@ -90,6 +92,32 @@ export function BoardPage() {
   // out the timer to find out.
   const retrySave = () => app.current?.autosave?.flush().catch(() => {});
 
+  /**
+   * Export the board to a PNG.
+   *
+   * `exporting` disables the button for the same reason the list has `busy`:
+   * a large board spends real time in `toBlob`, and a second click would
+   * encode the whole thing again for a file the first click is already
+   * downloading.
+   *
+   * Every way this ends says so. A board with nothing on it and a canvas the
+   * browser refused are both cases where the click produces no file, and a
+   * button that goes quiet is the thing that looks broken.
+   */
+  const exportPng = async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      const result = await app.current?.commands.exportPng();
+      if (result === 'empty') setExportError('Nothing to export — this board is empty.');
+      else if (result !== 'ok') setExportError('Could not export this board. It may be too large.');
+    } catch {
+      setExportError('Could not export this board.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const commit = async () => {
     // Escape blurs the field, and blur() runs onBlur synchronously — before
     // React has re-rendered with the restored draft. Reading `draft` here would
@@ -145,12 +173,27 @@ export function BoardPage() {
 
         <SaveIndicator status={saveStatus} onRetry={retrySave} />
 
+        <button
+          type="button"
+          data-action="export"
+          disabled={exporting}
+          onClick={exportPng}
+        >
+          {exporting ? 'Exporting…' : 'Export'}
+        </button>
+
         {sharing && (
           <button type="button" data-action="share" onClick={() => setShowShare(true)}>
             Share
           </button>
         )}
       </header>
+
+      {exportError && (
+        <p className="error" role="alert" data-export-error>
+          {exportError}
+        </p>
+      )}
 
       {showShare && (
         <ShareDialog
