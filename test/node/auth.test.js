@@ -221,6 +221,52 @@ describe('supabase auth', () => {
       );
     });
 
+    test('every captcha-guarded door gets its own fresh token', async () => {
+      // signInAnonymously, signUp and signInWithPassword each take an
+      // options.captchaToken; updateUser does not, because PUT /auth/v1/user
+      // is not a protected endpoint. Enabling protection with any of the
+      // first three unsent is what locks everyone out.
+      const { client, calls } = stubClient();
+      let issued = 0;
+      const auth = createSupabaseAuth({ client, captcha: async () => `token-${++issued}` });
+
+      await auth.start(); // signInAnonymously
+      await auth.signIn({ email: 'ada@example.com', password: 'secret1' });
+
+      const anonArgs = calls.find(([n]) => n === 'signInAnonymously')[1];
+      const inArgs = calls.find(([n]) => n === 'signInWithPassword')[1];
+      assert.equal(anonArgs.options.captchaToken, 'token-1');
+      assert.equal(inArgs.options.captchaToken, 'token-2');
+      assert.equal(inArgs.email, 'ada@example.com', 'the credentials survived the spread');
+
+      // and a signed-out registration, which is the signUp branch
+      const fresh = stubClient();
+      let more = 0;
+      await createSupabaseAuth({
+        client: fresh.client,
+        captcha: async () => `fresh-${++more}`,
+      }).register({ email: 'ada@example.com', password: 'secret1' });
+
+      const upArgs = fresh.calls.find(([n]) => n === 'signUp')[1];
+      assert.equal(upArgs.options.captchaToken, 'fresh-1');
+      assert.equal(upArgs.password, 'secret1');
+    });
+
+    test('a guest attaching an email sends no token, because that door is not guarded', async () => {
+      const { client, calls } = stubClient();
+      const auth = createSupabaseAuth({ client, captcha: async () => 'token' });
+      await auth.start();
+
+      await auth.register({ email: 'ada@example.com', password: 'secret1' });
+
+      // updateUser takes only emailRedirectTo — a captchaToken here would be
+      // an argument the client has no field for.
+      assert.deepEqual(calls.find(([n]) => n === 'updateUser')[1], {
+        email: 'ada@example.com',
+        password: 'secret1',
+      });
+    });
+
     test('a captcha token is taken per sign-in and handed to Supabase', async () => {
       const { client, calls } = stubClient();
       let taken = 0;
