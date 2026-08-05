@@ -431,14 +431,18 @@ describe('shell', () => {
     });
 
     /**
-     * Both repositories answer rather than throw — that is the contract, and
-     * both of them keep it. It is still only a promise made in a comment, and
-     * the page above it used to be written as though it could not be broken:
-     * a rejected read left "Loading…" on screen for good and an unhandled
-     * rejection in the console.
+     * The contract is that a repository answers rather than throws, with one
+     * carve-out both implementations now use: `list()` rejects when the store
+     * would not answer, because an empty list reads as "you have no boards"
+     * and a failed read has not earned that. So the first test below drives a
+     * path the shipped code really takes.
      *
-     * Patching the shell's repository is the only way to see that, precisely
-     * because no shipped implementation does it. The object is a module
+     * The others do not — no implementation rejects from `save` or `remove` —
+     * and they stay because the page used to be written as though none of this
+     * could happen: a rejected call left "Loading…" on screen for good and an
+     * unhandled rejection in the console.
+     *
+     * Patching is how both get exercised here. The repository is a module
      * singleton, so replacing a method on it is what the page is holding.
      */
     describe('a repository that rejects', () => {

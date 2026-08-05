@@ -162,6 +162,31 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
       const ids = (await alice.repository.list()).map((b) => b.id);
       assert.ok(ids.indexOf(first) < ids.indexOf(second), 'updated_at was not restamped');
     });
+
+    /**
+     * The one call in either repository that reports failure by rejecting.
+     *
+     * It used to answer [], which the board list can only render as "No boards
+     * yet" — an account declared empty because the query did not come back. A
+     * missing table is a real PostgREST error rather than a stubbed one, so
+     * this exercises the path the network failure takes, not a mock of it.
+     */
+    test('a read that fails rejects instead of reporting an empty account', async () => {
+      const id = newId();
+      await alice.repository.save(id, board());
+
+      const broken = createSupabaseRepository({
+        client: alice.client,
+        auth: { current: () => ({ id: alice.id }) },
+        table: 'boards_that_do_not_exist',
+      });
+
+      await assert.rejects(() => broken.list(), /could not list boards/);
+
+      // And the working repository still answers, so the rejection is the
+      // failure talking rather than this account genuinely having nothing.
+      assert.equal((await alice.repository.list()).some((b) => b.id === id), true);
+    });
   });
 
   describe('rename', () => {

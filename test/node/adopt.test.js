@@ -137,6 +137,21 @@ describe('adopting a browser\'s boards', () => {
     assert.equal(storage.getItem(ADOPTED_KEY), 'the moment it happened');
   });
 
+  /**
+   * A store that will not answer is not a store with nothing in it. Swallowing
+   * the difference here would mark the adoption done and strand every board in
+   * the browser, which is the failure adoption exists to prevent.
+   */
+  test('a browser whose boards cannot be read leaves the job unfinished', async () => {
+    const unreadable = {
+      ...local,
+      list: () => Promise.reject(new Error('unavailable')),
+    };
+
+    await assert.rejects(() => adoptBoards({ local: unreadable, remote: fakeAccount(), storage }));
+    assert.equal(storage.getItem(ADOPTED_KEY), null, 'marked done without reading anything');
+  });
+
   test('a browser with nothing in it is finished immediately', async () => {
     const empty = fakeStorage();
     const result = await adoptBoards({

@@ -4,9 +4,9 @@ import { DEFAULT_TITLE, RECORD_VERSION, isBoard } from './storage.js';
  * The board repository, against Postgres.
  *
  * Same contract as the Web Storage one — list / load / save / rename / remove,
- * every call async, every call total. Nothing above this file knows which of
- * the two it is holding, which is the whole reason the contract was made async
- * before there was anything asynchronous behind it.
+ * every call async, and every call total but `list()`. Nothing above this file
+ * knows which of the two it is holding, which is the whole reason the contract
+ * was made async before there was anything asynchronous behind it.
  *
  * Access is not enforced here. Every statement goes through row level
  * security, so "your boards" is not a filter this code applies — it is what
@@ -14,10 +14,17 @@ import { DEFAULT_TITLE, RECORD_VERSION, isBoard } from './storage.js';
  * and is exactly what the policies are for; a filter here would be a second,
  * weaker copy of a rule that already exists in one place.
  *
- * Failures are answered, never thrown. Offline, a dropped connection, a
- * policy that says no: all of them come back as the contract's `false` / null
- * / empty list, and the session keeps working from memory. The canvas is not
- * worth losing over a failed write.
+ * Failures are answered, never thrown — except by `list()`. Offline, a dropped
+ * connection, a policy that says no: a write comes back false and an absent
+ * board comes back null, and the session keeps working from memory. The canvas
+ * is not worth losing over a failed write.
+ *
+ * `list()` cannot play along, because it has no honest value to fail with. The
+ * empty list it used to return is what the board list renders as "No boards
+ * yet" — an account reported empty on the strength of a query that never
+ * arrived, which to the person reading it is indistinguishable from having lost
+ * everything. So it rejects, and the page above says it could not load rather
+ * than saying there is nothing to load.
  */
 
 /** Postgres hands back an ISO timestamp; the contract wants epoch millis. */
@@ -55,13 +62,17 @@ export function createSupabaseRepository({ client, auth, table = 'boards' }) {
      * Every board the caller can see, newest first — theirs and any shared
      * with them. One query against the (owner_id, updated_at desc) index,
      * where the local repository has to parse every stored board to answer.
+     *
+     * Rejects when the query fails; see the note at the top of this file. A
+     * caller that wants the old behaviour can `.catch(() => [])`, but it then
+     * owns the claim that the account is empty.
      */
     async list() {
       const { data, error } = await from()
         .select('id, title, updated_at, owner_id')
         .order('updated_at', { ascending: false });
 
-      if (error) return [];
+      if (error) throw new Error(`could not list boards: ${error.message}`, { cause: error });
 
       // `owned` is the difference between a board you can delete and one you
       // can only walk away from. The list is where that choice is offered, so

@@ -27,8 +27,9 @@ const isDone = (storage, key) => {
   try {
     return storage.getItem(key) !== null;
   } catch {
-    // Storage that cannot be read cannot be adopted from either, and `list()`
-    // below will say so by answering nothing.
+    // Not "already adopted" — just unknown. Storage that cannot be read cannot
+    // be adopted from either, and `list()` below rejects rather than answering
+    // nothing, so the run ends as unfinished and the gate offers it again.
     return false;
   }
 };
@@ -46,6 +47,10 @@ const markDone = (storage, key, now) => {
  * Returns what it did: `{ adopted, kept, failed, done }`. `kept` counts boards
  * the account already had, `failed` counts writes that did not land — and any
  * failure leaves the marker unset, so the next sign-in tries again.
+ *
+ * Rejects when the browser's boards cannot be read at all. Nothing was moved
+ * and there is no count to report, and the caller reads that the same way it
+ * reads an unfinished run: the marker stays unset and the boards stay put.
  */
 export async function adoptBoards({
   local,

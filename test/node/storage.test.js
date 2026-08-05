@@ -161,13 +161,36 @@ describe('local storage repository', () => {
       ]);
     });
 
-    test('storage that cannot be enumerated degrades to an empty list', async () => {
+    /**
+     * The board here exists. Answering [] would have the page tell its owner
+     * they have no boards, on the strength of a read that did not happen — so
+     * the failure has to come out, and the rest of the repository stays total.
+     */
+    test('storage that cannot be enumerated rejects rather than reporting none', async () => {
       await repo.save('alpha', board());
       storage.failOn = 'enumerate';
-      assert.deepEqual(await repo.list(), []);
+      await assert.rejects(() => repo.list());
 
       storage.failOn = null;
       assert.equal((await repo.load('alpha')).id, 'alpha', 'load by id still works');
+    });
+
+    test('storage that can be enumerated but not read rejects too', async () => {
+      await repo.save('alpha', board());
+      storage.failOn = 'get';
+      await assert.rejects(() => repo.list(), 'knew the board was there and said nothing');
+
+      // The same failure through a method that owes an answer, not a throw.
+      assert.equal(await repo.load('alpha'), null, 'load stays total');
+    });
+
+    test('one unreadable record does not sink the list around it', async () => {
+      await repo.save('good', board());
+      storage.data.set('peerthink:board:broken', '{not json');
+
+      // A record that will not parse is a bad record, not a broken store: the
+      // distinction the two tests above depend on.
+      assert.deepEqual((await repo.list()).map((b) => b.id), ['good']);
     });
   });
 
