@@ -93,6 +93,34 @@ describe('export frame', () => {
       assert.equal(frame.rect.h, 4096);
     });
 
+    /**
+     * The cap is applied to the exact size and rounding happens per side after
+     * it, which can carry the product back over. 4095 × 4098 shrinks to
+     * 4094.5 × 4097.5 — both round up, and the canvas lands 4094 pixels above
+     * the limit it was just brought under.
+     */
+    test('rounding does not carry the canvas back over the cap', () => {
+      const frame = exportFrame([at(0, 0, 4095, 4098)], { padding: 0, scale: 1 });
+
+      assert.ok(
+        frame.width * frame.height <= MAX_PIXELS,
+        `rounded back over: ${frame.width} × ${frame.height}`,
+      );
+      // and it gave up a pixel, not a tenth of the picture
+      assert.ok(frame.width >= 4093 && frame.height >= 4096, 'trimmed far more than rounding cost');
+    });
+
+    test('no board inside the caps is trimmed by the rounding guard', () => {
+      for (const [w, h] of [[100, 100], [1000, 800], [4000, 4000], [8192, 100]]) {
+        const frame = exportFrame([at(0, 0, w, h)], { padding: 0, scale: 1 });
+        assert.deepEqual(
+          [frame.width, frame.height],
+          [w, h],
+          `${w} × ${h} was trimmed when it did not need to be`,
+        );
+      }
+    });
+
     test('a board inside the area cap keeps its scale', () => {
       // 1000 × 800 at 2× is 3.2M pixels, comfortably under
       const frame = exportFrame([at(0, 0, 1000, 800)], { padding: 0 });

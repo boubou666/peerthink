@@ -108,11 +108,23 @@ export function exportFrame(objects, {
   );
   const applied = scale * room;
 
-  return {
-    rect,
-    scale: applied,
-    // A rectangle narrower than one device pixel still has to be an image.
-    width: Math.max(1, Math.round(rect.w * applied)),
-    height: Math.max(1, Math.round(rect.h * applied)),
-  };
+  // A rectangle narrower than one device pixel still has to be an image.
+  let width = Math.max(1, Math.round(rect.w * applied));
+  let height = Math.max(1, Math.round(rect.h * applied));
+
+  /**
+   * The cap was applied to the exact size; rounding happens per side afterwards
+   * and can carry the product back over it. A 4095 × 4098 board shrinks to
+   * 4094.5 × 4097.5, both of which round *up*, and the canvas lands 4094 pixels
+   * above the limit — undoing the shrink it just did.
+   *
+   * Trimming the longer side is a pixel or two off an 8-megapixel image, which
+   * is invisible; being over the limit is a canvas the browser refuses.
+   */
+  while (width * height > maxPixels && (width > 1 || height > 1)) {
+    if (width >= height) width -= 1;
+    else height -= 1;
+  }
+
+  return { rect, scale: applied, width, height };
 }
