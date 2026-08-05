@@ -153,14 +153,44 @@ max_indexes = 5
 # [storage.vector.buckets.documents-openai]
 
 [auth]
+# `supabase config push` syncs this whole file to the linked project. It is the
+# only `config` subcommand and it has no dry-run, so every value below is one
+# careless push away from being production's. Two of them are the same in both
+# places on purpose — anonymous sign-ins on, email confirmations off — and
+# site_url is now the deployed site rather than a loopback address, for the
+# reason directly below. The remaining values (rate limits, jwt_expiry,
+# minimum_password_length) have NOT been audited against the hosted project, so
+# a push is still not something to do casually.
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-site_url = "http://127.0.0.1:5173"
+#
+# The deployed site, not the dev server, and that is safe in both directions
+# because nothing here reads it: this app has no redirect-based auth flow —
+# no OAuth, no magic link, no emailRedirectTo, no password reset — and with
+# confirmations off it sends no mail carrying a link either. So the value is
+# inert locally, and correct for the project a push would reach.
+#
+# It stops being inert the moment any of that changes. Wiring up SMTP so
+# password reset works would make this the host in the reset link, and a
+# developer testing that locally would be sent to production. At that point
+# this wants `env(...)` and a decision about where a fresh clone and CI get
+# their value — `.env` is gitignored on purpose (see .gitignore), so today
+# they would get nothing.
+site_url = "https://boubou666.github.io/peerthink/"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["http://127.0.0.1:5173", "http://localhost:5173"]
+#
+# Both origins, so this list is correct wherever it is applied. The loopback
+# entries surviving a push costs nothing: an allow-list entry only matters to a
+# flow that redirects, there is no such flow here, and the only person who can
+# reach a loopback address is the one already sitting at that machine.
+additional_redirect_urls = [
+  "https://boubou666.github.io/peerthink/",
+  "http://127.0.0.1:5173",
+  "http://localhost:5173",
+]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # JWT issuer URL. If not set, defaults to auth.external_url.

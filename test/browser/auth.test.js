@@ -39,11 +39,12 @@ describe('accounts', { skip: origin ? false : 'no local supabase (npx supabase s
   });
 
   after(async () => {
-    // A rejected password is a 400, by design, and Chrome logs every failed
-    // request at error level whether or not the page handled it. Those are
-    // filtered by status rather than by dropping network noise wholesale, so
-    // a 500 from the stack still fails this suite.
-    const expected = /Failed to load resource.*status of 400/;
+    // A rejected password is a 400 and an address that is already an account
+    // is a 422, both by design, and Chrome logs every failed request at error
+    // level whether or not the page handled it. Those are filtered by status
+    // rather than by dropping network noise wholesale, so a 500 from the stack
+    // still fails this suite.
+    const expected = /Failed to load resource.*status of (400|422)/;
     const errors = page.errors.filter((e) => !expected.test(e));
 
     // Closed before the assertion, not after: close() is what writes this
@@ -211,5 +212,34 @@ describe('accounts', { skip: origin ? false : 'no local supabase (npx supabase s
       label: 'the signed-in account',
     });
     assert.equal(await text('.account-email'), email);
+  });
+
+  test('an address that is already an account says so, and says what switching costs', async () => {
+    const email = uniqueEmail();
+    const password = 'correct horse';
+
+    await click('[data-action="save-account"]');
+    await submitAccountForm({ email, password });
+    await page.waitFor(`document.querySelector('[data-account="user"]') !== null`);
+
+    // a second browser: a fresh guest, who tries to register the same address
+    await page.eval('localStorage.clear()');
+    await page.goto(LIST_PATH, { ready: SIGNED_IN });
+    await click('[data-action="save-account"]');
+    await submitAccountForm({ email, password });
+
+    await page.waitFor(`document.querySelector('[data-error]') !== null`, {
+      label: 'the address to be reported as taken',
+    });
+    // Not Supabase's "User already registered", which says nothing about the
+    // boards this guest is about to walk away from.
+    assert.match(await text('[data-error]'), /already has an account/i);
+    assert.match(await text('[data-error]'), /stay behind/i, 'the cost is stated');
+
+    // and the way out is offered rather than left to be guessed at
+    await click('[data-action="sign-in-instead"]');
+    await page.waitFor(`document.querySelector('[data-account-form="sign-in"]') !== null`, {
+      label: 'the form to switch to signing in',
+    });
   });
 });

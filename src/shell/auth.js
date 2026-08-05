@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 import { createOfflineAuth, createSupabaseAuth } from '../platform/auth.js';
 import { createSupabaseClient, readSupabaseConfig } from '../platform/supabase.js';
+import { createTurnstileCaptcha, readTurnstileConfig } from '../platform/turnstile.js';
 import { safeLocalStorage } from './web-storage.js';
 
 /**
@@ -18,7 +19,19 @@ export const client = config
   ? createSupabaseClient(config, { storage: safeLocalStorage() })
   : null;
 
-export const auth = client ? createSupabaseAuth({ client }) : createOfflineAuth();
+/**
+ * Absent unless a site key was built in — and absent is the state every test
+ * and every local dev server runs in, because the project only demands a token
+ * once CAPTCHA protection is switched on for it.
+ */
+const captcha = createTurnstileCaptcha(readTurnstileConfig(import.meta.env), {
+  // The document arrives here, at the composition boundary, rather than being
+  // reached for inside the adapter — same reason the Supabase client and the
+  // storage do.
+  doc: globalThis.document,
+});
+
+export const auth = client ? createSupabaseAuth({ client, captcha }) : createOfflineAuth();
 
 /**
  * The signed-in account, or null. Subscribing through React rather than an

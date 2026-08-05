@@ -23,6 +23,34 @@ const toAccount = (session) => {
 const failed = (error, fallback) => ({ ok: false, message: error?.message || fallback });
 
 /**
+ * "That address is spoken for" — under whichever name the endpoint gives it.
+ *
+ * The two register paths disagree: attaching an email to a guest answers
+ * `email_exists`, and signing up with no session answers `user_already_exists`.
+ * Same situation, two words for it, so both are named here rather than one
+ * being assumed to cover the other.
+ */
+const TAKEN = new Set(['email_exists', 'user_already_exists']);
+
+/**
+ * The one failure worth more than Supabase's wording.
+ *
+ * "User already registered" is accurate and useless: the person reading it has
+ * an account they have forgotten owning, and — if they are a guest — a browser
+ * full of boards that belongs to the guest, not to that account. Signing in is
+ * the way to the account, and it leaves those boards behind, exactly as
+ * signing out would. A form that only prints the error sends them round the
+ * loop again; `taken` is what lets it offer the other door and say the cost.
+ */
+const alreadyTaken = (guest) => ({
+  ok: false,
+  taken: true,
+  message: guest
+    ? 'That email already has an account. Sign in to reach it — but the boards on this device belong to the guest you are now, and stay behind.'
+    : 'That email already has an account. Sign in instead.',
+});
+
+/**
  * Run a call that is supposed to answer with `{ error }`, and make sure it
  * does. A transport that rejects instead — no network, a request that never
  * came back — would otherwise escape as an unhandled rejection out of a port
@@ -36,7 +64,12 @@ const answering = async (fallback, call) => {
   }
 };
 
-export function createSupabaseAuth({ client }) {
+/**
+ * `captcha` is a function answering a fresh token, or null when the project is
+ * not checking for one. Injected rather than imported so both branches are
+ * reachable from a test, and so the port stays ignorant of whose CAPTCHA it is.
+ */
+export function createSupabaseAuth({ client, captcha = null }) {
   let account = null;
   let starting = null;
   const listeners = new Set();
@@ -67,7 +100,21 @@ export function createSupabaseAuth({ client }) {
       return { ok: true };
     }
 
-    const created = await client.auth.signInAnonymously();
+    // The token is taken here rather than at construction: it is single-use and
+    // short-lived, so one fetched at load would already be spent or stale by
+    // the time a retry needed it. A CAPTCHA that will not issue one fails the
+    // start the same way a refused sign-in does — answered, not thrown, so the
+    // gate shows it and offers the retry.
+    let options;
+    if (captcha) {
+      try {
+        options = { options: { captchaToken: await captcha() } };
+      } catch (error) {
+        return failed(error, 'Could not verify this browser.');
+      }
+    }
+
+    const created = await client.auth.signInAnonymously(options);
     if (created.error) return failed(created.error, 'Could not start a session.');
     publish(created.data.session);
     return { ok: true };
@@ -124,15 +171,21 @@ export function createSupabaseAuth({ client }) {
       return answering('Could not create an account.', async () => {
         if (!account) {
           const { data, error } = await client.auth.signUp({ email, password });
-          return error
-            ? failed(error, 'Could not create an account.')
-            : { ok: true, pending: !data.session };
+          if (error) {
+            return TAKEN.has(error.code)
+              ? alreadyTaken(false)
+              : failed(error, 'Could not create an account.');
+          }
+          return { ok: true, pending: !data.session };
         }
 
         const { data, error } = await client.auth.updateUser({ email, password });
-        return error
-          ? failed(error, 'Could not save the account.')
-          : { ok: true, pending: data.user?.email !== email };
+        if (error) {
+          return TAKEN.has(error.code)
+            ? alreadyTaken(true)
+            : failed(error, 'Could not save the account.');
+        }
+        return { ok: true, pending: data.user?.email !== email };
       });
     },
 
@@ -154,6 +207,10 @@ export function createSupabaseAuth({ client }) {
     destroy() {
       subscription?.subscription?.unsubscribe();
       listeners.clear();
+      // A CAPTCHA script still loading has handlers holding a promise nobody
+      // is waiting for any more. It was given to this port, so it is this
+      // port's to put down.
+      captcha?.destroy?.();
     },
   };
 }
