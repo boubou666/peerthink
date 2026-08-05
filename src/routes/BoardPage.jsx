@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 
 import { BoardCanvas } from '../components/BoardCanvas.jsx';
+import { SaveIndicator } from '../components/SaveIndicator.jsx';
 import { ShareDialog } from '../components/ShareDialog.jsx';
+import { SAVED } from '../core/save-status.js';
 import { DEFAULT_TITLE } from '../platform/storage.js';
 import { sharing } from '../shell/sharing.js';
 import { repository } from '../shell/storage.js';
@@ -16,6 +18,11 @@ export function BoardPage() {
   const [title, setTitle] = useState(DEFAULT_TITLE);
   const [draft, setDraft] = useState(DEFAULT_TITLE);
   const [showShare, setShowShare] = useState(false);
+  // setState is a stable identity, which is what lets it be handed straight to
+  // BoardCanvas — a new function every render would re-run the effect that
+  // mounts the canvas, tearing down and rebuilding the board on every keystroke
+  // in the title field.
+  const [saveStatus, setSaveStatus] = useState(SAVED);
   const app = useRef(null);
   const cancelled = useRef(false);
   const renamed = useRef(false);
@@ -46,6 +53,11 @@ export function BoardPage() {
   const handleReady = useCallback((instance) => {
     app.current = instance;
   }, []);
+
+  // Autosave retries on its own, on a backoff that reaches half a minute. This
+  // is for the person who has fixed whatever it was and does not want to wait
+  // out the timer to find out.
+  const retrySave = () => app.current?.autosave?.flush().catch(() => {});
 
   const commit = async () => {
     // Escape blurs the field, and blur() runs onBlur synchronously — before
@@ -95,6 +107,8 @@ export function BoardPage() {
           }}
         />
 
+        <SaveIndicator status={saveStatus} onRetry={retrySave} />
+
         {sharing && (
           <button type="button" data-action="share" onClick={() => setShowShare(true)}>
             Share
@@ -113,7 +127,7 @@ export function BoardPage() {
         />
       )}
 
-      <BoardCanvas boardId={boardId} onReady={handleReady} />
+      <BoardCanvas boardId={boardId} onReady={handleReady} onSaveStatus={setSaveStatus} />
     </div>
   );
 }

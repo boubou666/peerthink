@@ -268,6 +268,62 @@ button.link:hover { color: var(--ink); }
   background: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
+/* ---------- save state ---------- */
+
+/*
+ * Ambient while everything is fine, and impossible to miss when it is not.
+ * "Saved" and "Saving…" sit in the bar at the weight of a timestamp; the two
+ * states that mean the work is not stored take the alarm colour the error
+ * banner uses, so the one place in the app that says something is wrong looks
+ * the same wherever it appears.
+ */
+.save-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  /* the label swaps between "Saved" and "Saving…" on every edit; a fixed box
+     keeps the title field and the buttons beside it from stepping sideways */
+  min-width: 56px;
+}
+
+.save-state[data-save-status="failed"],
+.save-state[data-save-status="unloaded"] {
+  color: #b3243c;
+  font-weight: 500;
+}
+
+.save-state button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: inherit;
+  background: color-mix(in srgb, #d83a52 12%, transparent);
+  border: 1px solid color-mix(in srgb, #d83a52 30%, transparent);
+  border-radius: 7px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.save-state button:hover { background: color-mix(in srgb, #d83a52 20%, transparent); }
+
+.error button[data-action="retry-list"] {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  margin-left: 8px;
+  padding: 2px 6px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.error button[data-action="retry-list"]:disabled { opacity: 0.5; cursor: default; }
+
 /* ---------- sharing ---------- */
 
 .board-bar button[data-action="share"] {

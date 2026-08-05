@@ -4,6 +4,7 @@ import { Viewport } from './core/viewport.js';
 import { Board } from './core/board.js';
 import { createAutosave } from './core/autosave.js';
 import { createIdGenerator } from './core/ids.js';
+import { UNLOADED, createSaveStatus } from './core/save-status.js';
 import { createScheduler } from './core/scheduler.js';
 import { seedBoard } from './core/seed.js';
 
@@ -12,6 +13,7 @@ import { createRenderer } from './platform/renderer.js';
 import { createInput } from './platform/input.js';
 import { createToolbar } from './platform/toolbar.js';
 import { createCursors } from './platform/cursors.js';
+import { createFlushOnHide } from './platform/lifecycle.js';
 import { DEFAULT_BOARD_ID, createLocalStorageRepository, createNullRepository } from './platform/storage.js';
 
 /**
@@ -94,7 +96,14 @@ export function createApp({
   let autosave = null;
   let sync = null;
   let cursors = null;
+  let onHide = null;
   let destroyed = false;
+
+  // Built before hydrate() rather than by the autosave it reports on: the
+  // shell subscribes when the canvas mounts, which is before there is an
+  // autosave, and the case that matters most — a board that never loaded —
+  // is the case where there never will be one.
+  const saveStatus = createSaveStatus();
 
   /**
    * Load the stored board — or seed a fresh one — and start autosaving.
@@ -132,6 +141,13 @@ export function createApp({
       // before autosave is wired so a restore never writes itself back.
       await boardRepository.migrateLegacy({ toId: boardId });
       saved = await boardRepository.load(boardId);
+    } catch (error) {
+      // A board that did not load is not a board that can be saved: autosave
+      // is never wired below, so every edit from here on lives in this tab and
+      // nowhere else. The canvas stays up — throwing it away would take the
+      // user's work with it — but it stops claiming to be stored.
+      saveStatus.set(UNLOADED);
+      throw error;
     } finally {
       stopBuffering();
     }
@@ -164,8 +180,12 @@ export function createApp({
       delay: autosaveDelay,
       // Alone, or with no channel to be elected on, this client writes.
       canWrite: () => sync?.isWriter() ?? true,
+      onStatus: saveStatus.set,
     });
     app.autosave = autosave;
+
+    // A tab being closed does not run the debounce it is sitting inside.
+    onHide = createFlushOnHide({ window, document, autosave });
 
     // Autosave subscribes *after* the load, so that a restore never writes
     // itself straight back — which also means the replay above happened with
@@ -219,9 +239,11 @@ export function createApp({
     repository: boardRepository,
     autosave,
     sync,
+    saveStatus,
     hydrate,
     destroy() {
       destroyed = true;
+      onHide?.destroy();
       autosave?.stop();
       cursors?.destroy();
       // leaves the channel; the promise is nobody's to wait for

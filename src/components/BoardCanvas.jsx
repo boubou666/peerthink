@@ -17,7 +17,7 @@ import { createSync } from '../shell/sync.js';
  * await here: `destroy()` cancels an in-flight hydrate on its own, which is
  * exactly what unmounting mid-load needs.
  */
-export function BoardCanvas({ boardId, onReady }) {
+export function BoardCanvas({ boardId, onReady, onSaveStatus }) {
   const stage = useRef(null);
   const bg = useRef(null);
   const layer = useRef(null);
@@ -45,15 +45,23 @@ export function BoardCanvas({ boardId, onReady }) {
     window.app = app; // console and test surface
     onReady?.(app);
 
+    // Subscribed before hydrate, and told the current value straight away:
+    // the states worth reporting include the ones reached on the way in, and
+    // a board switch has to reset a header still showing the last board's.
+    const stopWatchingStatus = app.saveStatus.subscribe((status) => onSaveStatus?.(status));
+    onSaveStatus?.(app.saveStatus.get());
+
     // A board that cannot be loaded leaves the canvas empty and usable rather
-    // than taking the route down with it.
+    // than taking the route down with it — `saveStatus` is what says so, and
+    // is why there is nothing to do with the rejection here.
     app.hydrate().catch(() => {});
 
     return () => {
+      stopWatchingStatus();
       app.destroy();
       if (window.app === app) delete window.app;
     };
-  }, [boardId, onReady]);
+  }, [boardId, onReady, onSaveStatus]);
 
   return (
     <>

@@ -74,6 +74,45 @@ describe('createScheduler', () => {
     assert.equal(ran, 1);
   });
 
+  describe('after', () => {
+    test('runs once, later', () => {
+      const scheduler = createManualScheduler();
+      let ran = 0;
+      scheduler.after(() => ran++, 1000);
+
+      assert.equal(ran, 0, 'ran immediately');
+      scheduler.flushTimers();
+      assert.equal(ran, 1);
+      scheduler.flushTimers();
+      assert.equal(ran, 1, 'a one-shot timer rearmed itself');
+    });
+
+    test('the cancel is what stops a torn-down board waking up to save itself', () => {
+      const scheduler = createManualScheduler();
+      let ran = 0;
+      const cancel = scheduler.after(() => ran++, 1000);
+
+      cancel();
+      scheduler.flushTimers();
+      assert.equal(ran, 0);
+    });
+
+    test('passes the delay through to the timer it was given', () => {
+      const timers = [];
+      const scheduler = createScheduler({
+        requestAnimationFrame: () => {},
+        setTimeout: (fn, ms) => {
+          timers.push({ fn, ms });
+          return timers.length;
+        },
+        clearTimeout: () => {},
+      });
+
+      scheduler.after(() => {}, 30000);
+      assert.deepEqual(timers.map((t) => t.ms), [30000]);
+    });
+  });
+
   test('drives whatever timing primitives it is handed', () => {
     const frames = [];
     const timers = [];

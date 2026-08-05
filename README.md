@@ -22,6 +22,7 @@ npm start        # serve the built site
 | **Envelopes** | Grouping containers — dragging one carries everything fully inside it, transitively |
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
+| **Saving** | The bar says whether your work is stored — a refused write retries itself, and closing the tab flushes what the debounce is still holding |
 | **Together** | With a project configured: share a board by link, live edits, and other people's cursors |
 
 ### Gestures
@@ -54,7 +55,8 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
               │   ├── board.js       cards, envelopes, lists, z-order, snapping
               │   ├── selection.js   what is selected
               │   ├── viewport.js    the camera
-              │   ├── autosave.js    persistence policy
+              │   ├── autosave.js    persistence policy, and its retries
+              │   ├── save-status.js whether the work is stored, subscribably
               │   ├── scheduler.js   timing, behind an interface
               │   ├── geometry.js    rectangle maths
               │   ├── ids.js         id generation
@@ -66,6 +68,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
                   ├── toolbar.js     buttons and view shortcuts
                   ├── storage.js     BoardRepository over Web Storage
                   ├── supabase-repository.js  the same contract over Postgres
+                  ├── lifecycle.js   the last write before the tab goes
                   ├── sync.js        the op log, on a private channel
                   ├── cursors.js     other people's pointers
                   ├── sharing.js     invite links and who holds them
@@ -148,6 +151,53 @@ of the document entirely. So an incoming order decides the relative depth of
 everything it mentions, and anything it does not mention keeps the depth it has
 here. There is no operational transform beyond that: two people dragging the
 same object settle on whoever's message landed last.
+
+### Saying whether it saved
+
+Autosave knew all of this already and told nobody. A write that was refused
+left the document marked dirty behind a board bar that looked exactly like a
+saved one; a board that failed to load left a canvas that took edits all
+afternoon and had nowhere to put them. The states are the ones a person can act
+on — `saved`, `pending`, `saving`, `failed`, `unloaded` — and the bar shows the
+last two in the same red as an error banner, with the retry beside them.
+
+Three things had to become true for the bar to be honest:
+
+- **Nothing is marked saved by a write it was not in.** Every change bumps a
+  counter, and a write remembers which version it carried; an edit made while
+  that write is in flight leaves the board dirty when it lands, and schedules
+  the follow-up itself.
+- **A failure is retried on a timer, not on the next edit.** Riding the next
+  settled edit is free while somebody is working, and useless in the case that
+  loses data: the last edit failed to save and nobody touched the board again.
+  The backoff runs 1s → 3s → 10s → 30s and then repeats, and `stop()` takes the
+  timer with it so a closed board does not wake up to save itself.
+- **The scheduled paths write only what is outstanding.** A direct `flush()`
+  does not consume the debounce an edit armed, so the Retry button and the page
+  on its way out each leave a timer behind that would fire on a board they have
+  already stored. A duplicate write is waste; a duplicate write that *fails*
+  reports a stored board as unsaved, which is the thing this is here to stop.
+- **One write at a time.** Four callers reach `flush()` — the debounce, the
+  retry timer, the page on its way out, and the button in the bar — and none of
+  them knows about the others. Two overlapping writes are not a race the
+  repository can settle: both capture the same version to replace, so the one
+  that lands second is refused for claiming a version the first has just moved,
+  and the board spends a retry converging on a document it already had. A
+  second caller joins the queue behind the write already out. The write still
+  *starts* synchronously when nothing is in flight, which is what the next
+  point depends on.
+- **A page on its way out writes what the debounce is still holding.**
+  `platform/lifecycle.js` listens for `pagehide` and for `visibilitychange`,
+  because neither covers the other — a phone backgrounding a tab may fire only
+  the second. Against Web Storage this is decisive: `save()` reaches `setItem`
+  before it awaits anything, so the write has landed by the time the handler
+  returns, which is what `test/node/lifecycle.test.js` pins down. Against a
+  network repository it is best effort, and best effort beats not trying.
+
+A client that is not the elected writer is *not* told anything is wrong. It
+holds the same document as the writer, arrived at by applying the same ops, and
+saying "unsaved" at every non-writer in a session would be false four times over
+for every once it was right.
 
 ### Rendering
 
@@ -317,11 +367,10 @@ Ops emitted between reading the snapshot and joining the channel are missed —
 `hydrate()` subscribes after the load, so a change made in that window shows up
 on the next reload rather than immediately.
 
-A refused save is retried on the next settled edit, and not before — the board
-stays dirty until a write lands, but nothing chases it on a timer, so a board
-whose last edit was refused and then left alone keeps changes that are not
-stored. The same gap closes a tab: a write still inside the autosave debounce
-does not survive the page. Both want a flush on `pagehide`.
+A client that is not the elected writer reports its board as saved on the
+strength of its ops having been broadcast, which is one hop short of the truth:
+`sync` sends on a best-effort channel, so a send that failed looks exactly like
+one that landed. What is missing is a connection state, not a save state.
 
 Signing in with an emailed confirmation link does not work. `detectSessionInUrl`
 is off because HashRouter owns the fragment, so the tokens in a confirmation
@@ -329,10 +378,12 @@ link are never read — the fix is to handle the fragment in the bootstrap,
 before the router mounts. Local dev has `enable_confirmations = false`, so this
 path is not exercised by anything.
 
-Both repositories answer rather than reject, by contract — but the contract is
-documented, not enforced. Nothing above them is written to survive a rejected
-call: `hydrate()` would leave an editable canvas that saves nowhere, and the
-board list would sit on "Loading…" for good.
+Both repositories answer rather than reject, by contract, and the callers now
+survive one anyway — but a repository that *answers* a failed read still lies
+about it. `list()` returns an empty array when the query fails, which the board
+list can only render as "No boards yet". Telling the two apart means the
+contract carrying a failure, not a value, which is a change to both
+implementations and every caller of them.
 
 There is no notification that a board has been shared with you; it simply
 appears in the list.

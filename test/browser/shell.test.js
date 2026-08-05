@@ -342,4 +342,175 @@ describe('shell', () => {
       assert.equal(await page.eval(`document.querySelector('.shell') !== null`), true);
     });
   });
+
+  /**
+   * Whether the board is stored, said out loud.
+   *
+   * All of this was already known to the autosave and told to nobody: a
+   * refused write left the document dirty behind a bar that looked exactly
+   * like a saved one, and the edits inside the debounce went with the tab.
+   */
+  describe('saving', () => {
+    const key = `'peerthink:board:' + location.hash.replace('#/b/', '')`;
+    const saveState = () => page.eval(`document.querySelector('.save-state')?.dataset.saveStatus ?? null`);
+    const stored = () => page.eval(`localStorage.getItem(${key}) ?? ''`);
+    const settled = (status) =>
+      page.waitFor(`document.querySelector('.save-state')?.dataset.saveStatus === '${status}'`, {
+        label: `the board to report ${status}`,
+      });
+
+    const breakStorage = () => page.eval(`(() => {
+      window.__setItem ??= Storage.prototype.setItem;
+      Storage.prototype.setItem = () => { throw new DOMException('quota', 'QuotaExceededError'); };
+    })()`);
+    const fixStorage = () => page.eval('Storage.prototype.setItem = window.__setItem;');
+
+    test('an edit is reported until it is stored', async () => {
+      await newBoard();
+      assert.equal(await saveState(), 'saved', 'a board nobody has touched');
+
+      await page.eval(`app.board.add('card', { x: 0, y: 0, text: 'reported' })`);
+      assert.match(
+        await page.eval(`document.querySelector('.save-state').textContent`),
+        /^Saving/,
+        'the edit was not acknowledged',
+      );
+
+      await settled('saved');
+      assert.match(await stored(), /reported/, 'said saved without saving');
+    });
+
+    test('a write that does not land is not reported as one that did', async () => {
+      await newBoard();
+      await breakStorage();
+
+      await page.eval(`app.board.add('card', { x: 0, y: 0, text: 'never landed' })`);
+      await settled('failed');
+
+      assert.match(
+        await page.eval(`document.querySelector('.save-state').textContent`),
+        /Unsaved changes/,
+      );
+      assert.equal(await page.eval('app.store.order.length'), 1, 'the work is still on the canvas');
+      assert.doesNotMatch(await stored(), /never landed/, 'it claimed to fail and wrote anyway');
+
+      // and the way out is on screen, rather than a wait for the backoff
+      await fixStorage();
+      await clickOn('.save-state [data-action="retry-save"]');
+      await settled('saved');
+      assert.match(await stored(), /never landed/);
+    });
+
+    test('closing the tab writes what the debounce is still holding', async () => {
+      await newBoard();
+
+      // Both in one turn of the event loop. Asserting that the record is
+      // *absent* between the edit and the event would be a race against the
+      // debounce dressed up as a precondition — this way no timer can fire
+      // in between, so the write that lands is provably the one `pagehide`
+      // asked for rather than the debounce getting there first.
+      await page.eval(`(() => {
+        app.board.add('card', { x: 0, y: 0, text: 'unsaved when the tab went' });
+        window.dispatchEvent(new Event('pagehide'));
+      })()`);
+
+      assert.match(await stored(), /unsaved when the tab went/, 'the last edits went with the tab');
+    });
+
+    test('a board left alone with a failed write keeps trying on its own', async () => {
+      await newBoard();
+      await breakStorage();
+
+      await page.eval(`app.board.add('card', { x: 0, y: 0, text: 'retried unattended' })`);
+      await settled('failed');
+
+      // nothing touches the board from here — no edit, no click, no reload
+      await fixStorage();
+      await settled('saved');
+      assert.match(await stored(), /retried unattended/);
+    });
+
+    /**
+     * Both repositories answer rather than throw — that is the contract, and
+     * both of them keep it. It is still only a promise made in a comment, and
+     * the page above it used to be written as though it could not be broken:
+     * a rejected read left "Loading…" on screen for good and an unhandled
+     * rejection in the console.
+     *
+     * Patching the shell's repository is the only way to see that, precisely
+     * because no shipped implementation does it. The object is a module
+     * singleton, so replacing a method on it is what the page is holding.
+     */
+    describe('a repository that rejects', () => {
+      const patch = (method, body) => page.eval(`(async () => {
+        const mod = await import('/src/shell/storage.js');
+        window.__real ??= {};
+        window.__real['${method}'] ??= mod.repository['${method}'].bind(mod.repository);
+        mod.repository['${method}'] = ${body};
+      })()`);
+
+      const unpatch = (method) => page.eval(`(async () => {
+        const mod = await import('/src/shell/storage.js');
+        mod.repository['${method}'] = window.__real['${method}'];
+      })()`);
+
+      const reject = (method) => patch(method, `() => Promise.reject(new Error('offline'))`);
+
+      /** Reach the list without a reload, which would undo the patch. */
+      const backToList = () => clickAndWaitFor('.board-bar-back', onList, 'the list to come back');
+
+      test('a failed read is reported rather than shown as an empty workspace', async () => {
+        await newBoard();
+        await reject('list');
+        await backToList();
+
+        await page.waitFor(`document.querySelector('[data-error]') !== null`, {
+          label: 'the failed read to be reported',
+        });
+        assert.equal(
+          await page.eval(`document.querySelector('[data-loading]') !== null`),
+          false,
+          'still loading, forever',
+        );
+        assert.equal(
+          await page.eval(`document.querySelector('[data-empty]') !== null`),
+          false,
+          'told someone with boards that they have none',
+        );
+
+        await unpatch('list');
+        await clickOn('[data-action="retry-list"]');
+        await settle();
+        assert.deepEqual(await titles(), ['Untitled board']);
+        assert.equal(await page.eval(`document.querySelector('[data-error]') === null`), true);
+      });
+
+      test('a failed change says nothing was changed', async () => {
+        await newBoard();
+        await backToList();
+        await reject('remove');
+
+        await answerConfirm(true);
+        await clickOn('[data-action="delete"]');
+        await page.waitFor(`document.querySelector('[data-error]') !== null`, {
+          label: 'the failed delete to be reported',
+        });
+
+        await unpatch('remove');
+        assert.deepEqual(await titles(), ['Untitled board'], 'and the board is still there');
+      });
+
+      test('a board that could not be created is reported, not opened', async () => {
+        await reject('save');
+        await clickOn('[data-action="new-board"]');
+        await page.waitFor(`document.querySelector('[data-error]') !== null`, {
+          label: 'the failed create to be reported',
+        });
+
+        assert.equal(await hash(), '#/', 'stayed on the list');
+        assert.equal(await page.eval('Boolean(window.app)'), false, 'no canvas mounted');
+        await unpatch('save');
+      });
+    });
+  });
 });
