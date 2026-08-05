@@ -533,14 +533,27 @@ describe('shell', () => {
         await newBoard();
         await backToList();
 
-        await patch(
-          'load',
-          `() => new Promise((_, no) => setTimeout(() => no(new Error('offline')), 250))`,
-        );
+        // Held open rather than timed out. A read that fails on a timer can
+        // fail before the typing starts, and then the typing simply overwrites
+        // the reset field — the assertion below would hold whether or not the
+        // guard exists. Keeping the rejection in hand is what puts it
+        // *after* the keystrokes, which is the only ordering that tests
+        // anything.
+        await patch('load', `() => new Promise((_, no) => { (window.__loads ??= []).push(no); })`);
         await clickAndWaitFor('.board-card-open', onCanvas, 'the board to open');
 
-        // typed while the read above is still in flight
         await typeInBar('Named during a failing read');
+        await page.waitFor(
+          `document.querySelector('.board-bar-title').value === 'Named during a failing read'`,
+          { label: 'the name to be typed' },
+        );
+
+        await page.eval(`(() => {
+          const waiting = window.__loads ?? [];
+          window.__loads = [];
+          waiting.forEach((no) => no(new Error('offline')));
+        })()`);
+
         await page.waitFor(
           `document.querySelector('[data-save-status="unloaded"]') !== null`,
           { label: 'the failed read to land' },
@@ -557,6 +570,14 @@ describe('shell', () => {
         // would rename this board from inside the next one.
         await page.key('Escape');
         await unpatch('load');
+
+        // Any read taken out after the drain above is still being held; left
+        // pending it would outlive this test attached to a torn-down page.
+        await page.eval(`(() => {
+          const waiting = window.__loads ?? [];
+          window.__loads = [];
+          waiting.forEach((no) => no(new Error('offline')));
+        })()`);
       });
 
       test('a failed change says nothing was changed', async () => {
