@@ -328,9 +328,13 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
      * outlives the run, and a fixed id adopted by one anonymous user is a
      * primary key the next run's user cannot have — which is a failure of the
      * fixture, indistinguishable from a failure of adoption. A pid is not
-     * enough on its own; operating systems reuse those.
+     * enough on its own; operating systems reuse those, and a truncated uuid
+     * is the birthday bound this project already refuses for object ids —
+     * 32 bits starts colliding in the tens of thousands. The whole thing fits
+     * inside the 64 characters the id column allows, so there is nothing to
+     * buy by trimming it.
      */
-    const run = randomUUID().replace(/-/g, '').slice(0, 8);
+    const run = randomUUID().replaceAll('-', '');
     let seeded = 0;
     const givenABrowserWithBoards = async (titlesById) => {
       const boards = Object.fromEntries(
