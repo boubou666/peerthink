@@ -103,9 +103,18 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
     // about the app.
     await page.waitFor('Boolean(window.app.autosave)', { label: 'the board to finish loading' });
 
-    // flush rather than sleep — it hands back the repository's own promise, so
-    // this waits for the write itself rather than for the debounce to expire
-    assert.equal(await page.eval('window.app.autosave.flush()'), true, 'the write was refused');
+    /**
+     * Flushed until it lands, rather than once.
+     *
+     * The edit above also arms the debounce, so an explicit flush can race the
+     * automatic one — both read the version the board is at, one writes it,
+     * and the other is refused for holding a version that is no longer
+     * current. That is the guard doing its job rather than a failure, and in a
+     * session it is invisible: the board stays dirty and the next settled edit
+     * retries. A test that asserted on a single attempt was asserting on which
+     * of the two got there first.
+     */
+    await page.waitFor('window.app.autosave.flush()', { label: 'the edit to be written' });
 
     await page.goto(`/#/b/${id}`, { ready: ON_CANVAS });
     await page.waitFor('window.app.restoredFromStorage || window.app.store.order.length > 0', {
