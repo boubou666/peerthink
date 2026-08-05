@@ -1,6 +1,8 @@
 import { test, describe, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { randomUUID } from 'node:crypto';
+
 import { LIST_PATH, openApp, supabaseOrigin } from '../helpers/browser.js';
 
 /**
@@ -101,9 +103,18 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
     // about the app.
     await page.waitFor('Boolean(window.app.autosave)', { label: 'the board to finish loading' });
 
-    // flush rather than sleep — it hands back the repository's own promise, so
-    // this waits for the write itself rather than for the debounce to expire
-    assert.equal(await page.eval('window.app.autosave.flush()'), true, 'the write was refused');
+    /**
+     * Flushed until it lands, rather than once.
+     *
+     * The edit above also arms the debounce, so an explicit flush can race the
+     * automatic one — both read the version the board is at, one writes it,
+     * and the other is refused for holding a version that is no longer
+     * current. That is the guard doing its job rather than a failure, and in a
+     * session it is invisible: the board stays dirty and the next settled edit
+     * retries. A test that asserted on a single attempt was asserting on which
+     * of the two got there first.
+     */
+    await page.waitFor('window.app.autosave.flush()', { label: 'the edit to be written' });
 
     await page.goto(`/#/b/${id}`, { ready: ON_CANVAS });
     await page.waitFor('window.app.restoredFromStorage || window.app.store.order.length > 0', {
@@ -204,9 +215,19 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
     try {
       await second.waitFor('Boolean(window.app?.cursors)', { label: 'the second page to join' });
 
+      // Delivery is asserted on state and drawing on the DOM, because they
+      // cost differently: a message crosses in about a millisecond, while the
+      // node it produces needs a frame — and headless gives a page that is not
+      // the active one a frame every few seconds. Waiting on the DOM for every
+      // step turned a test about cursors into five seconds of waiting for the
+      // compositor, three times over.
       await page.mouse('mouseMoved', 400, 300);
+      await second.waitFor('window.app.cursors.list().length === 1', {
+        label: "the first page's cursor to arrive",
+      });
       await second.waitFor("document.querySelector('.cursor') !== null", {
-        label: "the first page's cursor to appear",
+        label: 'the cursor to be drawn',
+        timeout: 15_000,
       });
 
       const at = () => second.eval(`(() => {
@@ -236,22 +257,21 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
       // a pointer that leaves the board is gone, not parked at the edge of it
       await page.eval(`document.getElementById('stage').dispatchEvent(
         new PointerEvent('pointerleave', { bubbles: false }))`);
-      await second.waitFor("document.querySelector('.cursor') === null", {
+      await second.waitFor('window.app.cursors.list().length === 0', {
         label: 'the cursor to leave with the pointer',
       });
-      assert.deepEqual(await second.eval('window.app.cursors.list()'), []);
 
-      // and presence is the backstop: someone who has gone takes theirs with them
+      // presence is the backstop: someone who has gone takes theirs with them
       await page.mouse('mouseMoved', 420, 320);
-      await second.waitFor("document.querySelector('.cursor') !== null");
+      await second.waitFor('window.app.cursors.list().length === 1');
       await second.eval('window.app.cursors.setMembers([])');
-      assert.equal(await second.eval(`document.querySelector('.cursor') === null`), true);
+      assert.deepEqual(await second.eval('window.app.cursors.list()'), []);
 
       // Leaving the board takes the whole layer with it. Driven through
       // destroy() rather than by navigating, because a navigation would take
       // the teardown with it and prove nothing about what it unwound.
       await page.mouse('mouseMoved', 440, 340);
-      await second.waitFor("document.querySelector('.cursor') !== null");
+      await second.waitFor('window.app.cursors.list().length === 1');
 
       await second.eval('window.app.destroy()');
       assert.equal(await second.eval(`document.querySelector('.cursor') === null`), true);
@@ -301,6 +321,176 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
     } finally {
       await second.close();
     }
+  });
+
+  /**
+   * The upgrade path: someone who has been using the Web Storage build opens
+   * one with a project behind it. Their boards were written to localStorage by
+   * the old build and are read from Postgres by this one — so unless they are
+   * moved, the list they meet is empty and their work is unreachable.
+   */
+  describe('boards made before there was an account', () => {
+    /**
+     * Write boards the way the Web Storage build did, then load the app.
+     *
+     * The ids are unique per run: they end up as rows in a database that
+     * outlives the run, and a fixed id adopted by one anonymous user is a
+     * primary key the next run's user cannot have — which is a failure of the
+     * fixture, indistinguishable from a failure of adoption. A pid is not
+     * enough on its own; operating systems reuse those, and a truncated uuid
+     * is the birthday bound this project already refuses for object ids —
+     * 32 bits starts colliding in the tens of thousands. The whole thing fits
+     * inside the 64 characters the id column allows, so there is nothing to
+     * buy by trimming it.
+     */
+    const run = randomUUID().replaceAll('-', '');
+    let seeded = 0;
+    const givenABrowserWithBoards = async (titlesById) => {
+      const boards = Object.fromEntries(
+        Object.entries(titlesById).map(([name, title]) => [`${name}${run}${seeded++}`, title]),
+      );
+      await page.eval('localStorage.clear()');
+      for (const [id, title] of Object.entries(boards)) {
+        await page.eval(`localStorage.setItem('peerthink:board:${id}', ${JSON.stringify(JSON.stringify({
+          v: 1, id, title, updatedAt: 1,
+          board: { v: 1, order: [id], objects: [{ id, type: 'card', x: 0, y: 0, w: 200, h: 120, text: `made in ${id}` }] },
+        }))})`);
+      }
+      await page.goto(LIST_PATH, { ready: SETTLED });
+      return Object.keys(boards);
+    };
+
+    test('are adopted into the account, once, without being asked', async () => {
+      await givenABrowserWithBoards({ alpha: 'Roadmap', beta: 'Retro' });
+
+      assert.deepEqual((await titles()).sort(), ['Retro', 'Roadmap']);
+
+      // on the server, not merely on screen: a reload reads Postgres
+      await page.goto(LIST_PATH, { ready: SETTLED });
+      assert.deepEqual((await titles()).sort(), ['Retro', 'Roadmap']);
+      assert.equal(
+        await page.eval(`document.querySelector('[data-action="delete"]') !== null`),
+        true,
+        'the adopted boards are not owned by this account',
+      );
+
+      // and the board itself came across, not just its name
+      await clickIn(page, '.board-card-open');
+      await page.waitFor(ON_CANVAS);
+      await page.waitFor('window.app.restoredFromStorage === true');
+      assert.match(
+        await page.eval(`window.app.store.toJSON().objects[0].text`),
+        /^made in (alpha|beta)/,
+        'the board opened without the card it was seeded with',
+      );
+    });
+
+    /**
+     * Adopted once per page, not once per mount. StrictMode runs the gate's
+     * effect twice, and two adoptions racing each other both find the board
+     * missing from the account and both create it — one losing on the primary
+     * key. The `after` hook is what notices: a 409 reaches the page as a
+     * console error, and this suite allows none.
+     */
+    test('the browser keeps its own copies, and does not adopt them twice', async () => {
+      const [id] = await givenABrowserWithBoards({ gamma: 'Kept' });
+      assert.deepEqual(await titles(), ['Kept']);
+
+      // still in Web Storage — copying is reversible, deleting is not
+      assert.equal(
+        await page.eval(`localStorage.getItem('peerthink:board:' + ${JSON.stringify(id)}) !== null`),
+        true,
+        'adoption deleted the browser copy',
+      );
+
+      // a second visit is the same account and the same list, not a doubled one
+      await page.goto(LIST_PATH, { ready: SETTLED });
+      assert.deepEqual(await titles(), ['Kept']);
+    });
+
+    /**
+     * An adoption that cannot land must not open the gate on a list with
+     * boards missing from it — that is the thing adoption exists to prevent.
+     *
+     * The failure is real rather than simulated: a board id that already
+     * belongs to somebody else is invisible to this account, so the write
+     * falls through to an insert, loses on the primary key, and is refused the
+     * retry. Exactly what a browser carrying a board someone else now owns
+     * would meet.
+     */
+    test('a board that cannot be moved holds the gate, and can be retried', async () => {
+      // This test provokes a real primary-key conflict, so it owns the console
+      // errors that come with it — consumed here rather than tolerated by the
+      // suite, because an unexplained 409 is what exposed the double-adoption
+      // race and this suite should keep being able to notice one.
+      const before = page.errors.length;
+
+      await page.eval('localStorage.clear()');
+      await page.goto(LIST_PATH, { ready: SETTLED });
+      const taken = await newBoard();
+      await page.goto(LIST_PATH, { ready: SETTLED });
+
+      // a different person, carrying a board with that id in their browser
+      await page.eval('localStorage.clear()');
+      await page.eval(`localStorage.setItem('peerthink:board:' + ${JSON.stringify(taken)}, JSON.stringify({
+        v: 1, id: ${JSON.stringify(taken)}, title: 'mine, allegedly', updatedAt: 1,
+        board: { v: 1, order: [], objects: [] },
+      }))`);
+
+      await page.goto(LIST_PATH, { ready: "Boolean(document.querySelector('[data-unadopted]'))" });
+      assert.equal(await page.eval(`document.querySelector('.board-grid') === null`), true,
+        'the workspace was shown with boards missing from it');
+
+      // and it is a choice rather than a dead end
+      await clickIn(page, '[data-action="skip-adoption"]');
+      await page.waitFor(SETTLED, { label: 'the list, entered deliberately' });
+      assert.deepEqual(await titles(), []);
+
+      const provoked = page.errors.splice(before);
+      assert.deepEqual(
+        provoked.filter((e) => !/status of 409/.test(e)),
+        [],
+        'the test logged something other than the conflict it set out to cause',
+      );
+      assert.ok(provoked.length, 'the conflict this test depends on did not happen');
+    });
+
+    /**
+     * The account's copy is the one other people may have edited, so a browser
+     * that has been sitting closed must not put its version on top of it.
+     */
+    test('a board the account already has is not overwritten', async () => {
+      await page.eval('localStorage.clear()');
+      await page.goto(LIST_PATH, { ready: SETTLED });
+
+      const id = await newBoard();
+      await page.eval(`window.app.board.add('card', { x: 10, y: 10, text: 'the account version' })`);
+      await page.waitFor('Boolean(window.app.autosave)');
+      assert.equal(await page.eval('window.app.autosave.flush()'), true);
+
+      // The same id turns up in Web Storage holding an older, emptier board —
+      // as a browser that had been closed since before the backend would — and
+      // the marker is cleared so adoption considers it afresh.
+      await page.eval(`(() => {
+        localStorage.removeItem('peerthink:adopted');
+        localStorage.setItem('peerthink:board:' + ${JSON.stringify(id)}, JSON.stringify({
+          v: 1, id: ${JSON.stringify(id)}, title: 'the browser version', updatedAt: 1,
+          board: { v: 1, order: [], objects: [] },
+        }));
+      })()`);
+      await page.goto(LIST_PATH, { ready: SETTLED });
+
+      assert.deepEqual(await titles(), ['Untitled board'], 'the browser copy renamed the account board');
+
+      await clickIn(page, '.board-card-open');
+      await page.waitFor(ON_CANVAS);
+      await page.waitFor('window.app.restoredFromStorage === true');
+      assert.deepEqual(
+        await page.eval(`window.app.store.toJSON().objects.map(o => o.text)`),
+        ['the account version'],
+        'the emptier browser copy replaced the account board',
+      );
+    });
   });
 
   /**

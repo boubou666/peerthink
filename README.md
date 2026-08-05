@@ -298,6 +298,12 @@ invite row is readable only by the owner. Redeeming goes through a
 see. Every reason a token might not work gives the same answer, so the join
 page is not somewhere to test guesses.
 
+Boards made before there was an account are adopted into it — once, on the
+first sign-in that finds them, silently. Two rules make that safe to run again
+after a half-finished attempt: a board the account already has is left alone,
+because the account's copy is the one other people may have edited; and the
+browser keeps its copies, because copying is reversible and deleting is not.
+
 Access is handed back the same way it was given. A board someone shared with
 you is not yours to delete, so its card offers **Leave** where an owned one
 offers Delete — the policy would refuse a delete, and refusing quietly would
@@ -378,10 +384,6 @@ about it. `list()` returns an empty array when the query fails, which the board
 list can only render as "No boards yet". Telling the two apart means the
 contract carrying a failure, not a value, which is a change to both
 implementations and every caller of them.
-
-Boards already in a browser's Web Storage are not adopted when a project is
-configured — the account and the browser are separate places, and moving boards
-between them is a decision nobody has made yet.
 
 There is no notification that a board has been shared with you; it simply
 appears in the list.

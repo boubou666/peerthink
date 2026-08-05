@@ -33,6 +33,7 @@ export const SUPABASE_ONLY = [
   'src/platform/cursors.js',
   'src/platform/supabase-repository.js',
   'src/platform/sharing.js',
+  'src/shell/adopt.js',
   'src/platform/sync.js',
   'src/routes/JoinPage.jsx',
   'src/shell/RequireAccount.jsx',
