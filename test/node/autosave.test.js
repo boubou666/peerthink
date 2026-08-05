@@ -408,11 +408,11 @@ describe('autosave', () => {
         },
       });
       const settle = () => new Promise((resolve) => setImmediate(resolve));
-      return { store, autosave, started, waiting, settle };
+      return { store, scheduler, autosave, started, waiting, settle };
     };
 
     test('a second caller joins the queue rather than racing the write already out', async () => {
-      const { store, autosave, started, waiting, settle } = blocking();
+      const { store, scheduler, autosave, started, waiting, settle } = blocking();
 
       store.apply([{ t: 'add', obj: card('a') }]);
       const first = autosave.flush();
@@ -434,6 +434,13 @@ describe('autosave', () => {
       waiting.shift()();
       assert.equal(await second, true);
       assert.equal(autosave.dirty, false);
+
+      // Both edits armed a debounce that the direct flushes never consumed.
+      // Firing it now must do nothing: the board is stored, and a redundant
+      // write that failed would report it as unsaved.
+      scheduler.flushTimers();
+      await settle();
+      assert.equal(started.length, 2, 'a stale debounce wrote a board that was already saved');
     });
 
     test('a queued write still runs when the one before it failed', async () => {
@@ -460,6 +467,11 @@ describe('autosave', () => {
       assert.equal(await second, true);
       assert.equal(started.length, 2);
       assert.equal(autosave.status, SAVED);
+
+      scheduler.flushTimers();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(started.length, 2, 'the debounce the edit armed wrote a clean board');
+      assert.equal(autosave.status, SAVED, 'and reported the stored board as failed');
     });
   });
 

@@ -164,10 +164,22 @@ export function createAutosave({ store, repository, boardId, scheduler, delay = 
     return next;
   };
 
-  // Rethrown by flush, and swallowed here: the debounced path fires on every
-  // settled edit with nobody waiting, and a rejected autosave is a dropped
-  // write rather than a reason to take the tab down.
-  const attempt = () => flush().catch(() => false);
+  /**
+   * The scheduled paths — the debounce and the retry — write only what is
+   * outstanding.
+   *
+   * A direct `flush()` does not consume the debounce an edit armed, so the
+   * Retry button and the page on its way out both leave a timer behind that
+   * would fire on a board they have already stored. A duplicate write is
+   * mostly waste, but a duplicate write that *fails* is worse than waste: it
+   * reports a board as unsaved when the document is safely stored, which is
+   * the one thing this is all here to stop doing.
+   *
+   * The rejection is swallowed rather than rethrown, because these paths fire
+   * with nobody waiting and a dropped autosave is not a reason to take the tab
+   * down with an unhandled rejection.
+   */
+  const attempt = () => (dirty ? flush().catch(() => false) : Promise.resolve(false));
   const save = scheduler.debounce(attempt, delay);
 
   const stopListening = store.on(() => {

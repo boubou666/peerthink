@@ -172,6 +172,11 @@ Three things had to become true for the bar to be honest:
   loses data: the last edit failed to save and nobody touched the board again.
   The backoff runs 1s → 3s → 10s → 30s and then repeats, and `stop()` takes the
   timer with it so a closed board does not wake up to save itself.
+- **The scheduled paths write only what is outstanding.** A direct `flush()`
+  does not consume the debounce an edit armed, so the Retry button and the page
+  on its way out each leave a timer behind that would fire on a board they have
+  already stored. A duplicate write is waste; a duplicate write that *fails*
+  reports a stored board as unsaved, which is the thing this is here to stop.
 - **One write at a time.** Four callers reach `flush()` — the debounce, the
   retry timer, the page on its way out, and the button in the bar — and none of
   them knows about the others. Two overlapping writes are not a race the
