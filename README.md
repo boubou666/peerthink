@@ -292,6 +292,32 @@ of every stored board, and access is not enforced in the client: a `select` with
 no `where` clause is the correct way to ask for "my boards", because the
 policies are what answer it.
 
+Every call answers rather than throws — except the two reads, which reject when
+the store will not answer at all. A write has something honest to fail with and
+a read does not, and both of the values they used to fail with mean something
+else that the caller acts on:
+
+- `list()` returning `[]` is what the board list renders as **"No boards yet"** —
+  an account reported empty because the query never arrived, which to the person
+  reading it is indistinguishable from having lost everything.
+- `load()` returning `null` is also how the repository says *"there is no such
+  board"*, so `app.js` did what null means and seeded a starter board. Nothing
+  guards the save that follows — a board that was never read has no version to
+  claim — so the starter content landed on top of the document that was there.
+  One edit after a failed read was enough to lose the board.
+
+So `null` from `load()` means the board is genuinely not there, and nothing else.
+A record that will not parse still reads as `null`: that board is unrecoverable
+whatever we do, and reseeding is the right answer to it. In the Web Storage
+repository that distinction is the whole design — junk at a key is a bad record
+and is skipped, so one unparseable board does not sink the list around it, while
+a `getItem` that throws is the store refusing and says nothing about what is in
+it.
+
+`createNullRepository` still answers `[]` and `null`, and that is not the same
+lie: nothing can be read there because nothing was ever written, and no retry
+would change it.
+
 The suites that need a real stack — accounts, the Postgres repository, and the
 live channel — skip without one:
 
@@ -333,6 +359,14 @@ first sign-in that finds them, silently. Two rules make that safe to run again
 after a half-finished attempt: a board the account already has is left alone,
 because the account's copy is the one other people may have edited; and the
 browser keeps its copies, because copying is reversible and deleting is not.
+
+The first of those rules is a question put to the account, so it matters what
+happens when the account cannot be asked. A read that failed is not an answer,
+and taking it for "no, you do not have this board" is how the browser's stale
+copy lands on one other people have edited since. A board that cannot be settled
+is counted unfinished rather than adopted over — the marker stays unset, so the
+next sign-in tries it again, and one bad read does not stop the boards around it
+from moving.
 
 Access is handed back the same way it was given. A board someone shared with
 you is not yours to delete, so its card offers **Leave** where an owned one
@@ -405,13 +439,6 @@ is off because HashRouter owns the fragment, so the tokens in a confirmation
 link are never read — the fix is to handle the fragment in the bootstrap,
 before the router mounts. Local dev has `enable_confirmations = false`, so this
 path is not exercised by anything.
-
-Both repositories answer rather than reject, by contract, and the callers now
-survive one anyway — but a repository that *answers* a failed read still lies
-about it. `list()` returns an empty array when the query fails, which the board
-list can only render as "No boards yet". Telling the two apart means the
-contract carrying a failure, not a value, which is a change to both
-implementations and every caller of them.
 
 There is no notification that a board has been shared with you; it simply
 appears in the list.
