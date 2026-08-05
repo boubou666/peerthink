@@ -16,12 +16,16 @@ export function AccountForm({ mode, onSwitch, onDone }) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  // Whether the failure was "that address already has an account". The error
+  // text says what happened; this is what turns it into somewhere to go.
+  const [taken, setTaken] = useState(false);
   const [pending, setPending] = useState(false);
 
   const submit = async (event) => {
     event.preventDefault();
     setBusy(true);
     setError(null);
+    setTaken(false);
 
     // The port answers rather than throws — but a form whose only way out of
     // `busy` is the happy path is one keystroke of somebody else's bug away
@@ -39,6 +43,7 @@ export function AccountForm({ mode, onSwitch, onDone }) {
 
     if (!result.ok) {
       setError(result.message);
+      setTaken(result.taken === true);
       return;
     }
     // A registration awaiting a confirmation link has changed nothing the user
@@ -61,6 +66,27 @@ export function AccountForm({ mode, onSwitch, onDone }) {
   return (
     <form className="account-form" onSubmit={submit} data-account-form={mode}>
       {error && <p className="error" role="alert" data-error>{error}</p>}
+
+      {/*
+        Offered next to the error rather than replacing it: the message carries
+        the cost of switching — boards left with the guest — and a button that
+        stood alone would be an invitation without the price on it. Only shown
+        while registering, because a taken address is not a way sign-in fails.
+      */}
+      {taken && registering && onSwitch && (
+        <button
+          type="button"
+          className="link"
+          data-action="sign-in-instead"
+          onClick={() => {
+            setError(null);
+            setTaken(false);
+            onSwitch('sign-in');
+          }}
+        >
+          Sign in as {email}
+        </button>
+      )}
 
       <label>
         <span>Email</span>

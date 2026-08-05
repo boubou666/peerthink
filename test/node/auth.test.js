@@ -221,6 +221,48 @@ describe('supabase auth', () => {
       );
     });
 
+    test('an address that is already an account is its own answer, not an error', async () => {
+      // Attaching to a guest and signing up fresh disagree on the word for it —
+      // `email_exists` and `user_already_exists` — so both are checked here.
+      // Supabase's own message is accurate and leads nowhere; `taken` is what
+      // the form turns into a way out.
+      const { client } = stubClient({
+        updateUser: { error: { code: 'email_exists', message: 'User already registered' } },
+      });
+      const guest = createSupabaseAuth({ client });
+      await guest.start();
+
+      const attached = await guest.register({ email: 'ada@example.com', password: 'secret1' });
+      assert.equal(attached.ok, false);
+      assert.equal(attached.taken, true);
+      assert.match(attached.message, /stay behind/, 'says what switching costs');
+
+      const fresh = createSupabaseAuth({
+        client: stubClient({
+          signUp: { error: { code: 'user_already_exists', message: 'User already registered' } },
+        }).client,
+      });
+      const signedUp = await fresh.register({ email: 'ada@example.com', password: 'secret1' });
+      assert.equal(signedUp.taken, true);
+      assert.doesNotMatch(
+        signedUp.message,
+        /stay behind/,
+        'with no session there are no boards to leave behind',
+      );
+    });
+
+    test('a failure that is not a taken address is left in Supabase words', async () => {
+      const { client } = stubClient({
+        updateUser: { error: { code: 'weak_password', message: 'Password is too short' } },
+      });
+      const auth = createSupabaseAuth({ client });
+      await auth.start();
+
+      const result = await auth.register({ email: 'ada@example.com', password: 'x' });
+      assert.deepEqual(result, { ok: false, message: 'Password is too short' });
+      assert.equal(result.taken, undefined, 'only a taken address offers the other door');
+    });
+
     test('reports both failures', async () => {
       const taken = { error: { message: 'already registered' } };
       const fresh = createSupabaseAuth({ client: stubClient({ signUp: taken }).client });
