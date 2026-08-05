@@ -201,6 +201,26 @@ describe('row level security', { skip: URL ? false : 'DATABASE_URL is not set' }
     });
   });
 
+  describe('what anon holds', () => {
+    // The behavioural test above — `no session sees nothing at all` — passes on
+    // a local stack whether or not anon has been revoked, because locally the
+    // grant never existed to begin with. A hosted project grants every table in
+    // `public` to anon by default privilege, and that difference stayed
+    // invisible until the suite was first pointed at production. Asserting the
+    // privilege directly is what makes the revoke testable in both places, for
+    // the same reason `prosecdef` is asserted directly above.
+    for (const table of ['boards', 'board_members', 'board_invites']) {
+      test(`anon holds no privilege on ${table}`, async () => {
+        const { rows } = await client.query(
+          `select coalesce(bool_or(has_table_privilege('anon', $1, priv)), false) as held
+             from unnest(array['select', 'insert', 'update', 'delete']) as priv`,
+          [`public.${table}`],
+        );
+        assert.equal(rows[0].held, false, `anon must hold nothing on public.${table}`);
+      });
+    }
+  });
+
   describe('membership', () => {
     test('only the owner can share a board', async () => {
       const id = await givenAliceHasABoard();

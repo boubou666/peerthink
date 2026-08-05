@@ -135,7 +135,8 @@ alter table public.board_members enable row level security;
 
 -- Anonymous sign-in still produces a real row in auth.users, so `authenticated`
 -- covers a user who has not created an account yet. `anon` — no session at all
--- — is granted nothing.
+-- — is granted nothing here, but a hosted project grants it every table in
+-- `public` by default privilege regardless; 20260805153000 takes that back.
 grant select, insert, update, delete on public.boards to authenticated;
 grant select, insert, update, delete on public.board_members to authenticated;
 
