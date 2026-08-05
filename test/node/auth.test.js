@@ -22,10 +22,15 @@ function stubClient({ session = null, ...responses } = {}) {
   const calls = [];
   let emit = () => {};
 
-  const answer = (name, fallback) => async (arg) => {
-    calls.push([name, arg]);
+  // Every argument is recorded, not just the first. A test asserting that a
+  // call was *not* given something — updateUser and its absent captchaToken —
+  // can only say so if the stub can see a second argument arriving.
+  const answer = (name, fallback) => async (...args) => {
+    const entry = [name, args[0]];
+    entry.args = args;
+    calls.push(entry);
     const reply = responses[name] ?? fallback;
-    return typeof reply === 'function' ? reply(arg) : reply;
+    return typeof reply === 'function' ? reply(args[0]) : reply;
   };
 
   const client = {
@@ -260,11 +265,12 @@ describe('supabase auth', () => {
       await auth.register({ email: 'ada@example.com', password: 'secret1' });
 
       // updateUser takes only emailRedirectTo — a captchaToken here would be
-      // an argument the client has no field for.
-      assert.deepEqual(calls.find(([n]) => n === 'updateUser')[1], {
-        email: 'ada@example.com',
-        password: 'secret1',
-      });
+      // an argument the client has no field for. Asserted on the whole
+      // argument list, because a token smuggled into a second parameter is
+      // exactly the mistake this test exists to catch, and reading only the
+      // first argument would not see it.
+      const call = calls.find(([n]) => n === 'updateUser');
+      assert.deepEqual(call.args, [{ email: 'ada@example.com', password: 'secret1' }]);
     });
 
     test('a captcha token is taken per sign-in and handed to Supabase', async () => {
