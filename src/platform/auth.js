@@ -64,7 +64,12 @@ const answering = async (fallback, call) => {
   }
 };
 
-export function createSupabaseAuth({ client }) {
+/**
+ * `captcha` is a function answering a fresh token, or null when the project is
+ * not checking for one. Injected rather than imported so both branches are
+ * reachable from a test, and so the port stays ignorant of whose CAPTCHA it is.
+ */
+export function createSupabaseAuth({ client, captcha = null }) {
   let account = null;
   let starting = null;
   const listeners = new Set();
@@ -95,7 +100,21 @@ export function createSupabaseAuth({ client }) {
       return { ok: true };
     }
 
-    const created = await client.auth.signInAnonymously();
+    // The token is taken here rather than at construction: it is single-use and
+    // short-lived, so one fetched at load would already be spent or stale by
+    // the time a retry needed it. A CAPTCHA that will not issue one fails the
+    // start the same way a refused sign-in does — answered, not thrown, so the
+    // gate shows it and offers the retry.
+    let options;
+    if (captcha) {
+      try {
+        options = { options: { captchaToken: await captcha() } };
+      } catch (error) {
+        return failed(error, 'Could not verify this browser.');
+      }
+    }
+
+    const created = await client.auth.signInAnonymously(options);
     if (created.error) return failed(created.error, 'Could not start a session.');
     publish(created.data.session);
     return { ok: true };

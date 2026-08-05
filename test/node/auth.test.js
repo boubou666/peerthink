@@ -221,6 +221,46 @@ describe('supabase auth', () => {
       );
     });
 
+    test('a captcha token is taken per sign-in and handed to Supabase', async () => {
+      const { client, calls } = stubClient();
+      let taken = 0;
+      const auth = createSupabaseAuth({
+        client,
+        captcha: async () => `token-${++taken}`,
+      });
+
+      await auth.start();
+
+      const args = calls.find(([n]) => n === 'signInAnonymously')[1];
+      assert.deepEqual(args, { options: { captchaToken: 'token-1' } });
+      assert.equal(taken, 1, 'one token per sign-in, not one per app');
+    });
+
+    test('no captcha configured sends no options at all', async () => {
+      // Not `{ options: { captchaToken: undefined } }`: a project that is not
+      // checking ignores the field, but sending a shape nobody asked for is
+      // how the next version of the client starts rejecting it.
+      const { client, calls } = stubClient();
+      await createSupabaseAuth({ client }).start();
+
+      assert.equal(calls.find(([n]) => n === 'signInAnonymously')[1], undefined);
+    });
+
+    test('a captcha that will not issue a token fails the start, answered not thrown', async () => {
+      const { client, names } = stubClient();
+      const auth = createSupabaseAuth({
+        client,
+        captcha: async () => {
+          throw new Error('Turnstile refused to issue a token.');
+        },
+      });
+
+      const result = await auth.start();
+      assert.equal(result.ok, false);
+      assert.match(result.message, /refused to issue/i);
+      assert.equal(countOf(names(), 'signInAnonymously'), 0, 'signed in without a token');
+    });
+
     test('an address that is already an account is its own answer, not an error', async () => {
       // Attaching to a guest and signing up fresh disagree on the word for it —
       // `email_exists` and `user_already_exists` — so both are checked here.
