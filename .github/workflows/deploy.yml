@@ -51,8 +51,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Repository *variables*, not secrets. The anon key is public by
+      # construction — it ships inside the bundle this job uploads, and row
+      # level security is what protects the data, not the key's obscurity.
+      # Masking it in the log would only hide it from the one reader who
+      # already has it. Absent either variable the build still succeeds and
+      # the site runs on Web Storage with no accounts, which is what
+      # readSupabaseConfig answers null for.
       - name: Build
         run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
 
       - uses: actions/configure-pages@v5
 

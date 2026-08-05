@@ -281,8 +281,12 @@ VITE_SUPABASE_ANON_KEY=<anon key>
 it signs every visitor in — anonymously on a first visit, which is a real row
 in `auth.users` and so a real subject for the row level security policies — and
 keeps the boards in Postgres. With either variable missing it runs on Web
-Storage with no accounts at all, which is what the published GitHub Pages site
-is and what `npm test` runs against. Registering attaches an email to the guest
+Storage with no accounts at all, which is what `npm test` runs against. The
+published GitHub Pages site is handed both, as repository *variables* rather
+than secrets: the anon key ships inside the bundle whatever we do, so masking
+it in a build log would hide it only from someone who already has it. What
+protects the data is the row level security, which is tested rather than
+assumed. Registering attaches an email to the guest
 who is already signed in, rather than creating a second user beside them, so
 the boards come along.
 
