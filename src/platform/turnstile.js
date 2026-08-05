@@ -96,7 +96,11 @@ export function cancelTurnstileLoad(doc, consumer) {
   const pending = loaders.get(doc);
   if (!pending) return;
   if (consumer) {
-    pending.consumers.delete(consumer);
+    // delete() answering false means this provider never joined *this* load —
+    // it was destroyed before it ever asked for a token, or the load was
+    // started by a direct loadTurnstile(doc) with no consumer at all. Either
+    // way it has no standing to cancel what somebody else is waiting on.
+    if (!pending.consumers.delete(consumer)) return;
     if (pending.consumers.size > 0) return;
   }
   loaders.delete(doc);

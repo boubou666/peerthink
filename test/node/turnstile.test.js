@@ -155,6 +155,22 @@ describe('turnstile', () => {
       b.catch(() => {});
     });
 
+    test('a provider that never asked for a token cannot cancel one that did', async () => {
+      const doc = fakeDoc();
+      const direct = loadTurnstile(doc); // no consumer registered
+      await Promise.resolve();
+      const script = doc.appended.find((n) => 'onload' in n);
+
+      // never called, so never joined the load it is about to try to cancel
+      const idle = createTurnstileCaptcha({ siteKey: '0xAAA' }, { doc });
+      idle.destroy();
+
+      assert.notEqual(script.onload, null, 'cancelled a load it never joined');
+      assert.notEqual(script.removed, true, 'removed a script it never asked for');
+
+      direct.catch(() => {});
+    });
+
     test('destroy is safe twice, and after the load has landed', () => {
       const doc = fakeDoc({ turnstile: { render() {} } });
       const captcha = createTurnstileCaptcha({ siteKey: '0xAAA' }, { doc });
