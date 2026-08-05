@@ -11,7 +11,7 @@
     "start": "node server.js",
     "test": "node test/run.js",
     "test:node": "node --test \"test/node/**/*.test.js\"",
-    "test:db": "node --test \"test/db/**/*.test.js\"",
+    "test:db": "node --test --test-concurrency=1 \"test/db/**/*.test.js\"",
     "db:apply": "node test/db/apply.js"
   },
   "engines": {

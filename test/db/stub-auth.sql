@@ -27,6 +27,18 @@ create table if not exists auth.users (
   email text
 );
 
+-- The columns the sweep reads, rather than the ones the policies read.
+--
+-- `sweep_anonymous_users` is the first thing here to care about *which* user a
+-- row is and when it was last seen, so the stand-in has to carry that much of
+-- GoTrue too. Added rather than declared above so a database that already has
+-- this table — including, by mistake, a real project — is left alone: `add
+-- column if not exists` is a no-op against the genuine article, which has all
+-- three already.
+alter table auth.users add column if not exists is_anonymous boolean not null default false;
+alter table auth.users add column if not exists created_at timestamptz not null default now();
+alter table auth.users add column if not exists last_sign_in_at timestamptz;
+
 /**
  * The current request's user, or null when there is no session.
  *
