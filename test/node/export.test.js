@@ -1,0 +1,177 @@
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { MAX_EDGE, MAX_PIXELS, PADDING, SCALE, exportFrame, fileName } from '../../src/core/export.js';
+
+/**
+ * What an export covers, decided without a canvas.
+ *
+ * The drawing needs a browser and is tested in one; this is the half that says
+ * which part of an infinite board the picture is of and how many pixels that
+ * comes to, which is the same answer whether anything renders it or not.
+ */
+
+const at = (x, y, w = 100, h = 60) => ({ x, y, w, h });
+
+describe('export frame', () => {
+  test('covers the content with a margin around it', () => {
+    const frame = exportFrame([at(0, 0), at(200, 100)]);
+
+    assert.deepEqual(frame.rect, {
+      x: -PADDING,
+      y: -PADDING,
+      w: 300 + PADDING * 2,
+      h: 160 + PADDING * 2,
+    });
+  });
+
+  test('a board with nothing on it has no frame', () => {
+    assert.equal(exportFrame([]), null);
+    assert.equal(exportFrame(), null);
+  });
+
+  test('pixels are world units at the device scale', () => {
+    const frame = exportFrame([at(0, 0, 100, 50)], { padding: 0 });
+
+    assert.equal(frame.scale, SCALE);
+    assert.equal(frame.width, 100 * SCALE);
+    assert.equal(frame.height, 50 * SCALE);
+  });
+
+  test('negative coordinates are covered like any other', () => {
+    const frame = exportFrame([at(-500, -300, 100, 100)], { padding: 0 });
+
+    assert.deepEqual(frame.rect, { x: -500, y: -300, w: 100, h: 100 });
+  });
+
+  /**
+   * The board is infinite and a canvas is not. Past the cap a browser hands
+   * back a blank or a null blob, so the export has to give up resolution
+   * rather than give up objects — a picture missing the right-hand half of the
+   * board would be worse than a soft one.
+   */
+  describe('a board too big for a canvas', () => {
+    test('shrinks rather than cropping', () => {
+      const huge = at(0, 0, MAX_EDGE, 200);
+      const frame = exportFrame([huge], { padding: 0 });
+
+      assert.ok(frame.scale < SCALE, 'kept the full scale on a canvas that cannot hold it');
+      assert.equal(frame.width, MAX_EDGE);
+      assert.deepEqual(frame.rect.w, MAX_EDGE, 'the rect still covers every object');
+    });
+
+    test('the tighter of the two sides decides', () => {
+      // tall and narrow: the height is what runs out of room first
+      const frame = exportFrame([at(0, 0, 10, MAX_EDGE)], { padding: 0 });
+
+      assert.equal(frame.height, MAX_EDGE);
+      assert.ok(frame.width < MAX_EDGE);
+    });
+
+    test('a board within the cap is left at full scale', () => {
+      const frame = exportFrame([at(0, 0, 400, 300)], { padding: 0 });
+      assert.equal(frame.scale, SCALE);
+    });
+
+    /**
+     * A per-side cap is not the whole constraint. Safari before iOS 18 refuses
+     * any canvas over 16,777,216 pixels however its sides are arranged, so a
+     * board inside MAX_EDGE on both sides can still be too large — and would
+     * fail on a phone for a picture that exports fine on a desktop.
+     */
+    test('the total area is capped as well as each side', () => {
+      // 8192 × 4096 at scale 1: both sides legal, the area is twice the limit
+      const frame = exportFrame([at(0, 0, MAX_EDGE, 4096)], { padding: 0, scale: 1 });
+
+      assert.ok(frame.width <= MAX_EDGE && frame.height <= MAX_EDGE, 'a side went over');
+      assert.ok(
+        frame.width * frame.height <= MAX_PIXELS,
+        `area still over the cap: ${frame.width} × ${frame.height}`,
+      );
+      // and it shrank rather than cropping — every object is still covered
+      assert.equal(frame.rect.w, MAX_EDGE);
+      assert.equal(frame.rect.h, 4096);
+    });
+
+    /**
+     * The cap is applied to the exact size and rounding happens per side after
+     * it, which can carry the product back over. 4095 × 4098 shrinks to
+     * 4094.5 × 4097.5 — both round up, and the canvas lands 4094 pixels above
+     * the limit it was just brought under.
+     */
+    test('rounding does not carry the canvas back over the cap', () => {
+      const frame = exportFrame([at(0, 0, 4095, 4098)], { padding: 0, scale: 1 });
+
+      assert.ok(
+        frame.width * frame.height <= MAX_PIXELS,
+        `rounded back over: ${frame.width} × ${frame.height}`,
+      );
+      // and it gave up a pixel, not a tenth of the picture
+      assert.ok(frame.width >= 4093 && frame.height >= 4096, 'trimmed far more than rounding cost');
+    });
+
+    test('no board inside the caps is trimmed by the rounding guard', () => {
+      for (const [w, h] of [[100, 100], [1000, 800], [4000, 4000], [8192, 100]]) {
+        const frame = exportFrame([at(0, 0, w, h)], { padding: 0, scale: 1 });
+        assert.deepEqual(
+          [frame.width, frame.height],
+          [w, h],
+          `${w} × ${h} was trimmed when it did not need to be`,
+        );
+      }
+    });
+
+    test('a board inside the area cap keeps its scale', () => {
+      // 1000 × 800 at 2× is 3.2M pixels, comfortably under
+      const frame = exportFrame([at(0, 0, 1000, 800)], { padding: 0 });
+      assert.equal(frame.scale, SCALE);
+    });
+  });
+
+  test('a zero-sized object still makes an image', () => {
+    const frame = exportFrame([at(0, 0, 0, 0)], { padding: 0 });
+
+    assert.equal(frame.width, 1);
+    assert.equal(frame.height, 1);
+  });
+});
+
+describe('file name', () => {
+  test('is the board title', () => {
+    assert.equal(fileName('Sprint retro'), 'Sprint retro.png');
+  });
+
+  test('keeps accents and other scripts', () => {
+    assert.equal(fileName('Rétrospective'), 'Rétrospective.png');
+    assert.equal(fileName('計画'), '計画.png');
+  });
+
+  test('drops what a file system will not take', () => {
+    // and closes the gaps the dropped characters leave behind, so a title
+    // does not arrive with the shape of its own punctuation still in it
+    assert.equal(fileName('Q3: plans / ideas?'), 'Q3 plans ideas.png');
+    assert.equal(fileName('a\\b:c*d?e"f<g>h|i'), 'abcdefghi.png');
+  });
+
+  test('falls back for a board with no usable name', () => {
+    assert.equal(fileName(null), 'board.png');
+    assert.equal(fileName(''), 'board.png');
+    assert.equal(fileName('   '), 'board.png');
+    assert.equal(fileName('///'), 'board.png');
+  });
+
+  /** A trailing dot is refused on Windows and would eat the separator. */
+  test('does not end the name in a dot', () => {
+    assert.equal(fileName('Version 2.'), 'Version 2.png');
+    assert.equal(fileName('...'), 'board.png');
+  });
+
+  test('is not unboundedly long', () => {
+    const name = fileName('x'.repeat(500));
+    assert.equal(name.length, 84, 'a 500-character title made a 500-character file name');
+  });
+
+  test('takes the extension it is given', () => {
+    assert.equal(fileName('Board', 'json'), 'Board.json');
+  });
+});

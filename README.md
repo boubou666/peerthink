@@ -23,6 +23,7 @@ npm start        # serve the built site
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
 | **Saving** | The bar says whether your work is stored — a refused write retries itself, and closing the tab flushes what the debounce is still holding |
+| **Export** | The board as a PNG — the selection if there is one, everything otherwise |
 | **Together** | With a project configured: share a board by link, live edits, and other people's cursors |
 
 ### Gestures
@@ -57,6 +58,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
               │   ├── viewport.js    the camera
               │   ├── autosave.js    persistence policy, and its retries
               │   ├── save-status.js whether the work is stored, subscribably
+              │   ├── export.js      what a picture covers, and how big it is
               │   ├── scheduler.js   timing, behind an interface
               │   ├── geometry.js    rectangle maths
               │   ├── ids.js         id generation
@@ -65,6 +67,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
                   ├── renderer.js    reconciles the store into the DOM
                   ├── input.js       pointer and keyboard gestures
                   ├── views.js       per-type markup
+                  ├── export-png.js  the same objects, drawn to a canvas
                   ├── toolbar.js     buttons and view shortcuts
                   ├── storage.js     BoardRepository over Web Storage
                   ├── supabase-repository.js  the same contract over Postgres
@@ -209,6 +212,33 @@ in world units and scales with the canvas, while affordances (selection ring,
 handles, hairlines) are counter-scaled by a `--z` custom property so they stay
 constant on screen at any zoom.
 
+### Exporting a picture
+
+Nothing in a browser turns a live DOM subtree into an image. `foreignObject`
+comes closest and renders inconsistently outside a browser, and the libraries
+that do it properly are libraries, which the canvas layer does not have. So the
+export draws the store a **second time**, in 2D context calls.
+
+That is a second renderer, and the cost is real: how an object looks now lives
+in two places. It is kept as small as it can be by making the stylesheet the
+only place colour is decided. `canvas.css` is *read* rather than copied — theme
+tokens off `:root`, and probe elements for the two things a token cannot
+answer, since `--card-bg` is chosen by an attribute selector and the envelope's
+background is a `color-mix` only the browser can resolve. Retuning a colour or
+adding a theme needs no change here; only geometry is restated.
+
+What it deliberately does not reproduce: selection rings, handles and guides,
+which are affordances for someone working rather than part of the document; the
+exact two-layer CSS shadow, because a 2D context has one shadow; and flexbox,
+which lists lay out by hand.
+
+`core/export.js` holds the half that needs no browser — which rectangle the
+picture covers, and how many pixels that is. A board is infinite and a canvas
+is not, so past 8192 pixels a side the scale is reduced rather than the frame
+cropped: a soft picture of the whole board beats a sharp picture of part of one,
+and a browser handed an over-large canvas returns a null blob, which the bar
+reports rather than downloading an empty file.
+
 ---
 
 ## Tests
@@ -262,6 +292,34 @@ of every stored board, and access is not enforced in the client: a `select` with
 no `where` clause is the correct way to ask for "my boards", because the
 policies are what answer it.
 
+Every call answers rather than throws — except the two reads, which reject when
+the store will not answer at all. A write has something honest to fail with and
+a read does not, and both of the values they used to fail with mean something
+else that the caller acts on:
+
+- `[]` from `list()` is also how the repository says *"you have no boards"*, and
+  the board list can only render it as **"No boards yet"**. Answering a failed
+  query with it therefore reported an empty account on the strength of a request
+  that never arrived — which to the person reading it is indistinguishable from
+  having lost everything.
+- `load()` returning `null` is also how the repository says *"there is no such
+  board"*, so `app.js` did what null means and seeded a starter board. Nothing
+  guards the save that follows — a board that was never read has no version to
+  claim — so the starter content landed on top of the document that was there.
+  One edit after a failed read was enough to lose the board.
+
+So `null` from `load()` means the board is genuinely not there, and nothing else.
+A record that will not parse still reads as `null`: that board is unrecoverable
+whatever we do, and reseeding is the right answer to it. In the Web Storage
+repository that distinction is the whole design — junk at a key is a bad record
+and is skipped, so one unparseable board does not sink the list around it, while
+a `getItem` that throws is the store refusing and says nothing about what is in
+it.
+
+`createNullRepository` still answers `[]` and `null`, and that is not the same
+lie: nothing can be read there because nothing was ever written, and no retry
+would change it.
+
 The suites that need a real stack — accounts, the Postgres repository, and the
 live channel — skip without one:
 
@@ -303,6 +361,14 @@ first sign-in that finds them, silently. Two rules make that safe to run again
 after a half-finished attempt: a board the account already has is left alone,
 because the account's copy is the one other people may have edited; and the
 browser keeps its copies, because copying is reversible and deleting is not.
+
+The first of those rules is a question put to the account, so it matters what
+happens when the account cannot be asked. A read that failed is not an answer,
+and taking it for "no, you do not have this board" is how the browser's stale
+copy lands on one other people have edited since. A board that cannot be settled
+is counted unfinished rather than adopted over — the marker stays unset, so the
+next sign-in tries it again, and one bad read does not stop the boards around it
+from moving.
 
 Access is handed back the same way it was given. A board someone shared with
 you is not yours to delete, so its card offers **Leave** where an owned one
@@ -361,8 +427,6 @@ CI fails on any high-severity production advisory.
 
 ## Not built yet
 
-Export.
-
 Ops emitted between reading the snapshot and joining the channel are missed —
 `hydrate()` subscribes after the load, so a change made in that window shows up
 on the next reload rather than immediately.
@@ -377,13 +441,6 @@ is off because HashRouter owns the fragment, so the tokens in a confirmation
 link are never read — the fix is to handle the fragment in the bootstrap,
 before the router mounts. Local dev has `enable_confirmations = false`, so this
 path is not exercised by anything.
-
-Both repositories answer rather than reject, by contract, and the callers now
-survive one anyway — but a repository that *answers* a failed read still lies
-about it. `list()` returns an empty array when the query fails, which the board
-list can only render as "No boards yet". Telling the two apart means the
-contract carrying a failure, not a value, which is a change to both
-implementations and every caller of them.
 
 There is no notification that a board has been shared with you; it simply
 appears in the list.

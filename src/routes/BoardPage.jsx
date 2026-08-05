@@ -31,6 +31,8 @@ export function BoardPage() {
   // mounts the canvas, tearing down and rebuilding the board on every keystroke
   // in the title field.
   const [saveStatus, setSaveStatus] = useState(SAVED);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState(null);
   const app = useRef(null);
   const cancelled = useRef(false);
   /**
@@ -48,6 +50,13 @@ export function BoardPage() {
   useEffect(() => {
     let live = true;
     claimed.current = false;
+
+    // The router reuses this component when only :boardId changes, so anything
+    // said about the last board has to go with it. An export banner left up
+    // would be reporting a failure that belongs to a board no longer on
+    // screen, against a button that would now do something different.
+    setExportError(null);
+    setExporting(false);
 
     titleOf(boardId).then(
       (current) => {
@@ -89,6 +98,42 @@ export function BoardPage() {
   // is for the person who has fixed whatever it was and does not want to wait
   // out the timer to find out.
   const retrySave = () => app.current?.autosave?.flush().catch(() => {});
+
+  /**
+   * Export the board to a PNG.
+   *
+   * `exporting` disables the button for the same reason the list has `busy`:
+   * a large board spends real time in `toBlob`, and a second click would
+   * encode the whole thing again for a file the first click is already
+   * downloading.
+   *
+   * Every way this ends says so. A board with nothing on it and a canvas the
+   * browser refused are both cases where the click produces no file, and a
+   * button that goes quiet is the thing that looks broken.
+   */
+  const exportPng = async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      // The bar renders before the canvas hands its instance back, so this is
+      // reachable — briefly — by a fast click on a slow load. It is its own
+      // message: naming a size or an empty board would be inventing a cause
+      // for something that has not been attempted yet.
+      const board = app.current;
+      if (!board) {
+        setExportError('The board is still opening — try again in a moment.');
+        return;
+      }
+
+      const result = await board.commands.exportPng();
+      if (result === 'empty') setExportError('Nothing to export — this board is empty.');
+      else if (result !== 'ok') setExportError('Could not export this board. It may be too large.');
+    } catch {
+      setExportError('Could not export this board.');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const commit = async () => {
     // Escape blurs the field, and blur() runs onBlur synchronously — before
@@ -145,12 +190,36 @@ export function BoardPage() {
 
         <SaveIndicator status={saveStatus} onRetry={retrySave} />
 
+        <button
+          type="button"
+          data-action="export"
+          disabled={exporting}
+          onClick={exportPng}
+        >
+          {exporting ? 'Exporting…' : 'Export'}
+        </button>
+
         {sharing && (
           <button type="button" data-action="share" onClick={() => setShowShare(true)}>
             Share
           </button>
         )}
       </header>
+
+      {exportError && (
+        <p className="error board-export-error" role="alert" data-export-error>
+          <span>{exportError}</span>
+          {/*
+            Dismissible, unlike the list's errors: this one floats over the
+            canvas rather than sitting above a list, and a red banner parked
+            on someone's board until they happen to try exporting again is
+            not a report, it is furniture.
+          */}
+          <button type="button" data-action="dismiss-export-error" onClick={() => setExportError(null)}>
+            Dismiss
+          </button>
+        </p>
+      )}
 
       {showShare && (
         <ShareDialog
