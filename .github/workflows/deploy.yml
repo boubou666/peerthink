@@ -63,6 +63,12 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          # Also public, and absent by design until there is a key to ship: an
+          # unset variable is an empty string here, readTurnstileConfig answers
+          # null, and the build carries no CAPTCHA at all. Which is exactly
+          # what the missing line above it produced by accident — the site key
+          # was set on the repository and never reached a build.
+          VITE_TURNSTILE_SITE_KEY: ${{ vars.VITE_TURNSTILE_SITE_KEY }}
 
       - uses: actions/configure-pages@v5
 
