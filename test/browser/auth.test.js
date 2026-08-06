@@ -214,6 +214,80 @@ describe('accounts', { skip: origin ? false : 'no local supabase (npx supabase s
     assert.equal(await text('.account-email'), email);
   });
 
+  /**
+   * The bug this pair exists for: signing in from the account menu never
+   * passes through the gate, because the guest was let through long ago. The
+   * pages under it had read their boards on mount and had no reason to read
+   * them again, so the list on screen stayed the one that belonged to whoever
+   * was here before — and a reload was the only way to see your own boards.
+   */
+  test('signing in shows that account\'s boards, with no reload to ask for', async () => {
+    const email = uniqueEmail();
+    const password = 'correct horse';
+
+    await click('[data-action="save-account"]');
+    await submitAccountForm({ email, password });
+    await page.waitFor(`document.querySelector('[data-account="user"]') !== null`);
+
+    // A board of their own, so the assertion below is about this account's
+    // list rather than about any list at all.
+    await click('[data-action="new-board"]');
+    await page.waitFor(`location.hash.startsWith('#/b/')`, { label: 'the new board to open' });
+    const id = (await page.eval('location.hash')).replace('#/b/', '');
+
+    // a second browser: a fresh guest, whose workspace really is empty
+    await page.eval('localStorage.clear()');
+    await page.goto(LIST_PATH, { ready: SIGNED_IN });
+    await page.waitFor(`document.querySelector('[data-empty]') !== null`, {
+      label: 'the guest to settle on an empty list',
+    });
+
+    await click('[data-action="save-account"]');
+    await click('[data-action="switch-mode"]');
+    await submitAccountForm({ email, password });
+
+    // Nothing below reloads: this is the same document that was showing the
+    // guest's empty workspace a moment ago.
+    await page.waitFor(`document.querySelector('[data-board-id="${id}"]') !== null`, {
+      label: 'the board of the account just signed into',
+    });
+    assert.equal(await text('.account-email'), email);
+  });
+
+  /**
+   * And the other half of the same decision. The subtree is rebuilt when the
+   * *user* changes, which is not the same as when the account object changes:
+   * every token refresh publishes a fresh one for the same person, and hourly
+   * is often enough that rebuilding the page under someone would be a bug of
+   * its own. So this refreshes for real and holds the rendered node to it.
+   */
+  test('a refreshed token does not rebuild the page underneath', async () => {
+    await page.eval(`(async () => {
+      const { auth } = await import('/src/shell/auth.js');
+      window.__published = [];
+      auth.subscribe((account) => window.__published.push(account?.id ?? null));
+      window.__shell = document.querySelector('.shell');
+    })()`);
+
+    const failure = await page.eval(`(async () => {
+      const { client } = await import('/src/shell/auth.js');
+      const { error } = await client.auth.refreshSession();
+      return error?.message ?? null;
+    })()`);
+    assert.equal(failure, null, 'the session could not be refreshed');
+
+    // The account really was published again — without this the assertion
+    // below would hold for a page nothing had happened to yet.
+    await page.waitFor('window.__published.length > 0', {
+      label: 'the refreshed session to reach the shell',
+    });
+    assert.equal(
+      await page.eval(`window.__shell === document.querySelector('.shell')`),
+      true,
+      'a token refresh tore the workspace down and built it again',
+    );
+  });
+
   test('an address that is already an account says so, and says what switching costs', async () => {
     const email = uniqueEmail();
     const password = 'correct horse';
