@@ -242,15 +242,27 @@ describe('accounts', { skip: origin ? false : 'no local supabase (npx supabase s
       label: 'the guest to settle on an empty list',
     });
 
+    /**
+     * Left on `window`, which is the one thing a navigation takes with it.
+     * "The board appeared" would be just as true of a shell that answered a
+     * sign-in by reloading the document — and reloading is the workaround
+     * this exists to remove, not the fix. So the marker is what says the
+     * boards arrived in the page that was already open.
+     */
+    await page.eval(`window.__signedInHere = 'the document the guest was looking at'`);
+
     await click('[data-action="save-account"]');
     await click('[data-action="switch-mode"]');
     await submitAccountForm({ email, password });
 
-    // Nothing below reloads: this is the same document that was showing the
-    // guest's empty workspace a moment ago.
     await page.waitFor(`document.querySelector('[data-board-id="${id}"]') !== null`, {
       label: 'the board of the account just signed into',
     });
+    assert.equal(
+      await page.eval('window.__signedInHere ?? null'),
+      'the document the guest was looking at',
+      'the boards arrived by way of a reload',
+    );
     assert.equal(await text('.account-email'), email);
   });
 
