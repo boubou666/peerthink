@@ -81,10 +81,18 @@ button.link:hover { color: var(--ink); }
 /*
  * Where a CAPTCHA challenge appears.
  *
- * Empty for all but a handful of visits — `:empty` rather than a fixed zero
- * height, so the reserved space appears with the widget instead of leaving a
- * gap in every gate that is never challenged. Cloudflare injects an iframe as
- * a child, which stops it matching :empty and brings the margin with it.
+ * No margin here, deliberately. `captcha()` attaches its container before
+ * Cloudflare has decided whether to show anything, so this element is
+ * non-empty for the length of every token fetch — and with
+ * `appearance: 'interaction-only'` almost every one of those is silent.
+ * Spacing on the wrapper would be reserved for an invisible widget and then
+ * taken away again: a gap that flickers into the gate on each sign-in,
+ * including the one behind "Loading…" on a first visit. Whatever room a
+ * visible challenge needs comes from the widget Cloudflare renders, which is
+ * the only thing that knows it is visible.
+ *
+ * `:empty` still earns its place: with no site key there is no container and
+ * no call at all, which is every test and every local dev server.
  *
  * The widget is 300px wide and the gate column is 340px, so it fits without
  * scaling; `overflow-x: auto` is for the narrow-phone case rather than this
@@ -94,7 +102,6 @@ button.link:hover { color: var(--ink); }
 .captcha-mount {
   display: flex;
   justify-content: center;
-  margin: 14px 0 4px;
   overflow-x: auto;
 }
 

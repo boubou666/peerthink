@@ -229,6 +229,19 @@ describe('accounts', { skip: origin ? false : 'no local supabase (npx supabase s
       const r = probe.getBoundingClientRect();
       el.removeChild(probe);
 
+      // What a silent token looks like: captcha() attaches its container
+      // before Cloudflare decides anything, and an interaction-only widget
+      // that is never challenged stays invisible inside it. The gate must not
+      // move — reserving space on the wrapper would flicker a gap in on every
+      // sign-in, including the one behind "Loading…" on a first visit.
+      const gate = document.querySelector('[data-account-gate]');
+      const settled = gate.getBoundingClientRect().height;
+      const silent = document.createElement('div');
+      silent.style.cssText = 'display:none';
+      el.appendChild(silent);
+      const duringSilentToken = gate.getBoundingClientRect().height;
+      el.removeChild(silent);
+
       return {
         inGate: Boolean(el.closest('[data-account-gate]')),
         emptyHeight: empty,
@@ -236,6 +249,8 @@ describe('accounts', { skip: origin ? false : 'no local supabase (npx supabase s
         bottom: r.bottom,
         onScreen: r.top >= 0 && r.bottom <= window.innerHeight,
         viewport: window.innerHeight,
+        settled,
+        duringSilentToken,
       };
     })()`);
 
@@ -246,6 +261,11 @@ describe('accounts', { skip: origin ? false : 'no local supabase (npx supabase s
       mount.onScreen,
       true,
       `a challenge would render at y=${mount.top}–${mount.bottom}, outside a ${mount.viewport}px viewport`,
+    );
+    assert.equal(
+      mount.duringSilentToken,
+      mount.settled,
+      'the gate changes height while a silent token is taken — the mount reserves space for a widget nobody can see',
     );
   });
 
