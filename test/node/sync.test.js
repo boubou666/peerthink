@@ -378,17 +378,6 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
     });
   });
 
-  test('PROBE: what a timeout reports (removed before merge)', async () => {
-    const id = await sharedBoard();
-    const hers = await join(alice, id);
-    const his = await join(bob, id);
-    hers.store.apply([{ t: 'add', obj: card('c1', 'probe') }]);
-    hers.scheduler.flushTimers();
-    await waitFor(() => false, 'something that never happens', 800);
-    await hers.sync.destroy();
-    await his.sync.destroy();
-  });
-
   test('the topic is the board, and nothing else', () => {
     assert.equal(topicFor('abc123'), 'board:abc123');
   });
