@@ -91,7 +91,8 @@ export async function launchChrome({ userDataDir, timeout = 60_000 }) {
     ].filter(Boolean).join('\n'));
   };
 
-  const deadline = Date.now() + timeout;
+  const started = Date.now();
+  const deadline = started + timeout;
   for (;;) {
     // Checked before the port file: a process that is gone is never going to
     // write one, and waiting out the deadline to say so buries the reason.
@@ -105,7 +106,11 @@ export async function launchChrome({ userDataDir, timeout = 60_000 }) {
     // binds, writes its port and then says nothing, this ran past twelve
     // seconds on a two-second deadline before the signal was added.
     const left = deadline - Date.now();
-    if (left <= 0) throw giveUp(`Chromium did not answer within ${timeout}ms.`);
+    // Reported as time actually spent, not as the deadline asked for. A last
+    // probe is allowed to finish (see the floor below), so the two differ by
+    // up to that floor — and a message that rounds its own overshoot away is
+    // the kind that gets believed when the next timing question comes up.
+    if (left <= 0) throw giveUp(`Chromium did not answer within ${Date.now() - started}ms.`);
 
     // The first line is the port; the second is the browser's websocket path.
     // The file appears when the socket is bound, which is a moment before the
@@ -114,8 +119,11 @@ export async function launchChrome({ userDataDir, timeout = 60_000 }) {
     if (port) {
       const base = `http://127.0.0.1:${port}`;
       try {
-        // Capped by what is left, so one probe can never outlive the deadline,
-        // and floored so the last attempt is still a real attempt.
+        // Capped by what is left, and floored so the last attempt is a real
+        // attempt: a probe given the 3ms that happen to remain aborts on
+        // arrival and tells us nothing, which is a worse answer than one that
+        // runs 250ms past a 60s deadline. The overshoot is bounded by the
+        // floor and shows up in the message above rather than being hidden.
         const signal = AbortSignal.timeout(Math.max(250, Math.min(2_000, left)));
         await (await fetch(`${base}/json/version`, { signal })).json();
         return { child, base };
@@ -124,6 +132,8 @@ export async function launchChrome({ userDataDir, timeout = 60_000 }) {
       }
     }
 
-    await new Promise((r) => setTimeout(r, 50));
+    // Never sleeps past the deadline: the next thing this loop does is decide
+    // whether to give up, and there is no reason to spend 50ms first.
+    await new Promise((r) => setTimeout(r, Math.max(0, Math.min(50, deadline - Date.now()))));
   }
 }
