@@ -32,7 +32,20 @@ describe('shell', () => {
     return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
   })()`);
 
+  /**
+   * Wait for the target before clicking it, rather than querying once.
+   *
+   * `goto` waits for `.shell`, and the account gate's "Loading…" screen is a
+   * `.shell` too — so a navigation resolves while the gate is still up and the
+   * page underneath has not rendered. Asserting on the first query turns that
+   * ordinary gap into "no element matched", which is the shape every flake
+   * this suite has thrown has had. Assertions about the list already go
+   * through `settle()`; this is the same patience for the clicks between them.
+   */
   const clickOn = async (sel) => {
+    await page.waitFor(`document.querySelector(${JSON.stringify(sel)}) !== null`, {
+      label: `element ${sel}`,
+    });
     const box = await boxOf(sel);
     assert.ok(box, `no element matched ${sel}`);
     await page.click(box.cx, box.cy);
