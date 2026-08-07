@@ -80,7 +80,15 @@ describe('export', () => {
       return -1;
     };
 
-    return await (${probes})({ at, swatch, palette, frame, lastInkedRow });
+    /** Every pixel as [r, g, b], row-major — for probes about where paint is. */
+    const pixels = (() => {
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const out = [];
+      for (let i = 0; i < data.length; i += 4) out.push([data[i], data[i + 1], data[i + 2]]);
+      return out;
+    })();
+
+    return await (${probes})({ at, swatch, palette, frame, lastInkedRow, pixels });
   })()`);
 
   test('the page background is the background', async () => {
@@ -108,6 +116,63 @@ describe('export', () => {
 
       assert.deepEqual(result.middle, result.expected, `a ${color} card came out another colour`);
     }
+  });
+
+  /**
+   * A picture of the board has to agree with the board. These are the fields
+   * the format bar writes; each one is read back out of the stylesheet by
+   * `readPalette`, so what is checked is that the drawing uses the card's own
+   * token rather than a default.
+   */
+  describe('a card that has been formatted', () => {
+    test('is filled with its own colour', async () => {
+      const result = await painted(
+        [{ id: 'a', type: 'card', x: 0, y: 0, w: 60, h: 40, fill: 'pink' }],
+        `({ at, swatch, palette }) => ({ middle: at(30, 20), expected: swatch(palette.card.pink) })`,
+      );
+      assert.deepEqual(result.middle, result.expected);
+    });
+
+    /** Transparent means the paper is not drawn — and neither is its shadow. */
+    test('is not drawn at all when its fill is transparent', async () => {
+      const result = await painted(
+        [{ id: 'a', type: 'card', x: 0, y: 0, w: 60, h: 40, fill: 'none' }],
+        `({ at, swatch, palette }) => ({ middle: at(30, 20), expected: swatch(palette.bg) })`,
+      );
+      assert.deepEqual(result.middle, result.expected, 'a transparent card left paint behind');
+    });
+
+    test('draws its text in its own colour', async () => {
+      // Enough text, large, to be sure of hitting ink rather than paper.
+      const result = await painted(
+        [{ id: 'a', type: 'card', x: 0, y: 0, w: 120, h: 60, text: '████', fill: 'white', ink: 'red', size: 'xl' }],
+        `({ pixels, swatch, palette }) => ({
+          hasRed: pixels.some(([r, g, b]) => Math.abs(r - swatch(palette.cardInk.red)[0]) < 12
+            && Math.abs(g - swatch(palette.cardInk.red)[1]) < 12
+            && Math.abs(b - swatch(palette.cardInk.red)[2]) < 12),
+        })`,
+      );
+      assert.equal(result.hasRed, true, 'the card was drawn without its text colour');
+    });
+
+    test('centres its text when it is told to', async () => {
+      const ink = (align) => painted(
+        [{ id: 'a', type: 'card', x: 0, y: 0, w: 160, h: 40, text: 'xx', fill: 'white', align, size: 'xl' }],
+        `({ pixels, frame }) => ({
+          columns: pixels
+            .map(([r, g, b], i) => (r + g + b < 300 ? i % frame.width : null))
+            .filter((c) => c !== null),
+        })`,
+      );
+
+      const left = (await ink('left')).columns;
+      const centre = (await ink('center')).columns;
+      const right = (await ink('right')).columns;
+
+      assert.ok(left.length && centre.length && right.length, 'no text was drawn');
+      assert.ok(Math.min(...centre) > Math.min(...left), 'centred text started no further right than left-aligned');
+      assert.ok(Math.min(...right) > Math.min(...centre), 'right-aligned text started no further right than centred');
+    });
   });
 
   test('a card with no colour is drawn as yellow, like the DOM', async () => {

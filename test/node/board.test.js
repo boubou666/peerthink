@@ -46,14 +46,22 @@ describe('Board', () => {
     });
 
     test('cards cycle through the palette and then wrap', () => {
-      const colors = Array.from({ length: CARD_COLORS.length + 1 }, () => at('card').color);
+      const colors = Array.from({ length: CARD_COLORS.length + 1 }, () => at('card').fill);
       assert.deepEqual(colors.slice(0, CARD_COLORS.length), CARD_COLORS);
       assert.equal(colors.at(-1), CARD_COLORS[0]);
     });
 
     test('an explicit colour does not consume a palette slot', () => {
-      at('card', { color: 'pink' });
-      assert.equal(at('card').color, CARD_COLORS[0]);
+      at('card', { fill: 'pink' });
+      assert.equal(at('card').fill, CARD_COLORS[0]);
+    });
+
+    /** A board written before the field was renamed still names its colour. */
+    test('a card given the old `color` is left with it, and keeps its slot', () => {
+      const card = at('card', { color: 'pink' });
+      assert.equal(card.color, 'pink');
+      assert.equal(card.fill, undefined, 'the old field was quietly duplicated');
+      assert.equal(at('card').fill, CARD_COLORS[0], 'an explicit colour consumed a palette slot');
     });
 
     test('lists start with one empty row unless given items', () => {

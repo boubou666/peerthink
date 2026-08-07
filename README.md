@@ -18,7 +18,7 @@ npm start        # serve the built site
 | | |
 |---|---|
 | **Boards** | Many per workspace — listed, renamed, deleted; the board id lives in the URL |
-| **Cards** | Coloured notes with editable text, resizable from eight handles |
+| **Cards** | Notes with editable text, resizable from eight handles — and formattable: fill (transparent included), text colour, font, size and alignment |
 | **Envelopes** | Grouping containers — dragging one carries everything fully inside it, transitively |
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
@@ -35,6 +35,7 @@ npm start        # serve the built site
 | Select | Click, `Shift`-click, or drag a marquee on empty canvas |
 | Edit | Double-click any text |
 | Create | `C` / `E` / `L`, the toolbar, or double-click empty canvas |
+| Format | Select cards; a bar appears above them with fill, text colour, font, size and alignment |
 | Snapping | On by default; hold `Alt` to disable |
 | Undo / redo | `⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z` |
 | Fit / reset zoom | `Shift+1` / `Shift+0` |
@@ -62,6 +63,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
               │   ├── scheduler.js   timing, behind an interface
               │   ├── geometry.js    rectangle maths
               │   ├── ids.js         id generation
+              │   ├── card-style.js  how a card looks, as tokens
               │   └── seed.js        the starter board
               └── platform/   the browser. Adapters, nothing else.
                   ├── renderer.js    reconciles the store into the DOM

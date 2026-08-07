@@ -25,8 +25,13 @@
  *     DOM for the shapes a list can actually take.
  */
 
-/** Mirrors the `data-color` values `canvas.css` gives a card. */
-export const CARD_COLORS = ['yellow', 'blue', 'green', 'pink', 'white'];
+import {
+  CARD_FILLS,
+  CARD_FONTS,
+  CARD_INKS,
+  CARD_SIZES,
+  cardStyle,
+} from '../core/card-style.js';
 
 /**
  * How long the object URL is kept alive as a backstop, in ms. Long enough that
@@ -88,13 +93,47 @@ export function createPngExporter({ document, window }) {
       return read;
     };
 
-    const card = {};
-    for (const name of CARD_COLORS) {
-      card[name] = probe('obj card', (el) => { el.dataset.color = name; }).background;
-    }
-    // Cards keep a light background in either theme, so their text colour is
-    // fixed in the stylesheet rather than following --ink. Read, not assumed.
-    const cardInk = probe('obj card', (el) => { el.dataset.color = 'yellow'; }).color;
+    /**
+     * Every card style token, read from the stylesheet that defines it.
+     *
+     * The same reason the fills were probed rather than listed: the values
+     * live in canvas.css, two themes disagree about them, and a copy here is
+     * one that drifts. Fonts and sizes are read the same way — a `14px` in
+     * this file would be a second answer to a question the stylesheet has
+     * already answered.
+     *
+     * The text is probed rather than the card, because font-size, family,
+     * colour and alignment are all set on `.card-text` inside it.
+     */
+    const cardProbe = (field, value) => {
+      const el = document.createElement('div');
+      el.className = 'obj card';
+      el.dataset[field] = value;
+      const text = document.createElement('div');
+      text.className = 'card-text';
+      el.appendChild(text);
+      host.appendChild(el);
+
+      const outer = window.getComputedStyle(el);
+      const inner = window.getComputedStyle(text);
+      const read = {
+        background: outer.backgroundColor,
+        color: inner.color,
+        family: inner.fontFamily,
+        size: parseFloat(inner.fontSize),
+        align: inner.textAlign,
+      };
+      el.remove();
+      return read;
+    };
+
+    const styleOf = (field, values, pick) =>
+      Object.fromEntries(values.map((value) => [value, pick(cardProbe(field, value))]));
+
+    const card = styleOf('fill', CARD_FILLS, (read) => read.background);
+    const cardInk = styleOf('ink', CARD_INKS, (read) => read.color);
+    const cardFamily = styleOf('font', CARD_FONTS, (read) => read.family);
+    const cardSize = styleOf('size', CARD_SIZES, (read) => read.size);
     const envelope = probe('obj envelope');
     const family = window.getComputedStyle(document.body).fontFamily;
 
@@ -109,6 +148,8 @@ export function createPngExporter({ document, window }) {
       panel: token('--panel'),
       card,
       cardInk,
+      cardFamily,
+      cardSize,
       envelopeBg: envelope.background,
       envelopeBorder: envelope.border,
       family,
@@ -164,7 +205,7 @@ export function createPngExporter({ document, window }) {
    * Returns the height the text actually took, which is what lets a list stack
    * its rows without laying them out twice.
    */
-  const drawText = (ctx, text, box, { size, weight = 400, color, family, strike = false }) => {
+  const drawText = (ctx, text, box, { size, weight = 400, color, family, strike = false, align = 'left' }) => {
     const lineHeight = size * (box.line ?? 1.4);
     ctx.save();
     ctx.beginPath();
@@ -175,15 +216,28 @@ export function createPngExporter({ document, window }) {
     ctx.fillStyle = color;
     ctx.textBaseline = 'alphabetic';
 
+    /**
+     * Alignment is done by moving each line rather than by `ctx.textAlign`,
+     * because the strike-through below measures from where the line starts and
+     * would otherwise be drawn through empty space. Per line, not per block:
+     * that is what centring text means, and what the DOM does.
+     */
+    const startOf = (width) => {
+      if (align === 'center') return box.x + (box.w - width) / 2;
+      if (align === 'right') return box.x + box.w - width;
+      return box.x;
+    };
+
     const lines = wrap(ctx, text, box.w);
     let y = box.y;
     for (const line of lines) {
       // The baseline sits inside the line box the way a browser puts it.
       const baseline = y + lineHeight / 2 + size * 0.36;
-      ctx.fillText(line, box.x, baseline);
+      const left = startOf(ctx.measureText(line).width);
+      ctx.fillText(line, left, baseline);
       if (strike && line) {
         const width = ctx.measureText(line).width;
-        ctx.fillRect(box.x, y + lineHeight / 2 - size * 0.05, width, Math.max(1, size / 14));
+        ctx.fillRect(left, y + lineHeight / 2 - size * 0.05, width, Math.max(1, size / 14));
       }
       y += lineHeight;
     }
@@ -212,9 +266,20 @@ export function createPngExporter({ document, window }) {
   };
 
   const drawCard = (ctx, obj, palette) => {
-    rounded(ctx, obj.x, obj.y, obj.w, obj.h, RADIUS);
-    ctx.fillStyle = palette.card[obj.color] ?? palette.card.yellow;
-    shadowed(ctx, () => ctx.fill());
+    const style = cardStyle(obj);
+
+    /**
+     * A transparent card is not drawn at all — no fill and no shadow, since a
+     * shadow is cast by paper that is not there. The dashed outline the canvas
+     * gives it is deliberately not drawn either: it is there to make an empty
+     * one findable while editing, and a picture of a board should show what is
+     * on the board rather than the scaffolding for putting it there.
+     */
+    if (style.fill !== 'none') {
+      rounded(ctx, obj.x, obj.y, obj.w, obj.h, RADIUS);
+      ctx.fillStyle = palette.card[style.fill] ?? palette.card.yellow;
+      shadowed(ctx, () => ctx.fill());
+    }
 
     drawText(
       ctx,
@@ -226,7 +291,12 @@ export function createPngExporter({ document, window }) {
         h: obj.h - CARD.pad * 2,
         line: CARD.line,
       },
-      { size: CARD.size, color: palette.cardInk, family: palette.family },
+      {
+        size: palette.cardSize[style.size] ?? CARD.size,
+        color: palette.cardInk[style.ink] ?? palette.cardInk.ink,
+        family: palette.cardFamily[style.font] ?? palette.family,
+        align: style.align,
+      },
     );
   };
 

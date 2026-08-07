@@ -8,6 +8,8 @@
  *
  * Rule for every `update`: never write to the field the user is focused on.
  */
+
+import { CARD_STYLE_FIELDS, cardStyle } from '../core/card-style.js';
 export function createViews({ document }) {
   const element = (html) => {
     const template = document.createElement('template');
@@ -36,7 +38,11 @@ export function createViews({ document }) {
         <div class="card-text" contenteditable="true" data-field="text"></div>
       </div>`),
       update(el, obj) {
-        el.dataset.color = obj.color ?? 'yellow';
+        // One attribute per style field, resolved through cardStyle so an
+        // unknown token from a newer client falls back instead of matching no
+        // rule at all — which would draw a card with no background.
+        const style = cardStyle(obj);
+        for (const field of CARD_STYLE_FIELDS) el.dataset[field] = style[field];
         setText(el.querySelector('[data-field="text"]'), obj.text);
       },
     },

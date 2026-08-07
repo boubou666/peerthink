@@ -10,7 +10,10 @@ import { bbox, rectContains, rectsIntersect } from './geometry.js';
  */
 
 export const OBJECT_DEFAULTS = {
-  card: () => ({ w: 200, h: 120, text: '', color: 'yellow' }),
+  // No `fill`: the palette cycle in add() gives one, and a card made without
+  // it renders the default from core/card-style.js. A literal here would also
+  // win over a board's older `color`, painting a pink card yellow.
+  card: () => ({ w: 200, h: 120, text: '' }),
   envelope: () => ({ w: 440, h: 320, title: 'Envelope' }),
   list: () => ({ w: 260, h: 230, title: 'List', items: [] }),
 };
@@ -49,8 +52,11 @@ export class Board {
    */
   add(type, props = {}) {
     const obj = this.make(type, props);
-    if (type === 'card' && props.color === undefined) {
-      obj.color = this.colors[this.colorCursor++ % this.colors.length];
+    // `fill`, which is what the style vocabulary calls it. `color` is still
+    // read when a board carries it — see core/card-style.js — but nothing
+    // writes it any more.
+    if (type === 'card' && props.fill === undefined && props.color === undefined) {
+      obj.fill = this.colors[this.colorCursor++ % this.colors.length];
     }
     if (type === 'list' && props.items === undefined) obj.items = [this.newItem()];
 

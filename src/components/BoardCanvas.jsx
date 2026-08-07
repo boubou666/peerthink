@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createApp } from '../app.js';
 import { repository } from '../shell/storage.js';
 import { createSync } from '../shell/sync.js';
+import { FormatBar } from './FormatBar.jsx';
 import { Toolbar } from './Toolbar.jsx';
 
 /**
@@ -104,6 +105,7 @@ export function BoardCanvas({ boardId, onReady, onSaveStatus }) {
       </div>
 
       {app && <Toolbar app={app} />}
+      {app && <FormatBar app={app} stage={stage.current} />}
 
       <div id="hint">
         drag empty space to select · space or middle-drag to pan · ⌘/ctrl+wheel to zoom · double-click to edit

@@ -21,16 +21,57 @@ describe('views', () => {
   const html = (id, sel) => page.eval(`document.querySelector('[data-id="${id}"] ${sel}')?.textContent ?? null`);
 
   describe('card', () => {
-    test('renders its text and colour', async () => {
-      const id = await add('card', { x: 0, y: 0, text: 'hello', color: 'blue' });
+    const styleOf = (id) => page.eval(`(() => {
+      const el = document.querySelector('[data-id="${id}"]');
+      return { ...el.dataset };
+    })()`);
+
+    test('renders its text and its style', async () => {
+      const id = await add('card', {
+        x: 0, y: 0, text: 'hello', fill: 'blue', ink: 'red', font: 'mono', size: 'xl', align: 'center',
+      });
       assert.equal(await html(id, '[data-field="text"]'), 'hello');
-      assert.equal(await page.eval(`document.querySelector('[data-id="${id}"]').dataset.color`), 'blue');
+
+      const style = await styleOf(id);
+      assert.equal(style.fill, 'blue');
+      assert.equal(style.ink, 'red');
+      assert.equal(style.font, 'mono');
+      assert.equal(style.size, 'xl');
+      assert.equal(style.align, 'center');
     });
 
-    test('falls back to yellow when no colour is set', async () => {
+    test('falls back to the defaults when nothing is set', async () => {
       const id = await add('card', { x: 0, y: 0 });
-      await page.eval(`app.store.apply([{t:'set', id:"${id}", patch:{color: undefined}}], false)`);
-      assert.equal(await page.eval(`document.querySelector('[data-id="${id}"]').dataset.color`), 'yellow');
+      await page.eval(`app.store.apply([{t:'set', id:"${id}", patch:{color: undefined, fill: undefined}}], false)`);
+
+      const style = await styleOf(id);
+      assert.equal(style.fill, 'yellow');
+      assert.equal(style.ink, 'ink');
+      assert.equal(style.font, 'sans');
+      assert.equal(style.size, 'md');
+      assert.equal(style.align, 'left');
+    });
+
+    /** Boards written before the field was renamed are still out there. */
+    test('a card that only has the old `color` still gets its colour', async () => {
+      const id = await add('card', { x: 0, y: 0 });
+      await page.eval(`app.store.apply([{t:'set', id:"${id}", patch:{fill: undefined, color: 'pink'}}], false)`);
+
+      assert.equal((await styleOf(id)).fill, 'pink');
+      const painted = await page.eval(
+        `getComputedStyle(document.querySelector('[data-id="${id}"]')).backgroundColor`,
+      );
+      assert.equal(painted, 'rgb(255, 196, 214)', 'the old attribute selector no longer paints');
+    });
+
+    test('a transparent card paints nothing, and still shows its text', async () => {
+      const id = await add('card', { x: 0, y: 0, text: 'floating', fill: 'none' });
+
+      const painted = await page.eval(
+        `getComputedStyle(document.querySelector('[data-id="${id}"]')).backgroundColor`,
+      );
+      assert.equal(painted, 'rgba(0, 0, 0, 0)');
+      assert.equal(await html(id, '[data-field="text"]'), 'floating');
     });
 
     test('a store change repaints the text', async () => {

@@ -185,7 +185,7 @@ describe('app shell', () => {
       for (let i = 0; i < 6; i++) {
         await clickButton('[data-add="card"]');
         await page.eval('document.activeElement?.blur?.()');
-        colors.push(await page.eval('app.store.all().at(-1).color'));
+        colors.push(await page.eval('app.store.all().at(-1).fill'));
       }
       assert.equal(new Set(colors).size, 5, 'five distinct colours');
       assert.equal(colors[0], colors[5], 'then it wraps');
