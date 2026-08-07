@@ -451,8 +451,21 @@ link are never read — the fix is to handle the fragment in the bootstrap,
 before the router mounts. Local dev has `enable_confirmations = false`, so this
 path is not exercised by anything.
 
-There is no notification that a board has been shared with you; it simply
-appears in the list.
+There is no notification when a board is shared with you, and there cannot
+usefully be one from this side: sharing is self-initiated. An owner creates a
+link, the recipient opens it, and `JoinPage` redeems the token and navigates
+them straight onto the board — so on that device nothing appeared unannounced.
+A board *can* still turn up unasked in two ways: the same account on a second
+device finds one it joined elsewhere, and `board_members_insert` checks only
+`board_role(board_id) = 'owner'` with no constraint on `user_id`, so an owner
+may add anyone directly — which the policies permit and no screen does.
+
+Both are covered by marking boards this browser has not shown for this account,
+rather than by claiming to know that somebody shared one. The record is per
+account in Web Storage; the first look at a workspace seeds it rather than
+announcing everything, and opening a board is what clears its badge. What is
+not built is anything that reaches a person who is not looking at the app —
+that needs a channel out, and the only one available needs SMTP.
 
 The toolbar is still imperative rather than a React component; converting it
 needs `useSyncExternalStore` over the store and viewport.

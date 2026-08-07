@@ -100,9 +100,19 @@ describe('shell', () => {
 
   const settle = () => page.waitFor(listSettled, { label: 'the board list to settle' });
 
+  /**
+   * The board's name, without the "New" badge that shares its element.
+   *
+   * The badge sits inside the title so that a long name wraps and takes it
+   * along rather than colliding with something pinned to a corner — which
+   * means `textContent` here would read "Alpha New" for a board this browser
+   * has not shown yet. `firstChild` is the title's own text node.
+   */
   const titles = async () => {
     await settle();
-    return page.eval(`[...document.querySelectorAll('.board-card-title')].map(el => el.textContent)`);
+    return page.eval(
+      `[...document.querySelectorAll('.board-card-title')].map(el => el.firstChild?.textContent ?? '')`,
+    );
   };
 
   const showsEmptyState = async () => {
@@ -158,6 +168,71 @@ describe('shell', () => {
       assert.match(await hash(), /^#\/b\/.+/, 'navigated to the new board');
       assert.equal(await page.eval('Boolean(window.app?.store)'), true, 'the canvas mounted');
       assert.equal(await page.eval('app.store.order.length'), 0, 'a new board starts empty, not seeded');
+    });
+
+    /**
+     * A board can turn up in the list with nothing having announced it: the
+     * same account on a second device finds one it joined elsewhere, and an
+     * owner may add a member directly, which the policies permit. The badge
+     * says "you have not opened this here", which is the only claim this side
+     * can actually make.
+     */
+    describe('a board that turned up', () => {
+      const badges = () =>
+        page.eval(`[...document.querySelectorAll('.board-card')]
+          .filter((card) => card.querySelector('[data-new]'))
+          .map((card) => card.dataset.boardId)`);
+
+      /** Put a board in storage without this browser ever having shown it. */
+      const plant = (id, title) => page.eval(`(() => {
+        const board = { v: 1, order: [], objects: [] };
+        localStorage.setItem('peerthink:board:${id}', JSON.stringify(
+          { v: 1, id: '${id}', title: ${JSON.stringify(title)}, updatedAt: 3, board },
+        ));
+      })()`);
+
+      test('is marked, and the ones already here are not', async () => {
+        await newBoard();
+        await page.goto(LIST_PATH);
+        await settle();
+        assert.deepEqual(await badges(), [], 'a board this browser made was called new');
+
+        await plant('gamma', 'From somebody else');
+        await page.goto(LIST_PATH);
+        await settle();
+
+        assert.deepEqual(await badges(), ['gamma']);
+      });
+
+      test('stops being marked once it is opened', async () => {
+        await newBoard();
+        await page.goto(LIST_PATH);
+        await settle();
+
+        await plant('gamma', 'From somebody else');
+        await page.goto(LIST_PATH);
+        await settle();
+        assert.deepEqual(await badges(), ['gamma']);
+
+        await clickAndWaitFor('[data-board-id="gamma"] .board-card-open', onCanvas, 'the board to open');
+        await page.goto(LIST_PATH);
+        await settle();
+
+        assert.deepEqual(await badges(), [], 'opening a board did not clear its badge');
+      });
+
+      test('the first look at a workspace marks nothing', async () => {
+        // Everything already there is the workspace, not news. This is the
+        // visit where the badge would be loudest and least useful.
+        await page.eval('localStorage.clear()');
+        await plant('alpha', 'Alpha');
+        await plant('beta', 'Beta');
+        await page.goto(LIST_PATH);
+        await settle();
+
+        assert.deepEqual(await titles(), ['Alpha', 'Beta']);
+        assert.deepEqual(await badges(), []);
+      });
     });
 
     test('a created board shows up in the list, with its id in the route', async () => {
