@@ -68,7 +68,6 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
                   ├── input.js       pointer and keyboard gestures
                   ├── views.js       per-type markup
                   ├── export-png.js  the same objects, drawn to a canvas
-                  ├── toolbar.js     buttons and view shortcuts
                   ├── storage.js     BoardRepository over Web Storage
                   ├── supabase-repository.js  the same contract over Postgres
                   ├── lifecycle.js   the last write before the tab goes
@@ -95,6 +94,12 @@ useEffect(() => {
 That works because `createApp` takes its elements as an argument. Handing it
 refs is the entire integration between the framework and the canvas, and
 `destroy()` — which unwinds listeners, observers and elements — is the cleanup.
+
+The line is drawn at frame rate, not at the edge of the canvas. The toolbar is
+a React component (`components/Toolbar.jsx`) reading the store and the viewport
+through `useSyncExternalStore`, because it *shows state* — a zoom percentage,
+and whether there is history to walk — and changes only when that state does.
+The stage underneath stays imperative because it redraws on every pointer move.
 
 ### Everything is injected
 
@@ -466,9 +471,6 @@ account in Web Storage; the first look at a workspace seeds it rather than
 announcing everything, and opening a board is what clears its badge. What is
 not built is anything that reaches a person who is not looking at the app —
 that needs a channel out, and the only one available needs SMTP.
-
-The toolbar is still imperative rather than a React component; converting it
-needs `useSyncExternalStore` over the store and viewport.
 
 Routing is hash-based (`/#/b/:id`) because GitHub Pages has no SPA rewrite.
 Moving to a host that can serve `index.html` for any path makes that a one-line

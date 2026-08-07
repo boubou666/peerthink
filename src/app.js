@@ -12,7 +12,6 @@ import { exportFrame, fileName } from './core/export.js';
 import { createViews } from './platform/views.js';
 import { createRenderer } from './platform/renderer.js';
 import { createInput } from './platform/input.js';
-import { createToolbar } from './platform/toolbar.js';
 import { createCursors } from './platform/cursors.js';
 import { createFlushOnHide } from './platform/lifecycle.js';
 import { createPngExporter } from './platform/export-png.js';
@@ -121,7 +120,6 @@ export function createApp({
   const views = createViews({ document });
   const renderer = createRenderer({ document, elements: dom, store, viewport, selection, views, scheduler: clock, ResizeObserver });
   const input = createInput({ document, window, elements: dom, store, selection, viewport, board, commands });
-  const toolbar = createToolbar({ window, elements: dom, store, viewport, commands });
 
   let autosave = null;
   let sync = null;
@@ -312,7 +310,6 @@ export function createApp({
     commands,
     renderer,
     input,
-    toolbar,
     exporter,
     repository: boardRepository,
     autosave,
@@ -326,7 +323,6 @@ export function createApp({
       cursors?.destroy();
       // leaves the channel; the promise is nobody's to wait for
       sync?.destroy();
-      toolbar.destroy();
       input.destroy();
       renderer.destroy();
     },

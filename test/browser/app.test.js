@@ -36,7 +36,6 @@ describe('createApp', () => {
     host.innerHTML = [
       '<div id="s-stage" style="position:relative;width:800px;height:600px"><div id="s-bg"></div>',
       '<div id="s-layer"></div><div id="s-overlay"></div></div>',
-      '<div id="s-toolbar"><button data-add="card"></button></div><span id="s-zoom"></span>',
     ].join('');
     document.body.appendChild(host);
 
@@ -45,8 +44,6 @@ describe('createApp', () => {
       bg: host.querySelector('#s-bg'),
       layer: host.querySelector('#s-layer'),
       overlay: host.querySelector('#s-overlay'),
-      toolbar: host.querySelector('#s-toolbar'),
-      zoomLabel: host.querySelector('#s-zoom'),
     };
 
     const second = createApp({ document, window, elements, ${options} });
@@ -213,7 +210,6 @@ describe('createApp', () => {
       host.innerHTML = [
         '<div id="e-stage" style="position:relative;width:800px;height:600px"><div id="e-bg"></div>',
         '<div id="e-layer"></div><div id="e-overlay"></div></div>',
-        '<div id="e-toolbar"><button data-add="card"></button></div><span id="e-zoom"></span>',
       ].join('');
       document.body.appendChild(host);
 
@@ -222,8 +218,6 @@ describe('createApp', () => {
         bg: host.querySelector('#e-bg'),
         layer: host.querySelector('#e-layer'),
         overlay: host.querySelector('#e-overlay'),
-        toolbar: host.querySelector('#e-toolbar'),
-        zoomLabel: host.querySelector('#e-zoom'),
       };
 
       const stored = { v: 1, order: ['saved'], objects: [
@@ -269,7 +263,6 @@ describe('createApp', () => {
       host.innerHTML = [
         '<div id="c-stage" style="position:relative;width:800px;height:600px"><div id="c-bg"></div>',
         '<div id="c-layer"></div><div id="c-overlay"></div></div>',
-        '<div id="c-toolbar"><button data-add="card"></button></div><span id="c-zoom"></span>',
       ].join('');
       document.body.appendChild(host);
 
@@ -278,8 +271,6 @@ describe('createApp', () => {
         bg: host.querySelector('#c-bg'),
         layer: host.querySelector('#c-layer'),
         overlay: host.querySelector('#c-overlay'),
-        toolbar: host.querySelector('#c-toolbar'),
-        zoomLabel: host.querySelector('#c-zoom'),
       };
 
       const writes = [];
@@ -367,7 +358,6 @@ describe('createApp', () => {
       host.innerHTML = [
         '<div id="d-stage" style="position:relative;width:800px;height:600px"><div id="d-bg"></div>',
         '<div id="d-layer"></div><div id="d-overlay"></div></div>',
-        '<div id="d-toolbar"><button data-add="card"></button></div><span id="d-zoom"></span>',
       ].join('');
       document.body.appendChild(host);
 
@@ -376,14 +366,11 @@ describe('createApp', () => {
         bg: host.querySelector('#d-bg'),
         layer: host.querySelector('#d-layer'),
         overlay: host.querySelector('#d-overlay'),
-        toolbar: host.querySelector('#d-toolbar'),
-        zoomLabel: host.querySelector('#d-zoom'),
       };
 
       const second = createApp({ document, window, elements, storage: null });
       await second.hydrate();
       const rendered = elements.layer.querySelectorAll('.obj').length;
-      const zoomBefore = elements.zoomLabel.textContent;
 
       second.destroy();
       const afterDestroy = elements.layer.querySelectorAll('.obj').length;
@@ -391,15 +378,11 @@ describe('createApp', () => {
       // the torn-down app must not react to anything any more
       second.store.apply([{ t: 'add', obj: second.board.make('card', { x: 0, y: 0 }) }]);
       second.viewport.setScaleAt(0, 0, 3);
-      elements.toolbar.querySelector('button').click();
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: '!', code: 'Digit1', shiftKey: true }));
 
       const result = {
         rendered,
         afterDestroy,
         stillDetached: elements.layer.querySelectorAll('.obj').length,
-        zoomFrozen: elements.zoomLabel.textContent === zoomBefore,
-        objectsAfterToolbarClick: second.store.order.length,
       };
       host.remove();
       return result;
@@ -408,7 +391,5 @@ describe('createApp', () => {
     assert.equal(result.rendered, 7, 'the seeded board rendered into the injected layer');
     assert.equal(result.afterDestroy, 0, 'destroy removes its elements');
     assert.equal(result.stillDetached, 0, 'and stops following the store');
-    assert.equal(result.zoomFrozen, true, 'and stops following the camera');
-    assert.equal(result.objectsAfterToolbarClick, 8, 'the toolbar button no longer creates anything');
   });
 });

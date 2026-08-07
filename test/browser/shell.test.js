@@ -326,6 +326,9 @@ describe('shell', () => {
       assert.equal(await hash(), '#/');
       assert.equal(await page.eval('Boolean(window.app)'), false, 'destroy ran on unmount');
       assert.equal(await page.eval(`document.querySelector('#stage') === null`), true);
+      // The toolbar is React's now rather than createApp's, so leaving the
+      // route is what takes it away — nothing in destroy() removes it.
+      assert.equal(await page.eval(`document.querySelector('#toolbar') === null`), true);
     });
 
     test('the title in the bar renames the board', async () => {
