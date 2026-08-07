@@ -231,6 +231,15 @@ export function createBoardSync({
     /** Whether this client is the one that writes the snapshot. */
     isWriter: () => writer,
 
+    /**
+     * Everyone else presence currently reports, with their labels — the same
+     * list `onMembers` delivers. For tests and for the console, alongside
+     * `app.cursors.list()`: between the two, "who is here" and "whose pointer
+     * is drawn" can be compared, which is the question a cursor nobody can
+     * account for actually poses.
+     */
+    members: () => members().filter((member) => member.id !== clientId),
+
     /** A point in world coordinates, or null for "my pointer has left". */
     moveCursor(point) {
       if (stopped) return;

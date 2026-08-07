@@ -261,7 +261,14 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
         return seen;
       };
 
-      assert.equal(await nameSettlesTo('Guest'), 'Guest', 'presence never named the cursor');
+      const settled = await nameSettlesTo('Guest');
+      assert.equal(
+        settled,
+        'Guest',
+        `presence never named the cursor. members = ${await second.eval(
+          'JSON.stringify(window.app.sync.members?.() ?? null)',
+        )}, drawn = ${await second.eval('JSON.stringify(window.app.cursors.list())')}`,
+      );
 
       const before = await at();
       assert.equal(before.name, 'Guest');
