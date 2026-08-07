@@ -110,15 +110,26 @@ export function cancelTurnstileLoad(doc, consumer) {
   pending.script.remove?.();
 }
 
+/** Where the widget goes when the page offers somewhere for it. */
+export const MOUNT_SELECTOR = '[data-captcha-mount]';
+
 /**
  * A function that answers a fresh token, or null if there is no site key.
  *
  * A token is single-use and short-lived, so one is taken per sign-in rather
- * than kept. The widget renders into a detached element: the managed mode is
- * invisible unless Cloudflare decides otherwise, and an interactive challenge
- * in a container nobody attached would be one the visitor cannot answer — so
- * the container is attached, sized to nothing, and removed when the token
- * arrives.
+ * than kept. The widget is attached rather than detached, because an
+ * interactive challenge in a container nobody attached is one the visitor
+ * cannot answer.
+ *
+ * Attached *where* is the point. `document.body` is wherever the layout
+ * happens to put it — which for this app is below a gate that is 96px down a
+ * 340px column, so a challenge lands off-screen and sign-in looks hung rather
+ * than blocked. The mount point is looked up per call rather than held: the
+ * element belongs to whichever gate state is on screen, and the one that asks
+ * for the first token — "Loading…", before any form exists — is not the one
+ * that asks for later ones. Falling back to the body keeps a caller that
+ * offers no mount working, which is every unit test and any future page that
+ * has not thought about this.
  */
 export function createTurnstileCaptcha(config, { doc, load = loadTurnstile, cancel = cancelTurnstileLoad } = {}) {
   if (!config) return null;
@@ -134,12 +145,22 @@ export function createTurnstileCaptcha(config, { doc, load = loadTurnstile, canc
     const turnstile = await load(doc, self);
     const container = doc.createElement('div');
     container.setAttribute('data-turnstile', '');
-    doc.body.appendChild(container);
+    // querySelector is optional-called because a caller may hand in a document
+    // stub that has none — the fallback is the same one a page with no mount
+    // point gets.
+    const mount = doc.querySelector?.(MOUNT_SELECTOR) ?? doc.body;
+    mount.appendChild(container);
 
     try {
       return await new Promise((resolve, reject) => {
         turnstile.render(container, {
           sitekey: config.siteKey,
+          // Take up no room until Cloudflare decides this visitor has to
+          // answer something. The default appearance shows a widget on every
+          // call, including the anonymous sign-in that happens behind the
+          // "Loading…" screen on a first visit — a box announcing itself to
+          // someone who has not asked for anything yet.
+          appearance: 'interaction-only',
           callback: resolve,
           'error-callback': () => reject(new Error('Turnstile refused to issue a token.')),
           'timeout-callback': () => reject(new Error('Turnstile timed out.')),

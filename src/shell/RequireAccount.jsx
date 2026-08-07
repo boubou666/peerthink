@@ -83,10 +83,24 @@ export function RequireAccount({ children }) {
    */
   if (account && !starting && !unadopted) return <Fragment key={account.id}>{children}</Fragment>;
 
+  /**
+   * Somewhere for a CAPTCHA challenge to appear, in every state that can ask
+   * for a token.
+   *
+   * "Loading…" needs one as much as the form does — the anonymous sign-in on a
+   * first visit happens here, before any form exists, and that is the call
+   * most likely to be challenged, since an unfamiliar browser is exactly what
+   * Cloudflare's managed mode looks for. Without a mount the widget goes to
+   * `document.body` and lands below the fold: the visitor sees "Loading…" for
+   * ever, with the thing that would let them in scrolled off-screen.
+   */
+  const captchaMount = <div className="captcha-mount" data-captcha-mount />;
+
   if (starting) {
     return (
       <div className="shell">
         <p className="empty" data-loading>Loading…</p>
+        {captchaMount}
       </div>
     );
   }
@@ -122,6 +136,7 @@ export function RequireAccount({ children }) {
         >
           Continue without them for now
         </button>
+        {captchaMount}
       </div>
     );
   }
@@ -132,6 +147,11 @@ export function RequireAccount({ children }) {
       {error && <p className="error" role="alert" data-error>{error}</p>}
 
       <AccountForm mode={mode} onSwitch={setMode} />
+
+      {/* Above the guest link rather than at the end: a challenge raised by
+          signing in belongs next to what raised it, and the link below is a
+          different way in, not a continuation of the form. */}
+      {captchaMount}
 
       <button
         type="button"

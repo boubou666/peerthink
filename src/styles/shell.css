@@ -78,6 +78,26 @@ button.link:hover { color: var(--ink); }
   letter-spacing: -0.01em;
 }
 
+/*
+ * Where a CAPTCHA challenge appears.
+ *
+ * Empty for all but a handful of visits — `:empty` rather than a fixed zero
+ * height, so the reserved space appears with the widget instead of leaving a
+ * gap in every gate that is never challenged. Cloudflare injects an iframe as
+ * a child, which stops it matching :empty and brings the margin with it.
+ *
+ * The widget is 300px wide and the gate column is 340px, so it fits without
+ * scaling; `overflow-x: auto` is for the narrow-phone case rather than this
+ * one, and is what keeps a challenge reachable instead of clipped.
+ */
+.captcha-mount:empty { display: none; }
+.captcha-mount {
+  display: flex;
+  justify-content: center;
+  margin: 14px 0 4px;
+  overflow-x: auto;
+}
+
 .account-form {
   display: flex;
   flex-direction: column;

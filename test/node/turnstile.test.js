@@ -5,13 +5,21 @@ import assert from 'node:assert/strict';
 
 import { createTurnstileCaptcha, loadTurnstile, readTurnstileConfig } from '../../src/platform/turnstile.js';
 
-/** Just enough document to render into and append a script to. */
-const fakeDoc = ({ turnstile } = {}) => {
+/**
+ * Just enough document to render into and append a script to.
+ *
+ * `mount` is the element a `[data-captcha-mount]` lookup finds. Left out, the
+ * document has the lookup but no such element.
+ */
+const fakeDoc = ({ turnstile, mount } = {}) => {
   const appended = [];
   const doc = {
     appended,
+    mounted: [],
     head: { appendChild: (node) => appended.push(node) },
     body: { appendChild: (node) => appended.push(node) },
+    querySelector: (sel) =>
+      sel === '[data-captcha-mount]' && mount ? { appendChild: (node) => doc.mounted.push(node) } : null,
     defaultView: { turnstile },
     createElement: () => {
       const node = {
@@ -67,6 +75,72 @@ describe('turnstile', () => {
       assert.equal(await captcha(), 'token-abc');
       assert.equal(opts.sitekey, '0xAAA');
       assert.equal(doc.removed, true, 'the container outlived the token');
+    });
+
+    /**
+     * Where the widget is attached is the difference between a challenge the
+     * visitor can answer and one that renders below the fold of a gate they
+     * are still looking at. The gate offers a mount point in every state that
+     * can ask for a token, so a token taken while it is on screen goes there.
+     */
+    test('the widget goes to the gate mount point when there is one', async () => {
+      const doc = fakeDoc({
+        mount: true,
+        turnstile: { render: (_el, options) => options.callback('token-abc') },
+      });
+
+      const captcha = createTurnstileCaptcha({ siteKey: '0xAAA' }, { doc });
+      assert.equal(await captcha(), 'token-abc');
+      assert.equal(doc.mounted.length, 1, 'the widget did not go to the mount point');
+      assert.deepEqual(doc.appended, [], 'the widget went to the body as well');
+    });
+
+    test('with no mount point it still attaches, to the body', async () => {
+      // Detached is the one thing it must never be: a challenge in an element
+      // nobody attached cannot be answered.
+      const doc = fakeDoc({
+        turnstile: { render: (_el, options) => options.callback('token-abc') },
+      });
+
+      const captcha = createTurnstileCaptcha({ siteKey: '0xAAA' }, { doc });
+      assert.equal(await captcha(), 'token-abc');
+      assert.equal(doc.appended.length, 1, 'the widget was never attached anywhere');
+      assert.deepEqual(doc.mounted, []);
+    });
+
+    test('a document that cannot be queried falls back rather than throwing', async () => {
+      // The lookup is optional-called, and this is what that is for: a host
+      // document with no querySelector at all. Without the `?.` this throws a
+      // TypeError instead of taking a token.
+      const container = { setAttribute() {}, remove() {} };
+      const attached = [];
+      const doc = {
+        body: { appendChild: (node) => attached.push(node) },
+        defaultView: { turnstile: { render: (_el, options) => options.callback('token-abc') } },
+        createElement: () => container,
+      };
+
+      const captcha = createTurnstileCaptcha({ siteKey: '0xAAA' }, { doc });
+      assert.equal(await captcha(), 'token-abc');
+      assert.deepEqual(attached, [container]);
+    });
+
+    test('the widget stays invisible until the visitor has to answer', async () => {
+      // The anonymous sign-in behind "Loading…" happens on a first visit,
+      // before anyone has asked for anything. The default appearance would
+      // show a box there on every visit.
+      let opts;
+      const doc = fakeDoc({
+        turnstile: {
+          render: (_el, options) => {
+            opts = options;
+            options.callback('token-abc');
+          },
+        },
+      });
+
+      await createTurnstileCaptcha({ siteKey: '0xAAA' }, { doc })();
+      assert.equal(opts.appearance, 'interaction-only');
     });
 
     test('a refusal is an error, not a token of undefined', async () => {
