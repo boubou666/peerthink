@@ -431,10 +431,19 @@ CI fails on any high-severity production advisory.
 
 ## Not built yet
 
-A client that is not the elected writer reports its board as saved on the
-strength of its ops having been broadcast, which is one hop short of the truth:
-`sync` sends on a best-effort channel, so a send that failed looks exactly like
-one that landed. What is missing is a connection state, not a save state.
+A client that is not the elected writer still reports its board as saved on the
+strength of a single broadcast having been *sent*. `channel.send` for a
+broadcast without `ack` resolves `'ok'` the moment it is called — before the
+socket has been written to, never mind the server reached — so one message that
+went nowhere is indistinguishable from one that landed, and no amount of
+inspecting the result will say which. Knowing would mean `broadcast: { ack:
+true }` and an acknowledgement per message, which a drag emits by the dozen.
+
+What is covered is the case that loses whole sessions rather than single ops:
+standing down for an elected writer is a promise that somebody else is storing
+these edits, and `isWriter()` now stops making that promise the moment the
+channel is not up. A disconnected client writes its own snapshot, so "saved"
+is a claim about a write it made rather than about a message it hopes arrived.
 
 Signing in with an emailed confirmation link does not work. `detectSessionInUrl`
 is off because HashRouter owns the fragment, so the tokens in a confirmation
