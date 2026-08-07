@@ -193,6 +193,82 @@ describe('accounts', { skip: origin ? false : 'no local supabase (npx supabase s
     assert.equal(await text('[data-account="guest"] [data-action="save-account"]'), 'Save your boards');
   });
 
+  /**
+   * A CAPTCHA challenge has to appear where the person is looking.
+   *
+   * These runs carry no site key, so no widget is ever rendered — what is
+   * checked is the thing the widget is placed by: a mount point inside the
+   * gate, above the fold, that costs nothing while it is empty. Without it
+   * `createTurnstileCaptcha` falls back to `document.body`, and a challenge
+   * raised by the sign-in below lands under a gate that starts 96px down.
+   */
+  test('the gate offers somewhere on screen for a challenge to appear', async () => {
+    await click('[data-action="save-account"]');
+    await submitAccountForm({ email: uniqueEmail(), password: 'correct horse' });
+    await page.waitFor(`document.querySelector('[data-account="user"]') !== null`);
+
+    await click('[data-action="sign-out"]');
+    await page.waitFor(GATE);
+
+    const mount = await page.eval(`(() => {
+      const el = document.querySelector('[data-captcha-mount]');
+      if (!el) return null;
+
+      // Empty, it must cost nothing. A display:none element reports a rect of
+      // all zeros, so this is read before anything is put inside it — and it
+      // is why the position below cannot be read from the empty element: zeros
+      // would look like the top of the page and pass whatever was asked.
+      const empty = el.getBoundingClientRect().height;
+
+      // Stand a widget-sized box in it and see where that lands. 300x65 is
+      // what Cloudflare renders; the box is removed before this returns, so
+      // the gate is left as it was found.
+      const probe = document.createElement('div');
+      probe.style.cssText = 'width:300px;height:65px';
+      el.appendChild(probe);
+      const r = probe.getBoundingClientRect();
+      el.removeChild(probe);
+
+      // What a silent token looks like: captcha() attaches its container
+      // before Cloudflare decides anything, and an interaction-only widget
+      // that is never challenged stays invisible inside it. The gate must not
+      // move — reserving space on the wrapper would flicker a gap in on every
+      // sign-in, including the one behind "Loading…" on a first visit.
+      const gate = document.querySelector('[data-account-gate]');
+      const settled = gate.getBoundingClientRect().height;
+      const silent = document.createElement('div');
+      silent.style.cssText = 'display:none';
+      el.appendChild(silent);
+      const duringSilentToken = gate.getBoundingClientRect().height;
+      el.removeChild(silent);
+
+      return {
+        inGate: Boolean(el.closest('[data-account-gate]')),
+        emptyHeight: empty,
+        top: r.top,
+        bottom: r.bottom,
+        onScreen: r.top >= 0 && r.bottom <= window.innerHeight,
+        viewport: window.innerHeight,
+        settled,
+        duringSilentToken,
+      };
+    })()`);
+
+    assert.ok(mount, 'the gate offers nowhere for a challenge to go');
+    assert.equal(mount.inGate, true, 'the mount point is not inside the gate');
+    assert.equal(mount.emptyHeight, 0, 'an empty mount point is taking up room');
+    assert.equal(
+      mount.onScreen,
+      true,
+      `a challenge would render at y=${mount.top}–${mount.bottom}, outside a ${mount.viewport}px viewport`,
+    );
+    assert.equal(
+      mount.duringSilentToken,
+      mount.settled,
+      'the gate changes height while a silent token is taken — the mount reserves space for a widget nobody can see',
+    );
+  });
+
   test('the form offers the other way round for someone who already has an account', async () => {
     const email = uniqueEmail();
     const password = 'correct horse';
