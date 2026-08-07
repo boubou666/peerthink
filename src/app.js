@@ -1,4 +1,4 @@
-import { LOCAL, Store } from './core/store.js';
+import { LOCAL, REMOTE, Store } from './core/store.js';
 import { Selection } from './core/selection.js';
 import { Viewport } from './core/viewport.js';
 import { Board } from './core/board.js';
@@ -165,6 +165,51 @@ export function createApp({
       if (origin === LOCAL) early.push(...ops);
     });
 
+    /**
+     * Settled once there is a document for remote ops to land on.
+     *
+     * The channel is joined below rather than at the end of this function.
+     * Joining afterwards left a window — the length of a round trip — in which
+     * another editor's ops were broadcast to a client that was not listening
+     * yet, and so were not missed briefly but missed entirely, until something
+     * reloaded the page.
+     *
+     * The caught rejection is not decoration: when there is no project the
+     * sync is never built, nobody is waiting on this, and a rejection with no
+     * handler takes the process down in Node and logs an unhandled rejection
+     * in the browser.
+     */
+    let landed;
+    const hydrated = new Promise((resolve, reject) => { landed = { resolve, reject }; });
+    hydrated.catch(() => {});
+
+    // Before the load, holding what arrives. The ops the channel delivers in
+    // that window are replayed onto the snapshot afterwards, exactly as the
+    // local edits buffered above are, and for the same reason they can be.
+    if (createSync) {
+      sync = createSync({
+        boardId,
+        store,
+        scheduler: clock,
+        heldUntil: hydrated,
+        // Both can arrive before `cursors` below has been assigned, on a fast
+        // channel with someone already moving — hence the optional calls.
+        onCursor: (cursor) => cursors?.receive(cursor),
+        onMembers: (members) => cursors?.setMembers(members),
+        // Taking over means the previous writer has gone, possibly mid-edit
+        // and possibly before its own debounce fired. This client has those
+        // ops — it just was not allowed to write them until now. `autosave` is
+        // not built until the load has finished, so early on there is nothing
+        // to flush and nothing that needs flushing.
+        onWriter: (isWriter) => {
+          if (isWriter) autosave?.flush().catch(() => {});
+        },
+      });
+      cursors = createCursors({ document, elements: dom, viewport, sync, scheduler: clock });
+      app.sync = sync;
+      app.cursors = cursors;
+    }
+
     let saved;
     try {
       // Adopt anything a single-board version of the app left behind, then load
@@ -177,6 +222,9 @@ export function createApp({
       // nowhere else. The canvas stays up — throwing it away would take the
       // user's work with it — but it stops claiming to be stored.
       saveStatus.set(UNLOADED);
+      // Nothing landed, so the held ops are dropped rather than replayed onto
+      // a document that is not the board and cannot be saved.
+      landed.reject(error);
       throw error;
     } finally {
       stopBuffering();
@@ -186,18 +234,42 @@ export function createApp({
     // faster than a round trip completes. Writing to the store now would
     // repopulate a torn-down app and start an autosave that nothing is left
     // to stop, so a cancelled hydrate has to stay silent.
-    if (destroyed) return app;
+    if (destroyed) {
+      // The sync is already being torn down by destroy(); settling this is
+      // what stops it sitting on a buffer waiting for a load that stopped
+      // mattering.
+      landed.reject(new Error('the app was destroyed while loading'));
+      return app;
+    }
 
     if (saved) {
       store.load(saved.board);
-      // not recorded: undo should not walk back past the board loading
-      if (early.length) store.apply(early, false);
+      /**
+       * The user's own edits, back on top of the snapshot that replaced them.
+       *
+       * Replayed as REMOTE rather than LOCAL, now that the sync exists before
+       * the load: LOCAL is what puts an op on the wire, and these were already
+       * handed to the channel when they happened, so replaying them as local
+       * would send every one of them a second time. Whether the channel had
+       * come up by then is a separate question — the send is best effort — but
+       * sending twice is not the answer to it.
+       *
+       * Not recorded either way: undo should not walk back past the board
+       * loading.
+       */
+      if (early.length) store.apply(early, false, REMOTE);
     } else {
       // The seed adds to the board rather than replacing it, so a card made
       // mid-load survives this branch unaided — it is `store.load` above that
       // needed the replay.
       seed(board);
     }
+
+    // There is a document now, so whatever the channel delivered while there
+    // was not can be replayed onto it. Before autosave is wired, so the ops
+    // held from other editors are treated exactly as ops arriving a moment
+    // later would be.
+    landed.resolve();
 
     app.title = saved?.title ?? null;
     app.restoredFromStorage = Boolean(saved);
@@ -222,31 +294,6 @@ export function createApp({
     // nobody listening. Those ops are the user's own edits and nothing else
     // will save them, so the write they should have scheduled is made here.
     if (early.length) autosave.flush().catch(() => {});
-
-    // After the load, not before: ops that arrive while the snapshot is still
-    // in flight would be overwritten by it. The gap between the two is a
-    // window where another editor's change is missed until the next reload —
-    // narrow, and the price of loading a snapshot rather than replaying a log.
-    if (createSync) {
-      sync = createSync({
-        boardId,
-        store,
-        scheduler: clock,
-        // Both arrive before `cursors` below has been assigned, on a fast
-        // channel with someone already moving — hence the optional calls.
-        onCursor: (cursor) => cursors?.receive(cursor),
-        onMembers: (members) => cursors?.setMembers(members),
-        // Taking over means the previous writer has gone, possibly mid-edit
-        // and possibly before its own debounce fired. This client has those
-        // ops — it just was not allowed to write them until now.
-        onWriter: (isWriter) => {
-          if (isWriter) autosave?.flush().catch(() => {});
-        },
-      });
-      cursors = createCursors({ document, elements: dom, viewport, sync, scheduler: clock });
-      app.sync = sync;
-      app.cursors = cursors;
-    }
 
     commands.fit();
     return app;

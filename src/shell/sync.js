@@ -6,16 +6,25 @@ import { auth, client } from './auth.js';
  * otherwise, which `createApp` reads as "this board has nobody else on it".
  * The same load-time decision the repository and the auth gate make.
  */
+/**
+ * Everything the caller passes is forwarded, rather than a list of names.
+ *
+ * This adapter exists to supply two things — the client and the identity — and
+ * naming the rest one by one made it a place options go to disappear. That is
+ * not hypothetical: `heldUntil` was added to createBoardSync and to the call
+ * in createApp, both unit-tested, and silently dropped here, so the feature
+ * was inert in the only build that has a channel at all. Nothing failed,
+ * because every test that exercises the buffer talks to createBoardSync
+ * directly and never comes through this door.
+ *
+ * The two the shell owns are applied after the spread, so they are this file's
+ * to decide and not something a caller can quietly replace.
+ */
 export const createSync = client
-  ? ({ boardId, store, scheduler, onWriter, onCursor, onMembers }) =>
+  ? (options) =>
       createBoardSync({
+        ...options,
         client,
-        boardId,
-        store,
-        scheduler,
-        onWriter,
-        onCursor,
-        onMembers,
         // What the people on this board see above each other's cursors. An
         // address is shared with the board's members, who are people it has
         // been shared with — a guest has none to share and is just a guest.
