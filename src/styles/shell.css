@@ -219,6 +219,31 @@ button.link:hover { color: var(--ink); }
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+/*
+ * "New here" — a board this browser has not shown for this account.
+ *
+ * Inside the title rather than floated beside it, so a long title wraps and
+ * takes the badge with it instead of colliding with something pinned to a
+ * corner. `white-space: nowrap` keeps the word itself intact when it does.
+ */
+.board-card-new {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  /* White on `--accent`, which is a blue in both themes (#2f6df6 light,
+     #5b8cff dark) — so the badge reads the same way in each without a second
+     rule. `--ink` here would be dark text on blue in light mode and light text
+     on a lighter blue in dark, which is worse in both. */
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 .board-card-meta {
   font-size: 12px;
   color: var(--muted);

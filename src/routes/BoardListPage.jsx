@@ -4,6 +4,8 @@ import { useNavigate } from 'react-router';
 import { AccountMenu } from '../components/AccountMenu.jsx';
 import { createIdGenerator } from '../core/ids.js';
 import { DEFAULT_TITLE } from '../platform/storage.js';
+import { auth } from '../shell/auth.js';
+import { seenBoardsFor } from '../shell/seen.js';
 import { sharing } from '../shell/sharing.js';
 import { repository } from '../shell/storage.js';
 
@@ -36,22 +38,45 @@ export function BoardListPage() {
   // A read that failed is not an empty workspace. `boards` keeps whatever it
   // last had — nothing, on a first load — so the page never claims there are
   // no boards on the strength of a request that did not arrive.
+  /**
+   * Boards this browser has not shown for this account.
+   *
+   * Reconciled against every list that arrives, so a board that turns up while
+   * the page is open is marked as readily as one that was there on load. The
+   * record is per account and built per read rather than held, because the
+   * account can change under a page that stays mounted.
+   */
+  const [unseen, setUnseen] = useState(() => new Set());
+
+  const reconcile = useCallback((found) => {
+    const id = auth.current()?.id;
+    // No account is no record to keep. Nothing below here renders without one
+    // — RequireAccount sees to that — but a read in flight across a sign-out
+    // can still land here, and inventing a key for nobody would file this
+    // browser's history under a user that does not exist.
+    if (!id) return;
+    setUnseen(seenBoardsFor(id).reconcile(found.map((board) => board.id)));
+  }, []);
+
   const refresh = useCallback(
     () => repository.list().then(
       (found) => {
         setBoards(found);
+        reconcile(found);
         setError(null);
       },
       () => setError(COULD_NOT_LIST),
     ),
-    [],
+    [reconcile],
   );
 
   useEffect(() => {
     let live = true;
     repository.list().then(
       (found) => {
-        if (live) setBoards(found);
+        if (!live) return;
+        setBoards(found);
+        reconcile(found);
       },
       () => {
         if (live) setError(COULD_NOT_LIST);
@@ -60,7 +85,17 @@ export function BoardListPage() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [reconcile]);
+
+  /**
+   * Opening a board is what clears its badge — not listing it. A mark made on
+   * the way past would be gone before it had been read.
+   */
+  const open = useCallback((id) => {
+    const account = auth.current()?.id;
+    if (account) seenBoardsFor(account).markSeen(id);
+    navigate(`/b/${id}`);
+  }, [navigate]);
 
   /**
    * Run a mutation, then re-read. `busy` is what stops a second click landing
@@ -115,7 +150,10 @@ export function BoardListPage() {
         return;
       }
       setError(null);
-      navigate(`/b/${id}`);
+      // Through `open`, so a board you just made is not waiting with a "New"
+      // badge when you come back to the list. You have seen it — you are about
+      // to be looking at it.
+      open(id);
     } catch {
       // Refusing and rejecting are the same event to the person clicking the
       // button, and neither one navigated anywhere.
@@ -196,9 +234,16 @@ export function BoardListPage() {
               <button
                 type="button"
                 className="board-card-open"
-                onClick={() => navigate(`/b/${board.id}`)}
+                onClick={() => open(board.id)}
               >
-                <span className="board-card-title">{board.title}</span>
+                <span className="board-card-title">
+                  {board.title}
+                  {/* "New here", not "newly shared" — this side knows what it
+                      has shown, and cannot tell why a board turned up. */}
+                  {unseen.has(board.id) && (
+                    <span className="board-card-new" data-new> New</span>
+                  )}
+                </span>
                 <span className="board-card-meta">Edited {formatDate(board.updatedAt)}</span>
               </button>
 
