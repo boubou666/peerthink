@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 
 import { AccountForm } from '../components/AccountForm.jsx';
 import { adoptLocalBoards } from './adopt.js';
@@ -64,9 +64,24 @@ export function RequireAccount({ children }) {
     };
   }, [attempt]);
 
-  // `starting` covers the adoption as well as the sign-in, so the list is not
-  // read — and an empty workspace not rendered — while boards are still moving.
-  if (account && !starting && !unadopted) return children;
+  /**
+   * `starting` covers the adoption as well as the sign-in, so the list is not
+   * read — and an empty workspace not rendered — while boards are still moving.
+   *
+   * Keyed on the account, because who this is can change while everything
+   * below stays mounted. Signing in from the account menu never passes through
+   * the gate: the guest was already let through, so the pages under here go on
+   * showing the boards they read on mount — the previous person's — until
+   * something reloads the document. The key is what makes the account a fact
+   * the whole subtree is rebuilt from, rather than one every page has to
+   * remember to watch for itself.
+   *
+   * On the id, not the account: a token refresh publishes a fresh object for
+   * the same user, and remounting the board someone is editing every hour is
+   * not what this is for. Registering keeps the id too — same row in
+   * auth.users, same boards — which is exactly why it needs no remount.
+   */
+  if (account && !starting && !unadopted) return <Fragment key={account.id}>{children}</Fragment>;
 
   if (starting) {
     return (
