@@ -22,11 +22,33 @@ describe('app shell', () => {
     await page.close();
   });
 
-  /** Reload with a chosen localStorage state, from a clean slate each time. */
+  /**
+   * Reload with a chosen localStorage state, from a clean slate each time.
+   *
+   * Waits for the board to be in, not merely for the app to exist. `goto`
+   * resolves on `window.app?.store`, which is true the moment createApp
+   * returns — before `hydrate()` has read or seeded anything — so a test that
+   * acts immediately can be acting on an empty board. `autosave` is only
+   * assigned at the end of hydrate, which makes it the honest signal that the
+   * load is done.
+   *
+   * This raced from the beginning and happened to win. It was caught when the
+   * toolbar became a React component: one extra render between createApp and
+   * hydrate's continuation was enough to lose it, and `shift+1 fits` began
+   * failing because fit on an empty board leaves the camera alone — the
+   * shortcut was working perfectly.
+   */
   async function boot(raw, { key = KEY } = {}) {
+    // Off the board route first, within the app. A canvas that is still
+    // mounted when the document goes away flushes its board on the way out —
+    // which lands *after* the clear below and hands the next page the previous
+    // test's board. Unmounting here means there is nothing left to write.
+    await page.goto('/#/');
+
     await page.eval('localStorage.clear()');
     if (raw !== null) await page.eval(`localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(raw)})`);
     await page.goto();
+    await page.waitFor('Boolean(window.app?.autosave)', { label: 'the board to finish loading' });
   }
 
   const button = (sel) => page.eval(`(() => {
@@ -200,6 +222,28 @@ describe('app shell', () => {
       const before = await page.eval('app.store.order.length');
       await page.eval(`document.getElementById('toolbar').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
       assert.equal(await page.eval('app.store.order.length'), before);
+    });
+
+    /**
+     * Something the imperative toolbar could not say. It had no reason to
+     * watch the store, so both buttons were live on a board with no history
+     * and a click did nothing without looking like it would.
+     */
+    test('undo and redo are offered only when there is history to walk', async () => {
+      const state = () => page.eval(`(() => ({
+        undo: document.querySelector('[data-act="undo"]').disabled,
+        redo: document.querySelector('[data-act="redo"]').disabled,
+      }))()`);
+
+      await page.eval('app.store.load({ order: [], objects: [] })');
+      assert.deepEqual(await state(), { undo: true, redo: true }, 'a fresh board offers history it does not have');
+
+      await clickButton('[data-add="card"]');
+      await page.eval('document.activeElement?.blur?.()');
+      assert.deepEqual(await state(), { undo: false, redo: true });
+
+      await clickButton('[data-act="undo"]');
+      assert.deepEqual(await state(), { undo: true, redo: false }, 'the undone edit is not offered back');
     });
   });
 

@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { createApp } from '../app.js';
 import { repository } from '../shell/storage.js';
 import { createSync } from '../shell/sync.js';
+import { Toolbar } from './Toolbar.jsx';
 
 /**
  * The canvas, mounted once.
@@ -22,8 +23,16 @@ export function BoardCanvas({ boardId, onReady, onSaveStatus }) {
   const bg = useRef(null);
   const layer = useRef(null);
   const overlay = useRef(null);
-  const toolbar = useRef(null);
-  const zoomLabel = useRef(null);
+
+  /**
+   * The app, once there is one, so the toolbar can render from it.
+   *
+   * The stage below is still handed to `createApp` as bare elements and left
+   * alone — that is the part that draws at frame rate. The toolbar is the part
+   * that shows state, and state is what React is for. Holding the app in state
+   * costs one extra render on mount and nothing after.
+   */
+  const [app, setApp] = useState(null);
 
   useEffect(() => {
     const app = createApp({
@@ -37,13 +46,32 @@ export function BoardCanvas({ boardId, onReady, onSaveStatus }) {
         bg: bg.current,
         layer: layer.current,
         overlay: overlay.current,
-        toolbar: toolbar.current,
-        zoomLabel: zoomLabel.current,
       },
     });
 
     window.app = app; // console and test surface
+    setApp(app);
     onReady?.(app);
+
+    /**
+     * Zoom to fit and reset zoom, from the keyboard.
+     *
+     * Registered here rather than in the toolbar that shows them, because they
+     * belong to the board: they are on the window, they work with nothing
+     * focused, and they must be live the moment `window.app` is. A listener
+     * added by the toolbar attaches a commit later — long enough to miss a key
+     * pressed on load, which the suite noticed as soon as they were moved
+     * there.
+     *
+     * `!` and `)` are those keys on a US layout; the `code` check covers the
+     * layouts where they are not. A field being edited keeps its own keys.
+     */
+    const onKeyDown = (event) => {
+      if (event.target.isContentEditable) return;
+      if (event.key === '!' || (event.shiftKey && event.code === 'Digit1')) app.commands.fit();
+      else if (event.key === ')' || (event.shiftKey && event.code === 'Digit0')) app.commands.resetZoom();
+    };
+    window.addEventListener('keydown', onKeyDown);
 
     // Subscribed before hydrate, and told the current value straight away:
     // the states worth reporting include the ones reached on the way in, and
@@ -57,8 +85,12 @@ export function BoardCanvas({ boardId, onReady, onSaveStatus }) {
     app.hydrate().catch(() => {});
 
     return () => {
+      window.removeEventListener('keydown', onKeyDown);
       stopWatchingStatus();
       app.destroy();
+      // Cleared before the toolbar's next render, so it never reads a store
+      // and a viewport belonging to an app that has been torn down.
+      setApp(null);
       if (window.app === app) delete window.app;
     };
   }, [boardId, onReady, onSaveStatus]);
@@ -71,19 +103,7 @@ export function BoardCanvas({ boardId, onReady, onSaveStatus }) {
         <div id="overlay" ref={overlay} />
       </div>
 
-      <div id="toolbar" ref={toolbar}>
-        <button type="button" data-add="card" title="New card (C)">Card</button>
-        <button type="button" data-add="envelope" title="New envelope (E)">Envelope</button>
-        <button type="button" data-add="list" title="New list (L)">List</button>
-        <span className="sep" />
-        <button type="button" data-act="undo" title="Undo (Ctrl+Z)">↶</button>
-        <button type="button" data-act="redo" title="Redo (Ctrl+Shift+Z)">↷</button>
-        <span className="sep" />
-        <button type="button" data-act="fit" title="Zoom to fit (Shift+1)">Fit</button>
-        <button type="button" data-act="reset" title="Reset zoom (Shift+0)">
-          <span id="zoom" ref={zoomLabel}>100%</span>
-        </button>
-      </div>
+      {app && <Toolbar app={app} />}
 
       <div id="hint">
         drag empty space to select · space or middle-drag to pan · ⌘/ctrl+wheel to zoom · double-click to edit
