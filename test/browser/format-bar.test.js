@@ -170,24 +170,27 @@ describe('format bar', () => {
    * pre-selecting a swatch true of only one is how somebody changes a card
    * they meant to leave alone.
    */
-  test('a disagreeing selection shows no current value', async () => {
-    const yellow = await addCard({ fill: 'yellow' });
+  test('a disagreeing selection shows the default, not one card\'s colour', async () => {
+    // Neither card is yellow, because yellow *is* the fallback — with one of
+    // them yellow the test could not tell "they agree" from "it gave up".
+    const blue = await addCard({ fill: 'blue' });
     const pink = await addCard({ x: 500, fill: 'pink' });
 
     const showing = () => page.eval(`document.querySelector('[data-format-bar] [data-field="fill"]').value`);
 
-    await select(yellow);
+    await select(blue);
     await page.waitFor(`document.querySelector('[data-format-bar]') !== null`, { label: 'the bar' });
-    assert.equal(await showing(), '#ffe98a', "the picker did not show the card's colour");
+    assert.equal(await showing(), '#b4d5ff', "the picker did not show the card's colour");
 
-    await select(yellow, pink);
-    await page.waitFor(`document.querySelector('[data-format-bar] [data-field="fill"]').value === '#ffe98a'`, {
-      label: 'the picker to fall back',
-    }).catch(() => {});
+    await select(blue, pink);
+    await page.waitFor(
+      `document.querySelector('[data-format-bar] [data-field="fill"]').value !== '#b4d5ff'`,
+      { label: 'the picker to stop showing the first card' },
+    );
 
-    // Nothing true to show, so it shows the default rather than one card's
-    // colour dressed up as everyone's — pink must not be what is displayed.
-    assert.notEqual(await showing(), '#ffc4d6', "one card's colour was shown as the selection's");
+    // Nothing true to show, so it shows the default rather than either card's
+    // colour dressed up as everyone's.
+    assert.equal(await showing(), '#ffe98a', 'a disagreeing selection did not fall back to the default');
   });
 
   test('the bar follows the card when the camera moves', async () => {
