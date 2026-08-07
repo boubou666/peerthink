@@ -40,12 +40,15 @@ export function createSeenBoards({ storage, accountId }) {
     }
   };
 
+  /** Answers whether the record was actually kept, which the caller needs. */
   const write = (ids) => {
-    if (!storage) return;
+    if (!storage) return false;
     try {
       storage.setItem(key, JSON.stringify([...ids]));
+      return true;
     } catch {
       // A full or refused store costs a badge, not a board.
+      return false;
     }
   };
 
@@ -71,8 +74,19 @@ export function createSeenBoards({ storage, accountId }) {
         return new Set();
       }
 
-      write(ids.filter((id) => seen.has(id)));
-      return new Set(ids.filter((id) => !seen.has(id)));
+      const kept = write(ids.filter((id) => seen.has(id)));
+      const unseen = new Set(ids.filter((id) => !seen.has(id)));
+
+      /**
+       * A store that reads but will not write — a full quota, or a privacy
+       * mode that allows one and not the other — leaves the old record in
+       * place, so `markSeen` cannot clear anything either. Every badge shown
+       * now would come back on every visit for ever, which is precisely the
+       * noise nobody can switch off that the absent-storage case is careful to
+       * avoid. Readable and unwritable is the same situation as no storage at
+       * all, and is answered the same way.
+       */
+      return kept ? unseen : new Set();
     },
 
     /** This board has now been shown. Opening one is what clears its badge. */

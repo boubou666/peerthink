@@ -101,5 +101,19 @@ describe('seen boards', () => {
       assert.doesNotThrow(() => seen.reconcile(['a']));
       assert.doesNotThrow(() => seen.markSeen('a'));
     });
+
+    test('a store that reads but will not write marks nothing', () => {
+      // The nastier half: the old record is still readable, so a badge would
+      // be computed — and markSeen cannot clear it, so it would come back on
+      // every visit for ever. Readable and unwritable is the same situation as
+      // no storage at all, and gets the same answer.
+      const storage = fakeStorage({ 'peerthink:seen:u1': JSON.stringify(['a']) });
+      const seen = createSeenBoards({ storage, accountId: 'u1' });
+
+      assert.deepEqual([...seen.reconcile(['a', 'b'])], ['b'], 'a writable store should still mark');
+
+      storage.setItem = () => { throw new Error('quota'); };
+      assert.deepEqual([...seen.reconcile(['a', 'b'])], [], 'a badge was shown that could never be cleared');
+    });
   });
 });
