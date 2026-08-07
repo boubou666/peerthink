@@ -446,4 +446,117 @@ describe('row level security', { skip: URL ? false : 'DATABASE_URL is not set' }
       });
     });
   });
+
+  /**
+   * The live channel — who may join a board's broadcast, and who may write to
+   * it.
+   *
+   * These are the policies on `realtime.messages` from
+   * `20260804154000_board_broadcast.sql`, and until now nothing tested them at
+   * all: the migration was known to apply and its behaviour was assumed. They
+   * are the whole of the protection on live collaboration, so an assumption is
+   * a poor thing for them to rest on.
+   *
+   * What authorises a join is the *session's* topic, not any row's — that is
+   * how Realtime asks the question, and why the policies read
+   * `realtime.topic()` rather than `messages.topic`. So a single row is enough
+   * to see a decision: whether it comes back says whether this session may
+   * listen at all.
+   *
+   * Every case is rolled back rather than cleaned up. `DATABASE_URL` can name
+   * the hosted project — that is a documented workflow — and a test that
+   * inserts into realtime.messages there should leave nothing behind, whatever
+   * it asserts.
+   */
+  describe('the live channel', () => {
+    const BROADCAST = { topic: 'board:alpha', extension: 'broadcast' };
+
+    /** Somebody, on a channel, with one message already on it. Always undone. */
+    const asListener = async (userId, topic, sql, params = []) => {
+      await client.query('begin');
+      try {
+        await client.query('insert into realtime.messages (topic, extension) values ($1, $2)', [
+          BROADCAST.topic,
+          BROADCAST.extension,
+        ]);
+        await client.query('select set_config($1, $2, true)', [
+          'request.jwt.claims',
+          JSON.stringify({ sub: userId }),
+        ]);
+        await client.query('select set_config($1, $2, true)', ['realtime.topic', topic]);
+        await client.query('set local role authenticated');
+        return await client.query(sql, params);
+      } finally {
+        // Unconditional: a refused statement has poisoned the transaction and
+        // a successful one has written a row, and neither may survive.
+        await client.query('rollback');
+      }
+    };
+
+    const hears = async (userId, topic) =>
+      (await asListener(userId, topic, 'select id from realtime.messages')).rowCount;
+
+    const sends = (userId, topic) =>
+      asListener(userId, topic, 'insert into realtime.messages (topic, extension) values ($1, $2)', [
+        BROADCAST.topic,
+        BROADCAST.extension,
+      ]);
+
+    describe('listening', () => {
+      test('an owner hears their own board', async () => {
+        await givenAliceHasABoard();
+        assert.equal(await hears(alice, 'board:alpha'), 1);
+      });
+
+      test('a viewer hears it too — watching is the point of being a viewer', async () => {
+        const id = await givenAliceHasABoard();
+        await share(id, 'viewer');
+        assert.equal(await hears(bob, 'board:alpha'), 1);
+      });
+
+      test('a stranger hears nothing', async () => {
+        await givenAliceHasABoard();
+        assert.equal(await hears(bob, 'board:alpha'), 0);
+      });
+
+      /**
+       * The default the migration's comment claims: a topic that is not a
+       * board's parses to something board_role() knows nothing about, and is
+       * refused. Worth its own case because it is the one that holds for every
+       * channel this project might broadcast on later.
+       */
+      test('a topic that is not a board is refused, even from a real user', async () => {
+        await givenAliceHasABoard();
+        assert.equal(await hears(alice, 'presence:lobby'), 0);
+        assert.equal(await hears(alice, 'board:no-such-board'), 0);
+      });
+    });
+
+    describe('sending', () => {
+      test('an owner may write to their board', async () => {
+        await givenAliceHasABoard();
+        assert.equal((await sends(alice, 'board:alpha')).rowCount, 1);
+      });
+
+      test('an editor may write to it', async () => {
+        const id = await givenAliceHasABoard();
+        await share(id, 'editor');
+        assert.equal((await sends(bob, 'board:alpha')).rowCount, 1);
+      });
+
+      /** The split the policies exist to make: watching is not editing. */
+      test('a viewer may listen but not write', async () => {
+        const id = await givenAliceHasABoard();
+        await share(id, 'viewer');
+
+        assert.equal(await hears(bob, 'board:alpha'), 1);
+        await assert.rejects(() => sends(bob, 'board:alpha'), /row-level security/i);
+      });
+
+      test('a stranger may not write', async () => {
+        await givenAliceHasABoard();
+        await assert.rejects(() => sends(bob, 'board:alpha'), /row-level security/i);
+      });
+    });
+  });
 });
