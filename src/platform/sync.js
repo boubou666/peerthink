@@ -74,6 +74,9 @@ export function createBoardSync({
   onCursor,
   onMembers,
   identity = {},
+  // Resolves when this client has a document to apply remote ops to. Absent,
+  // there is nothing to wait for and they are applied as they arrive.
+  heldUntil = null,
   sendEvery = 50,
   cursorEvery = 60,
   clientId = createIdGenerator()(),
@@ -124,6 +127,39 @@ export function createBoardSync({
     config: { private: true, broadcast: { self: false } },
   });
 
+  /**
+   * Ops that arrived before this client had a document to apply them to.
+   *
+   * The channel is joined before the snapshot is read, so that the window
+   * between the two stops being a window in which other people's edits are
+   * lost. What arrives in it cannot be applied yet — `store.load()` replaces
+   * the document, so anything applied first would be overwritten by a
+   * snapshot that predates it — so it is held and replayed afterwards.
+   *
+   * Safe to replay for the same reason the local edits made during a load are:
+   * `add` is idempotent, `del` and `set` ignore what is not there, and `order`
+   * merges. An op already contained in the snapshot lands on top of itself.
+   *
+   * A load that failed resolves nothing: there is no document to replay onto,
+   * the board is not saveable, and holding the ops would only pretend
+   * otherwise.
+   */
+  const held = [];
+  let holding = Boolean(heldUntil);
+
+  const release = () => {
+    holding = false;
+    const waiting = held.splice(0, held.length);
+    if (!stopped && waiting.length) store.apply(waiting, false, REMOTE);
+  };
+
+  if (heldUntil) {
+    Promise.resolve(heldUntil).then(release, () => {
+      holding = false;
+      held.length = 0;
+    });
+  }
+
   channel.on('broadcast', { event: EVENT }, (message) => {
     const ops = message?.payload?.ops;
     if (stopped || !Array.isArray(ops)) return;
@@ -135,6 +171,13 @@ export function createBoardSync({
     // does not understand either, and half-applying that is worse than
     // ignoring it.
     if (!ops.every(isOp)) return;
+
+    // Checked after validation, so nothing is held that would have been
+    // dropped on arrival — a replay is not the place to discover that.
+    if (holding) {
+      held.push(...ops);
+      return;
+    }
 
     // record: false — someone else's edit does not belong in this user's undo
     // stack, and REMOTE is what stops it being sent straight back out.

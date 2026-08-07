@@ -431,10 +431,6 @@ CI fails on any high-severity production advisory.
 
 ## Not built yet
 
-Ops emitted between reading the snapshot and joining the channel are missed —
-`hydrate()` subscribes after the load, so a change made in that window shows up
-on the next reload rather than immediately.
-
 A client that is not the elected writer reports its board as saved on the
 strength of its ops having been broadcast, which is one hop short of the truth:
 `sync` sends on a best-effort channel, so a send that failed looks exactly like

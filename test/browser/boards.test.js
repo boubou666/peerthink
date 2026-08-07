@@ -169,8 +169,9 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
   test('an edit on one page shows up on another that has the same board open', async () => {
     const id = await newBoard();
 
-    // `window.app` exists from the first render; the channel is joined at the
-    // end of hydrate, so both pages have to be waited for separately.
+    // `window.app` exists from the first render and the channel is joined
+    // early in hydrate, but joining is still a round trip — so both pages have
+    // to be waited for separately rather than assumed live once they render.
     const joined = async (target) => {
       await target.waitFor('Boolean(window.app?.sync)', { label: 'the channel to be joined' });
       assert.equal(await target.eval('window.app.sync.ready'), 'SUBSCRIBED');
