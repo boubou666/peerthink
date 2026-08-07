@@ -351,7 +351,15 @@ describe('shell', () => {
 
     test('an unknown route falls back to the list', async () => {
       await page.goto('/#/nonsense');
-      assert.equal(await hash(), '#/');
+      // The `*` route lives inside RequireAccount (see App.jsx), so nothing
+      // redirects until the gate lets the routes mount — and `goto` returns on
+      // `.shell`, which the gate's own "Loading…" screen is one of. Reading
+      // the hash straight after the navigation reads it before the router has
+      // had its turn, which is a pass on a fast machine and a flake on a
+      // loaded one.
+      await page.waitFor("location.hash === '#/'", {
+        label: 'the unknown route to redirect to the list',
+      });
       assert.equal(await page.eval(`document.querySelector('.shell') !== null`), true);
     });
   });

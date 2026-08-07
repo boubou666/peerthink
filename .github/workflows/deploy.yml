@@ -33,7 +33,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # a workflow_run event checks out the default branch by default, which
           # need not be the commit CI just passed — build exactly what was tested
@@ -43,7 +43,7 @@ jobs:
           # authenticated git, so don't leave the token in .git/config for it.
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '24'
           cache: npm

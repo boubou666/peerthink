@@ -10,7 +10,6 @@
 // by the build smoke test.
 
 import { spawn } from 'node:child_process';
-import { createServer } from 'node:net';
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,17 +21,6 @@ import { SUPABASE_ONLY, report } from './coverage.js';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const COVERAGE = join(ROOT, '.coverage');
-
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.on('error', reject);
-    probe.listen(0, () => {
-      const { port } = probe.address();
-      probe.close(() => resolve(port));
-    });
-  });
-}
 
 rmSync(COVERAGE, { recursive: true, force: true });
 mkdirSync(join(COVERAGE, 'node'), { recursive: true });
@@ -73,8 +61,9 @@ const auth = supabase
     })
   : null;
 
+// No port is passed: Chromium picks one and reports it back, so nothing can
+// take the number between the check and the bind.
 const { child: chrome, base: browserBase } = await launchChrome({
-  port: await freePort(),
   userDataDir: join(COVERAGE, 'chrome-profile'),
 });
 
