@@ -23,7 +23,20 @@ export function colourFor(id) {
   return `hsl(${hash % 360} 70% 45%)`;
 }
 
-const NAMELESS = 'Guest';
+/**
+ * What a pointer is called when presence has not named it.
+ *
+ * Deliberately not "Guest". A signed-out person really is labelled `Guest` by
+ * `shell/sync.js`, so using the same word here made two different situations
+ * read identically on screen: someone anonymous is on this board, and a
+ * pointer arrived bearing an id presence has never mentioned. The first is
+ * ordinary and the second is a bug, and telling them apart from a screenshot
+ * was impossible while they shared a word.
+ *
+ * Presence carries a label for every real member, so this should be unreachable
+ * in a healthy session — which is exactly why it should not look ordinary.
+ */
+const NAMELESS = 'Someone';
 
 export function createCursors({ document, elements, viewport, sync, scheduler }) {
   const { stage, overlay } = elements;

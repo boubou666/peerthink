@@ -144,6 +144,15 @@ export function createBoardSync({
   channel.on('broadcast', { event: CURSOR_EVENT }, (message) => {
     const { id, x, y, gone } = message?.payload ?? {};
     if (stopped || typeof id !== 'string') return;
+
+    // Never draw this client's own pointer. `broadcast: { self: false }` is
+    // supposed to make this unreachable, and it is the transport's promise
+    // rather than ours — one that costs nothing to keep ourselves and that
+    // fails invisibly if it is ever broken. Invisibly, because presence
+    // excludes self from `onMembers`, so a self-echoed pointer arrives with no
+    // label and draws as an anonymous stranger on a board with nobody else on
+    // it: the receiver has no way to recognise its own cursor.
+    if (id === clientId) return;
     if (gone) return void onCursor?.({ id, gone: true });
     if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     onCursor?.({ id, x, y });
@@ -221,6 +230,15 @@ export function createBoardSync({
 
     /** Whether this client is the one that writes the snapshot. */
     isWriter: () => writer,
+
+    /**
+     * Everyone else presence currently reports, with their labels — the same
+     * list `onMembers` delivers. For tests and for the console, alongside
+     * `app.cursors.list()`: between the two, "who is here" and "whose pointer
+     * is drawn" can be compared, which is the question a cursor nobody can
+     * account for actually poses.
+     */
+    members: () => members().filter((member) => member.id !== clientId),
 
     /** A point in world coordinates, or null for "my pointer has left". */
     moveCursor(point) {

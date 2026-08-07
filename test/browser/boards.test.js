@@ -236,8 +236,41 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
         return { x: Math.round(r.left), y: Math.round(r.top), name: el.textContent };
       })()`);
 
+      /**
+       * Both pages are the same anonymous account, which has no email — so
+       * presence labels it `Guest`.
+       *
+       * Waited for rather than sampled: the label travels with presence and
+       * the position with a broadcast, so a cursor can be drawn before
+       * anything has said what to call it, and the name is only written inside
+       * the frame-coalesced render. Same reason the wait above is generous —
+       * an inactive headless page gets a frame every few seconds, so this is a
+       * wait on a repaint rather than on a message.
+       *
+       * Polled rather than `waitFor`ed so that a failure can say what the name
+       * actually was. "Timed out" would leave the interesting case — presence
+       * never naming anyone at all — indistinguishable from a slow frame.
+       */
+      const nameSettlesTo = async (expected, timeout = 15_000) => {
+        const deadline = Date.now() + timeout;
+        let seen = null;
+        do {
+          seen = await second.eval(`document.querySelector('.cursor')?.textContent ?? null`);
+          if (seen === expected) return seen;
+        } while (Date.now() < deadline);
+        return seen;
+      };
+
+      const settled = await nameSettlesTo('Guest');
+      assert.equal(
+        settled,
+        'Guest',
+        `presence never named the cursor. members = ${await second.eval(
+          'JSON.stringify(window.app.sync.members?.() ?? null)',
+        )}, drawn = ${await second.eval('JSON.stringify(window.app.cursors.list())')}`,
+      );
+
       const before = await at();
-      // both pages are the same anonymous account, which has no email
       assert.equal(before.name, 'Guest');
       assert.deepEqual(await second.eval('window.app.cursors.list().length'), 1);
 
