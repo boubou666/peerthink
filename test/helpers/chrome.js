@@ -98,6 +98,15 @@ export async function launchChrome({ userDataDir, timeout = 60_000 }) {
     if (failedToSpawn) throw giveUp('Chromium could not be started.');
     if (exited) throw giveUp('Chromium exited before it was ready.');
 
+    // Checked before the probe rather than after it. `fetch` has no timeout of
+    // its own, so a port that is bound and silent — accepting the connection
+    // and never answering — parks the loop on an await that nothing settles,
+    // and the deadline below is never reached. Verified: against a stub that
+    // binds, writes its port and then says nothing, this ran past twelve
+    // seconds on a two-second deadline before the signal was added.
+    const left = deadline - Date.now();
+    if (left <= 0) throw giveUp(`Chromium did not answer within ${timeout}ms.`);
+
     // The first line is the port; the second is the browser's websocket path.
     // The file appears when the socket is bound, which is a moment before the
     // HTTP endpoint answers — hence still asking it.
@@ -105,14 +114,16 @@ export async function launchChrome({ userDataDir, timeout = 60_000 }) {
     if (port) {
       const base = `http://127.0.0.1:${port}`;
       try {
-        await (await fetch(`${base}/json/version`)).json();
+        // Capped by what is left, so one probe can never outlive the deadline,
+        // and floored so the last attempt is still a real attempt.
+        const signal = AbortSignal.timeout(Math.max(250, Math.min(2_000, left)));
+        await (await fetch(`${base}/json/version`, { signal })).json();
         return { child, base };
       } catch {
-        // bound but not answering yet
+        // bound but not answering yet — or answering too slowly to be up
       }
     }
 
-    if (Date.now() > deadline) throw giveUp(`Chromium did not answer within ${timeout}ms.`);
     await new Promise((r) => setTimeout(r, 50));
   }
 }
