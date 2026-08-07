@@ -236,8 +236,17 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
         return { x: Math.round(r.left), y: Math.round(r.top), name: el.textContent };
       })()`);
 
+      // Both pages are the same anonymous account, which has no email — so
+      // presence labels it `Guest`. Waited for rather than sampled: the label
+      // travels with presence and the position with a broadcast, so a cursor
+      // can be drawn before anyone has said what to call it. Until then it
+      // reads `Someone`, and asserting immediately was a race that only looked
+      // safe while the unnamed fallback was also the word "Guest".
+      await second.waitFor(`document.querySelector('.cursor')?.textContent === 'Guest'`, {
+        label: 'presence to name the cursor',
+      });
+
       const before = await at();
-      // both pages are the same anonymous account, which has no email
       assert.equal(before.name, 'Guest');
       assert.deepEqual(await second.eval('window.app.cursors.list().length'), 1);
 
