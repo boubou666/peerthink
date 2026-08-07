@@ -153,6 +153,16 @@ describe('export', () => {
       assert.ok(result.total > 0, 'nothing was drawn at all, so the check proved nothing');
     });
 
+    test('is filled with a colour it carries itself', async () => {
+      // Not a name the stylesheet knows, so nothing can be probed for it — the
+      // value on the card is the answer.
+      const result = await painted(
+        [{ id: 'a', type: 'card', x: 0, y: 0, w: 60, h: 40, fill: '#123456' }],
+        `({ at, swatch }) => ({ middle: at(30, 20), expected: swatch('#123456') })`,
+      );
+      assert.deepEqual(result.middle, result.expected);
+    });
+
     test('draws its text in its own colour', async () => {
       // Enough text, large, to be sure of hitting ink rather than paper.
       const result = await painted(

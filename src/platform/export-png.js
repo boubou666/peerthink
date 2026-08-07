@@ -31,6 +31,7 @@ import {
   CARD_INKS,
   CARD_SIZES,
   cardStyle,
+  namedColour,
 } from '../core/card-style.js';
 
 /**
@@ -277,7 +278,11 @@ export function createPngExporter({ document, window }) {
      */
     if (style.fill !== 'none') {
       rounded(ctx, obj.x, obj.y, obj.w, obj.h, RADIUS);
-      ctx.fillStyle = palette.card[style.fill] ?? palette.card.yellow;
+      // A named colour is whatever the stylesheet currently says it is, so it
+      // is looked up; one the card carries is already the answer.
+      ctx.fillStyle = namedColour(style.fill)
+        ? palette.card[style.fill] ?? palette.card.yellow
+        : style.fill;
       shadowed(ctx, () => ctx.fill());
     }
 
@@ -293,7 +298,7 @@ export function createPngExporter({ document, window }) {
       },
       {
         size: palette.cardSize[style.size] ?? CARD.size,
-        color: palette.cardInk[style.ink] ?? palette.cardInk.ink,
+        color: namedColour(style.ink) ? palette.cardInk[style.ink] ?? palette.cardInk.ink : style.ink,
         family: palette.cardFamily[style.font] ?? palette.family,
         align: style.align,
       },

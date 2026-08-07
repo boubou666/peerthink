@@ -9,13 +9,16 @@
  * Rule for every `update`: never write to the field the user is focused on.
  */
 
-import { CARD_STYLE_FIELDS, cardStyle } from '../core/card-style.js';
+import { CARD_STYLE_FIELDS, cardStyle, namedColour } from '../core/card-style.js';
 export function createViews({ document }) {
   const element = (html) => {
     const template = document.createElement('template');
     template.innerHTML = html.trim();
     return template.content.firstElementChild;
   };
+
+  /** The property each colour field would have set, had it been a named one. */
+  const CUSTOM_PROPERTY = { fill: '--card-bg', ink: '--card-ink' };
 
   const setText = (el, value) => {
     if (document.activeElement !== el && el.innerText !== value) el.innerText = value ?? '';
@@ -38,11 +41,26 @@ export function createViews({ document }) {
         <div class="card-text" contenteditable="true" data-field="text"></div>
       </div>`),
       update(el, obj) {
-        // One attribute per style field, resolved through cardStyle so an
-        // unknown token from a newer client falls back instead of matching no
-        // rule at all — which would draw a card with no background.
+        /**
+         * One attribute per style field, resolved through cardStyle so an
+         * unknown token from a newer client falls back instead of matching no
+         * rule at all — which would draw a card with no background.
+         *
+         * A colour the card carries itself cannot be an attribute, because no
+         * stylesheet rule can be written for a value nobody knew in advance.
+         * It goes in as the custom property the rules would have set, with the
+         * attribute reading `custom` so the two cases stay distinguishable —
+         * from CSS, and from a test.
+         */
         const style = cardStyle(obj);
-        for (const field of CARD_STYLE_FIELDS) el.dataset[field] = style[field];
+        for (const field of CARD_STYLE_FIELDS) {
+          const value = style[field];
+          const custom = CUSTOM_PROPERTY[field] && !namedColour(value);
+          el.dataset[field] = custom ? 'custom' : value;
+          if (!CUSTOM_PROPERTY[field]) continue;
+          if (custom) el.style.setProperty(CUSTOM_PROPERTY[field], value);
+          else el.style.removeProperty(CUSTOM_PROPERTY[field]);
+        }
         setText(el.querySelector('[data-field="text"]'), obj.text);
       },
     },

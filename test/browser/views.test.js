@@ -64,6 +64,33 @@ describe('views', () => {
       assert.equal(painted, 'rgb(255, 196, 214)', 'the old attribute selector no longer paints');
     });
 
+    test('a colour the card carries itself is painted, without an attribute for it', async () => {
+      const id = await add('card', { x: 0, y: 0, text: 'custom', fill: '#123456', ink: '#abcdef' });
+
+      const style = await styleOf(id);
+      assert.equal(style.fill, 'custom', 'a value nobody knew in advance became an attribute');
+      assert.equal(style.ink, 'custom');
+
+      const painted = await page.eval(`(() => {
+        const el = document.querySelector('[data-id="${id}"]');
+        return { bg: getComputedStyle(el).backgroundColor, ink: getComputedStyle(el.querySelector('.card-text')).color };
+      })()`);
+      assert.equal(painted.bg, 'rgb(18, 52, 86)');
+      assert.equal(painted.ink, 'rgb(171, 205, 239)');
+    });
+
+    test('going back to a named colour clears the custom one', async () => {
+      const id = await add('card', { x: 0, y: 0, fill: '#123456' });
+      await page.eval(`app.store.apply([{t:'set', id:"${id}", patch:{fill: 'pink'}}], false)`);
+
+      assert.equal((await styleOf(id)).fill, 'pink');
+      assert.equal(
+        await page.eval(`getComputedStyle(document.querySelector('[data-id="${id}"]')).backgroundColor`),
+        'rgb(255, 196, 214)',
+        'the inline custom property outlived the custom colour',
+      );
+    });
+
     test('a transparent card paints nothing, and still shows its text', async () => {
       const id = await add('card', { x: 0, y: 0, text: 'floating', fill: 'none' });
 

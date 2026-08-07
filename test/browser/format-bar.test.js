@@ -57,6 +57,21 @@ describe('format bar', () => {
       label: `${field} to become ${value} on screen`,
     });
 
+  /**
+   * Drive a native colour input. It answers to `input`, not `change` — which
+   * is what makes the cards follow the cursor through the spectrum.
+   */
+  const pick = async (field, hex) => {
+    await page.waitFor(`document.querySelector('[data-format-bar] [data-field="${field}"]') !== null`, {
+      label: `the ${field} picker`,
+    });
+    await page.eval(`(() => {
+      const el = document.querySelector('[data-format-bar] [data-field="${field}"]');
+      el.value = ${JSON.stringify(hex)};
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+  };
+
   const styleOf = (id) => page.eval(`(() => {
     const el = document.querySelector('[data-id="${id}"]');
     return { ...el.dataset };
@@ -86,8 +101,8 @@ describe('format bar', () => {
     const id = await addCard();
     await select(id);
 
-    await click('[data-format-bar] .fmt-fill[data-value="blue"]');
-    await click('[data-format-bar] .fmt-ink[data-value="red"]');
+    await pick('fill', '#b4d5ff');
+    await pick('ink', '#b3261e');
     await click('[data-format-bar] .fmt-align[data-value="center"]');
     await page.eval(`(() => {
       const el = document.querySelector('[data-format-bar] [data-field="size"]');
@@ -97,8 +112,11 @@ describe('format bar', () => {
     await settled(id, 'size', 'xl');
 
     const style = await styleOf(id);
-    assert.equal(style.fill, 'blue');
-    assert.equal(style.ink, 'red');
+    // A colour the card carries itself cannot be an attribute — no rule can be
+    // written for a value nobody knew in advance — so the attribute says so
+    // and the value is the custom property the rules would have set.
+    assert.equal(style.fill, 'custom');
+    assert.equal(style.ink, 'custom');
     assert.equal(style.align, 'center');
     assert.equal(style.size, 'xl');
 
@@ -118,7 +136,7 @@ describe('format bar', () => {
     const id = await addCard({ text: 'floating' });
     await select(id);
 
-    await click('[data-format-bar] .fmt-fill[data-value="none"]');
+    await click('[data-format-bar] .fmt-transparent');
     await settled(id, 'fill', 'none');
 
     assert.equal(
@@ -132,19 +150,19 @@ describe('format bar', () => {
     const second = await addCard({ x: 500 });
     await select(first, second);
 
-    await click('[data-format-bar] .fmt-fill[data-value="green"]');
-    await settled(first, 'fill', 'green');
-    await settled(second, 'fill', 'green');
-    assert.equal((await styleOf(first)).fill, 'green');
-    assert.equal((await styleOf(second)).fill, 'green');
+    await pick('fill', '#b8e6bd');
+    await settled(first, 'fill', 'custom');
+    await settled(second, 'fill', 'custom');
+    assert.equal((await styleOf(first)).fill, 'custom');
+    assert.equal((await styleOf(second)).fill, 'custom');
 
     // One op batch, so one undo — not one per card.
     await page.eval('app.store.undo()');
-    await page.waitFor(`document.querySelector('[data-id="${first}"]').dataset.fill !== 'green'`, {
+    await page.waitFor(`document.querySelector('[data-id="${first}"]').dataset.fill !== 'custom'`, {
       label: 'the undo to reach the screen',
     });
-    assert.notEqual((await styleOf(first)).fill, 'green');
-    assert.notEqual((await styleOf(second)).fill, 'green');
+    assert.notEqual((await styleOf(first)).fill, 'custom');
+    assert.notEqual((await styleOf(second)).fill, 'custom');
   });
 
   /**
@@ -156,15 +174,20 @@ describe('format bar', () => {
     const yellow = await addCard({ fill: 'yellow' });
     const pink = await addCard({ x: 500, fill: 'pink' });
 
+    const showing = () => page.eval(`document.querySelector('[data-format-bar] [data-field="fill"]').value`);
+
     await select(yellow);
-    await page.waitFor(`document.querySelector('[data-format-bar] .fmt-fill[data-current]') !== null`, {
-      label: 'the current swatch',
-    });
+    await page.waitFor(`document.querySelector('[data-format-bar]') !== null`, { label: 'the bar' });
+    assert.equal(await showing(), '#ffe98a', "the picker did not show the card's colour");
 
     await select(yellow, pink);
-    await page.waitFor(`document.querySelector('[data-format-bar] .fmt-fill[data-current]') === null`, {
-      label: 'the current swatch to be dropped',
-    });
+    await page.waitFor(`document.querySelector('[data-format-bar] [data-field="fill"]').value === '#ffe98a'`, {
+      label: 'the picker to fall back',
+    }).catch(() => {});
+
+    // Nothing true to show, so it shows the default rather than one card's
+    // colour dressed up as everyone's — pink must not be what is displayed.
+    assert.notEqual(await showing(), '#ffc4d6', "one card's colour was shown as the selection's");
   });
 
   test('the bar follows the card when the camera moves', async () => {
