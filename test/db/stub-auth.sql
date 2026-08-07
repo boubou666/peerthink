@@ -74,3 +74,63 @@ $$;
 
 grant usage on schema auth to anon, authenticated;
 grant usage on schema public to anon, authenticated;
+
+-- Realtime's surface, to the same depth as auth's above.
+--
+-- `20260804154000_board_broadcast.sql` puts policies on `realtime.messages`,
+-- because a private channel is authorised by row level security on that table
+-- the same way a table is. On a bare Postgres the schema does not exist, so
+-- that migration failed with `schema "realtime" does not exist` and every
+-- migration after it never ran — which meant the RLS suite could not run at
+-- all without Docker, and the README's promise that it runs against any
+-- Postgres was not true.
+--
+-- What the policies actually read is `realtime.topic()` and nothing else: no
+-- column of `realtime.messages` appears in either of them. So the table is
+-- here to be a thing policies can attach to, and the columns are the ones
+-- Supabase's own table carries, so that a policy written against the real
+-- schema does not fail here for referring to one.
+create schema if not exists realtime;
+
+create table if not exists realtime.messages (
+  id bigint generated always as identity primary key,
+  topic text not null,
+  extension text,
+  event text,
+  payload jsonb,
+  private boolean default false,
+  inserted_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- Enabled, and deliberately with no policy of its own: default-deny is what
+-- the migration's own comment says the starting point is, and the two policies
+-- it adds are the whole of the access. A stub that left RLS off would let the
+-- suite pass against a table that refuses nobody.
+alter table realtime.messages enable row level security;
+
+-- On a hosted project this reports the topic of the channel the statement is
+-- being authorised for. Here it reads a setting, which is the same shape as
+-- auth.uid() above reading the JWT claim: a test says who it is and where it
+-- is, and the policy is what decides.
+create or replace function realtime.topic()
+returns text
+language sql
+stable
+as $$ select nullif(current_setting('realtime.topic', true), '') $$;
+
+grant usage on schema realtime to anon, authenticated;
+
+-- Usage on the schema is not access to the table. A hosted project grants
+-- `authenticated` these privileges on realtime.messages and lets the policies
+-- decide the rest — so a stub that grants only schema usage refuses a join at
+-- the privilege layer, before RLS is consulted at all. Any test written later
+-- against the broadcast policies would then be refused for the wrong reason,
+-- and a refusal is what such a test expects to see. That is the same way the
+-- two environments disagreed in 20260805153000_revoke_anon_table_grants.sql,
+-- read from the other end.
+--
+-- To `authenticated` only. Both policies are `to authenticated`, and the anon
+-- role has no business on a private channel — granting it here would recreate
+-- exactly what that migration exists to take away.
+grant select, insert on realtime.messages to authenticated;

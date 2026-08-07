@@ -2,10 +2,11 @@
 //
 //   node test/db/apply.js [--stub]
 //
-// --stub first installs the Supabase surface the migrations expect (the auth
-// schema, auth.uid(), the anon and authenticated roles). Pass it when the
-// target is a bare Postgres; leave it off for a real Supabase database, which
-// has all of that already and would not thank you for a second opinion.
+// --stub first installs the Supabase surface the migrations expect: the auth
+// schema, auth.uid(), the anon and authenticated roles, and the realtime
+// schema the broadcast policies attach to. Pass it when the target is a bare
+// Postgres; leave it off for a real Supabase database, which has all of that
+// already and would not thank you for a second opinion.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
