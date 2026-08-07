@@ -110,16 +110,73 @@ body:has(.board-page) { overflow: hidden; }
 }
 .card.selected { box-shadow: var(--shadow), 0 0 0 calc(2px / var(--z)) var(--accent); }
 .card-text {
-  font-size: 14px;
+  /* Fallbacks, so a card with no style attributes at all — one written before
+     any of this — looks exactly as it did. */
+  font-family: var(--card-family, inherit);
+  font-size: var(--card-size, 14px);
+  color: var(--card-ink, inherit);
+  text-align: var(--card-align, left);
   line-height: 1.4;
   height: 100%;
   overflow: hidden;
 }
-.card[data-color="yellow"] { --card-bg: #ffe98a; }
-.card[data-color="blue"]   { --card-bg: #b4d5ff; }
-.card[data-color="green"]  { --card-bg: #b8e6bd; }
-.card[data-color="pink"]   { --card-bg: #ffc4d6; }
-.card[data-color="white"]  { --card-bg: #ffffff; }
+/*
+ * A card's style, one attribute per field.
+ *
+ * The stylesheet owns what each token means, so a value is retuned in one
+ * place and the PNG export reads it back out of the document rather than
+ * keeping a copy — see `readPalette`.
+ *
+ * These are deliberately the same in both themes. A card is paper: it keeps a
+ * light background in the dark theme too, which is why `.card` fixes its text
+ * colour rather than following `--ink`, and why the ink tokens below are dark
+ * on the assumption of a light card. `none` is the exception, and the one
+ * combination that can go wrong — transparent fill plus dark text on a dark
+ * board. Left as the user's choice rather than second-guessed.
+ *
+ * `data-color` is still matched alongside `data-fill`: boards written before
+ * the field was renamed are still out there, and a card is not worth losing
+ * over a word.
+ */
+.card[data-fill="yellow"], .card[data-color="yellow"] { --card-bg: #ffe98a; }
+.card[data-fill="blue"],   .card[data-color="blue"]   { --card-bg: #b4d5ff; }
+.card[data-fill="green"],  .card[data-color="green"]  { --card-bg: #b8e6bd; }
+.card[data-fill="pink"],   .card[data-color="pink"]   { --card-bg: #ffc4d6; }
+.card[data-fill="white"],  .card[data-color="white"]  { --card-bg: #ffffff; }
+
+/*
+ * Transparent, and therefore invisible until it is selected or has text. The
+ * dashed outline is what stops an empty one being a card you cannot find; it
+ * is drawn in the DOM only, because a picture of a board should show what is
+ * on the board rather than the scaffolding for editing it.
+ */
+.card[data-fill="none"] {
+  --card-bg: transparent;
+
+  box-shadow: none;
+  outline: calc(1px / var(--z)) dashed var(--line);
+  outline-offset: calc(-1px / var(--z));
+}
+.card[data-fill="none"].selected { box-shadow: 0 0 0 calc(2px / var(--z)) var(--accent); }
+
+.card[data-ink="ink"]   { --card-ink: #1c1b19; }
+.card[data-ink="muted"] { --card-ink: #78766f; }
+.card[data-ink="red"]   { --card-ink: #b3261e; }
+.card[data-ink="blue"]  { --card-ink: #1a4fb4; }
+.card[data-ink="white"] { --card-ink: #ffffff; }
+
+.card[data-font="sans"]  { --card-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.card[data-font="serif"] { --card-family: Georgia, "Times New Roman", serif; }
+.card[data-font="mono"]  { --card-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+.card[data-size="sm"] { --card-size: 12px; }
+.card[data-size="md"] { --card-size: 14px; }
+.card[data-size="lg"] { --card-size: 18px; }
+.card[data-size="xl"] { --card-size: 24px; }
+
+.card[data-align="left"]   { --card-align: left; }
+.card[data-align="center"] { --card-align: center; }
+.card[data-align="right"]  { --card-align: right; }
 
 /* envelope */
 
@@ -296,3 +353,107 @@ body:has(.board-page) { overflow: hidden; }
   border-radius: 5px;
   padding: 4px 6px;
 }
+
+/* ---------------------------------------------------------------------------
+ * The format bar
+ *
+ * Chrome in screen space, over the stage — not inside the transformed world
+ * layer, for the reason the handles and cursors are not either: anything that
+ * scales with the camera is unreadable at 30% and absurd at 300%.
+ *
+ * Positioned by its own centre so the arithmetic that keeps it on screen can
+ * work in stage coordinates and stay honest about where the middle is.
+ * ------------------------------------------------------------------------ */
+
+.format-bar {
+  /* Fixed, not absolute: `toScreen` gives viewport coordinates and #stage is
+     itself fixed at inset 0, so this shares that coordinate space rather than
+     the document's. */
+  position: fixed;
+  z-index: 5;
+  transform: translate(-50%, -100%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+}
+
+/* No room above the selection, so it goes below it instead. */
+.format-bar[data-below] { transform: translate(-50%, 0); }
+
+.fmt-group { display: flex; align-items: center; gap: 4px; }
+.fmt-sep { width: 1px; height: 18px; background: var(--line); }
+
+/* 24px, which is the smallest thing a finger reliably hits. The visible
+   square is smaller than the button; the padding is the target. */
+.fmt-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 3px;
+  background-clip: content-box;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.fmt-swatch[data-current] { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.fmt-fill[data-value="yellow"] { background: #ffe98a; }
+.fmt-fill[data-value="blue"]   { background: #b4d5ff; }
+.fmt-fill[data-value="green"]  { background: #b8e6bd; }
+.fmt-fill[data-value="pink"]   { background: #ffc4d6; }
+.fmt-fill[data-value="white"]  { background: #ffffff; }
+
+/*
+ * Transparent, shown as a diagonal through an empty square rather than as an
+ * empty square — which would read as white, the swatch next to it.
+ */
+.fmt-fill[data-value="none"] {
+  background:
+    linear-gradient(to top right,
+      transparent calc(50% - 1px), var(--muted) calc(50% - 1px),
+      var(--muted) calc(50% + 1px), transparent calc(50% + 1px));
+}
+
+.fmt-ink[data-value="ink"]   { background: #1c1b19; }
+.fmt-ink[data-value="muted"] { background: #78766f; }
+.fmt-ink[data-value="red"]   { background: #b3261e; }
+.fmt-ink[data-value="blue"]  { background: #1a4fb4; }
+.fmt-ink[data-value="white"] { background: #ffffff; }
+
+.fmt-select {
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+/* Three bars, because no font ships a distinct glyph for each alignment. */
+.fmt-align {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+.fmt-align[data-current] { border-color: var(--accent); }
+.fmt-align[data-value="left"]   { align-items: flex-start; }
+.fmt-align[data-value="center"] { align-items: center; }
+.fmt-align[data-value="right"]  { align-items: flex-end; }
+
+.fmt-bar { height: 2px; background: var(--ink); border-radius: 1px; }
+.fmt-bar:nth-child(1) { width: 100%; }
+.fmt-bar:nth-child(2) { width: 60%; }
+.fmt-bar:nth-child(3) { width: 85%; }
