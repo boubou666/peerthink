@@ -236,15 +236,32 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
         return { x: Math.round(r.left), y: Math.round(r.top), name: el.textContent };
       })()`);
 
-      // Both pages are the same anonymous account, which has no email — so
-      // presence labels it `Guest`. Waited for rather than sampled: the label
-      // travels with presence and the position with a broadcast, so a cursor
-      // can be drawn before anyone has said what to call it. Until then it
-      // reads `Someone`, and asserting immediately was a race that only looked
-      // safe while the unnamed fallback was also the word "Guest".
-      await second.waitFor(`document.querySelector('.cursor')?.textContent === 'Guest'`, {
-        label: 'presence to name the cursor',
-      });
+      /**
+       * Both pages are the same anonymous account, which has no email — so
+       * presence labels it `Guest`.
+       *
+       * Waited for rather than sampled: the label travels with presence and
+       * the position with a broadcast, so a cursor can be drawn before
+       * anything has said what to call it, and the name is only written inside
+       * the frame-coalesced render. Same reason the wait above is generous —
+       * an inactive headless page gets a frame every few seconds, so this is a
+       * wait on a repaint rather than on a message.
+       *
+       * Polled rather than `waitFor`ed so that a failure can say what the name
+       * actually was. "Timed out" would leave the interesting case — presence
+       * never naming anyone at all — indistinguishable from a slow frame.
+       */
+      const nameSettlesTo = async (expected, timeout = 15_000) => {
+        const deadline = Date.now() + timeout;
+        let seen = null;
+        do {
+          seen = await second.eval(`document.querySelector('.cursor')?.textContent ?? null`);
+          if (seen === expected) return seen;
+        } while (Date.now() < deadline);
+        return seen;
+      };
+
+      assert.equal(await nameSettlesTo('Guest'), 'Guest', 'presence never named the cursor');
 
       const before = await at();
       assert.equal(before.name, 'Guest');
