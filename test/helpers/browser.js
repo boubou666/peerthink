@@ -133,12 +133,40 @@ export async function openApp({
      * Poll until an expression is truthy. Use this instead of sleeping past a
      * debounce — a fixed delay that is generous on a laptop is a coin flip on
      * a loaded CI runner.
+     *
+     * `context` is an expression evaluated only when the wait expires, and its
+     * value is put in the error. A timeout says a thing did not happen and
+     * nothing about the state it did not happen in, which is survivable when
+     * the failure is reproducible and useless when it is not — and these
+     * suites have flaked on CI and passed on re-run, which is exactly the case
+     * where the one report you get is the only evidence there will be.
      */
-    async waitFor(expression, { timeout = 5_000, label = expression } = {}) {
+    async waitFor(expression, { timeout = 5_000, label = expression, context = null } = {}) {
       const deadline = Date.now() + timeout;
       for (;;) {
         if (await api.eval(expression).catch(() => false)) return;
-        if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+        if (Date.now() > deadline) {
+          // Read after the deadline, so a passing wait never pays for it. The
+          // read can fail, and it can also hang: a page busy enough to miss
+          // the deadline is exactly the page whose next evaluate might never
+          // come back, and a diagnostic that hangs replaces a failing test
+          // with one that never finishes. So it races a timer, and every way
+          // it can go wrong ends in a string rather than in an error that
+          // would take the place of the timeout being reported.
+          const state = context
+            ? await Promise.race([
+                api.eval(context).then(
+                  // `undefined` survives as a word: JSON.stringify gives back
+                  // undefined rather than a string for it, which would print
+                  // as though no context had been asked for at all.
+                  (value) => (value === undefined ? 'undefined' : JSON.stringify(value)),
+                  (error) => `unreadable: ${error.message}`,
+                ),
+                sleep(2_000).then(() => 'unreadable: the page did not answer'),
+              ])
+            : null;
+          throw new Error(`timed out waiting for ${label}${state === null ? '' : `; state = ${state}`}`);
+        }
         await sleep(25);
       }
     },

@@ -61,7 +61,7 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
       },
     });
     const status = await sync.ready;
-    return {
+    const participant = {
       store,
       scheduler,
       sync,
@@ -71,8 +71,58 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
         taps.add(fn);
         return () => taps.delete(fn);
       },
+      label: `${user === alice ? 'alice' : 'bob'} on ${boardId}`,
     };
+
+    // Registered so a timeout can describe every client in the test without
+    // each call site having to remember to say so — the one that flakes is
+    // never the one anybody thought to annotate.
+    joined.add(participant);
+    return participant;
   };
+
+  /**
+   * Everyone `join()` has made, and what state they are in.
+   *
+   * Cleared per test, so a timeout describes this test's clients rather than
+   * the accumulated cast of the file. Nothing removes a participant on
+   * destroy(): a client that has been torn down is exactly the sort of thing
+   * worth seeing in a report about something that did not arrive.
+   */
+  const joined = new Set();
+  beforeEach(() => joined.clear());
+
+  /**
+   * What a store holds, with enough of each object to settle an argument.
+   *
+   * Ids alone answer "did it arrive". They do not answer "did the right thing
+   * arrive", which is what several of these waits are actually about — one of
+   * them waits for `get('c1').text === 'third'`, and against that a report
+   * saying `c1` is present is no help at all.
+   */
+  const describeStore = (store) =>
+    store.order
+      .map((id) => {
+        const object = store.get(id);
+        return typeof object?.text === 'string' ? `${id}="${object.text}"` : String(id);
+      })
+      .join(',');
+
+  const whoIsHere = () =>
+    // Guarded per participant rather than around the lot: one client that
+    // cannot be described should cost its own line, not everybody else's. A
+    // description that throws would otherwise replace the timeout with its own
+    // error, and the one moment this exists for is the one moment it must not
+    // be the thing that breaks.
+    [...joined]
+      .map((p) => {
+        try {
+          return `${p.label}: status=${p.status}, writer=${p.sync.isWriter()}, objects=[${describeStore(p.store)}]`;
+        } catch (error) {
+          return `${p.label ?? 'a client'}: could not be described (${error.message})`;
+        }
+      })
+      .join('; ');
 
   const card = (id, text = 'hello') => ({ id, type: 'card', x: 0, y: 0, w: 100, h: 60, text });
   const board = () => ({ v: 1, order: [], objects: [] });
@@ -108,7 +158,12 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
     const deadline = Date.now() + timeout;
     for (;;) {
       if (predicate()) return;
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+      // Every client in the test, not just the one this wait was about. These
+      // have flaked on CI and passed on re-run, and for a failure that does
+      // not reproduce the one report is the whole of the evidence — "timed out
+      // waiting for the op to arrive" says a thing did not happen and nothing
+      // about the state it did not happen in.
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${label} — ${whoIsHere()}`);
       await new Promise((r) => setTimeout(r, 20));
     }
   };
