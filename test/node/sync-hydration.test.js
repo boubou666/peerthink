@@ -116,6 +116,34 @@ describe('ops that arrive before the snapshot', () => {
     assert.equal(store.has('c1'), false);
   });
 
+  test('and so is everything that arrives after the load failed', async () => {
+    // The failure is terminal, not a moment. Before this client joined the
+    // channel early, a load that failed meant no channel at all and so no
+    // remote ops ever — letting later ones through would be a new way to put
+    // somebody's work where it cannot be saved.
+    const { store, arrive } = build({ heldUntil: Promise.reject(new Error('no')) });
+    await settle();
+
+    arrive([{ t: 'add', obj: card('c2') }]);
+    await settle();
+
+    assert.equal(store.has('c2'), false, 'an op after a failed load was applied anyway');
+  });
+
+  test('and so is everything that arrives after the app was destroyed', async () => {
+    // A load that never settles leaves the gate pending for ever; destroy() is
+    // what stops the buffer outliving the app that was waiting on it.
+    const { store, sync, arrive } = build({ heldUntil: new Promise(() => {}) });
+
+    arrive([{ t: 'add', obj: card('c1') }]);
+    await sync.destroy();
+    arrive([{ t: 'add', obj: card('c2') }]);
+    await settle();
+
+    assert.equal(store.has('c1'), false);
+    assert.equal(store.has('c2'), false);
+  });
+
   test('with nothing to wait for, they are applied as they arrive', async () => {
     // The offline and local-storage builds pass no promise: there is no window
     // to cover, and holding would mean holding for ever.

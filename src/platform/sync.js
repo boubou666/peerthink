@@ -146,6 +146,12 @@ export function createBoardSync({
    */
   const held = [];
   let holding = Boolean(heldUntil);
+  // Terminal. A load that failed does not fail only for the ops already in
+  // hand: there is no document for the next one either, and letting later
+  // batches through would drip other people's work into a board that cannot be
+  // saved — while before this client joined early, a failed load meant no
+  // channel at all and so no remote ops ever.
+  let abandoned = false;
 
   const release = () => {
     holding = false;
@@ -156,6 +162,7 @@ export function createBoardSync({
   if (heldUntil) {
     Promise.resolve(heldUntil).then(release, () => {
       holding = false;
+      abandoned = true;
       held.length = 0;
     });
   }
@@ -171,6 +178,8 @@ export function createBoardSync({
     // does not understand either, and half-applying that is worse than
     // ignoring it.
     if (!ops.every(isOp)) return;
+
+    if (abandoned) return;
 
     // Checked after validation, so nothing is held that would have been
     // dropped on arrival — a replay is not the place to discover that.
@@ -292,6 +301,12 @@ export function createBoardSync({
 
     async destroy() {
       stopped = true;
+      // A load that never settles leaves `heldUntil` pending for ever, and the
+      // reaction waiting on it keeps every op it collected alive with it.
+      // Nothing is going to apply them now, so they go with the channel.
+      holding = false;
+      abandoned = true;
+      held.length = 0;
       unsubscribeStore();
       await client.removeChannel(channel);
     },
