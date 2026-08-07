@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 
+import { barPosition } from '../core/bar-position.js';
+
 import {
   CARD_ALIGNS,
   CARD_FILLS,
@@ -41,50 +43,6 @@ const SWATCH_LABELS = {
     blue: 'Blue text', white: 'White text',
   },
 };
-
-const GAP = 14;
-const MIN_MARGIN = 8;
-
-/**
- * Where the bar sits, in viewport coordinates, given what is selected.
- *
- * `x` is the bar's *centre*, because that is what the transform positions by.
- * Clamping it therefore has to allow for half the bar's own width — clamping
- * the centre alone still leaves half the controls off-screen, which is exactly
- * the failure the clamp is here to prevent. `width` is measured rather than
- * assumed, and is 0 on the first paint, when the clamp simply does less.
- *
- * `below` derives from the selection's *bottom*, not its top. Flipping the
- * transform while keeping the top would draw the bar downwards from above the
- * cards and cover them.
- */
-export function barPosition(cards, viewport, stage, width = 0) {
-  if (!cards.length) return null;
-
-  const left = Math.min(...cards.map((card) => card.x));
-  const right = Math.max(...cards.map((card) => card.x + card.w));
-  const top = Math.min(...cards.map((card) => card.y));
-  const bottom = Math.max(...cards.map((card) => card.y + card.h));
-
-  const topLeft = viewport.toScreen(left, top);
-  const topRight = viewport.toScreen(right, top);
-  const under = viewport.toScreen(left, bottom);
-
-  const half = width / 2;
-  const lowest = MIN_MARGIN + half;
-  const highest = stage.width - MIN_MARGIN - half;
-
-  // A bar wider than the stage cannot satisfy both margins; centring it is the
-  // least bad answer, and is what `Math.max` picks when the bounds cross.
-  const centre = (topLeft.x + topRight.x) / 2;
-  const below = topLeft.y - GAP < MIN_MARGIN;
-
-  return {
-    x: Math.min(Math.max(centre, lowest), Math.max(highest, lowest)),
-    y: below ? under.y + GAP : topLeft.y - GAP,
-    below,
-  };
-}
 
 export function FormatBar({ app, stage: stageEl }) {
   const { store, selection, viewport } = app;

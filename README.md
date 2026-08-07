@@ -64,6 +64,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
               │   ├── geometry.js    rectangle maths
               │   ├── ids.js         id generation
               │   ├── card-style.js  how a card looks, as tokens
+              │   ├── bar-position.js where the format bar sits
               │   └── seed.js        the starter board
               └── platform/   the browser. Adapters, nothing else.
                   ├── renderer.js    reconciles the store into the DOM
