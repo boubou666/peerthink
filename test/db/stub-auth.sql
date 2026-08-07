@@ -120,3 +120,17 @@ stable
 as $$ select nullif(current_setting('realtime.topic', true), '') $$;
 
 grant usage on schema realtime to anon, authenticated;
+
+-- Usage on the schema is not access to the table. A hosted project grants
+-- `authenticated` these privileges on realtime.messages and lets the policies
+-- decide the rest — so a stub that grants only schema usage refuses a join at
+-- the privilege layer, before RLS is consulted at all. Any test written later
+-- against the broadcast policies would then be refused for the wrong reason,
+-- and a refusal is what such a test expects to see. That is the same way the
+-- two environments disagreed in 20260805153000_revoke_anon_table_grants.sql,
+-- read from the other end.
+--
+-- To `authenticated` only. Both policies are `to authenticated`, and the anon
+-- role has no business on a private channel — granting it here would recreate
+-- exactly what that migration exists to take away.
+grant select, insert on realtime.messages to authenticated;
