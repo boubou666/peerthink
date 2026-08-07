@@ -70,3 +70,53 @@ jobs:
 
       - name: Fail on a production advisory
         run: npm audit --omit=dev --audit-level=high
+
+  # The README says the policies can be tested against any Postgres, and until
+  # this job existed nothing checked that. They could not: the broadcast
+  # migration failed on a bare database with `schema "realtime" does not
+  # exist`, and the only path anyone exercised was the one with Docker under
+  # it. A promise about the setup people fall back to is worth exactly what
+  # tests it — so this runs the same suite against plain Postgres, with the
+  # stub standing in for what a hosted project would have provided.
+  bare-postgres:
+    name: RLS against a bare Postgres
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        # Without this the first connection races the server's own startup.
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # --stub because the target has none of Supabase's surface. This is the
+      # step that used to fail, and it fails loudly: apply() names the
+      # migration that threw.
+      - name: Install the Supabase surface, then the migrations
+        run: node test/db/apply.js --stub
+
+      - name: Run the row level security tests
+        run: npm run test:db
