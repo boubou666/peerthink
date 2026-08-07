@@ -557,6 +557,21 @@ describe('row level security', { skip: URL ? false : 'DATABASE_URL is not set' }
         await givenAliceHasABoard();
         await assert.rejects(() => sends(bob, 'board:alpha'), /row-level security/i);
       });
+
+      /**
+       * The mirror of the listening case above, and it was missing: every
+       * other sending case here names a real board, so a regression that let
+       * writes through whenever the topic was not an authorised board would
+       * have passed the lot. The two policies are separate objects and can
+       * rot separately, which is the reason to ask each of them the same
+       * question rather than to ask one and infer the other.
+       */
+      test('a topic that is not a board takes no writes either', async () => {
+        await givenAliceHasABoard();
+
+        await assert.rejects(() => sends(alice, 'presence:lobby'), /row-level security/i);
+        await assert.rejects(() => sends(alice, 'board:no-such-board'), /row-level security/i);
+      });
     });
   });
 });
