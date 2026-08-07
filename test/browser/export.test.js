@@ -133,13 +133,24 @@ describe('export', () => {
       assert.deepEqual(result.middle, result.expected);
     });
 
-    /** Transparent means the paper is not drawn — and neither is its shadow. */
+    /**
+     * Transparent means the paper is not drawn — and neither is its shadow,
+     * which a middle pixel would never have caught. Every pixel of the frame
+     * is checked, with padding so the shadow has somewhere to fall.
+     */
     test('is not drawn at all when its fill is transparent', async () => {
       const result = await painted(
         [{ id: 'a', type: 'card', x: 0, y: 0, w: 60, h: 40, fill: 'none' }],
-        `({ at, swatch, palette }) => ({ middle: at(30, 20), expected: swatch(palette.bg) })`,
+        `({ pixels, swatch, palette }) => {
+          const bg = swatch(palette.bg);
+          const stray = pixels.filter(([r, g, b]) =>
+            Math.abs(r - bg[0]) > 2 || Math.abs(g - bg[1]) > 2 || Math.abs(b - bg[2]) > 2);
+          return { strays: stray.length, total: pixels.length };
+        }`,
+        { padding: 20 },
       );
-      assert.deepEqual(result.middle, result.expected, 'a transparent card left paint behind');
+      assert.equal(result.strays, 0, `a transparent card left ${result.strays} painted pixels behind`);
+      assert.ok(result.total > 0, 'nothing was drawn at all, so the check proved nothing');
     });
 
     test('draws its text in its own colour', async () => {

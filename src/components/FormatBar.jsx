@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from 'react';
+import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 
 import {
   CARD_ALIGNS,
@@ -30,31 +30,61 @@ import {
 const SIZE_LABELS = { sm: 'S', md: 'M', lg: 'L', xl: 'XL' };
 const FONT_LABELS = { sans: 'Sans', serif: 'Serif', mono: 'Mono' };
 
-/** Where the bar sits, in stage coordinates, given what is selected. */
-export function barPosition(cards, viewport, stage) {
+/** What a screen reader should say, rather than the token stored. */
+const SWATCH_LABELS = {
+  fill: {
+    yellow: 'Yellow background', blue: 'Blue background', green: 'Green background',
+    pink: 'Pink background', white: 'White background', none: 'No background',
+  },
+  ink: {
+    ink: 'Black text', muted: 'Grey text', red: 'Red text',
+    blue: 'Blue text', white: 'White text',
+  },
+};
+
+const GAP = 14;
+const MIN_MARGIN = 8;
+
+/**
+ * Where the bar sits, in viewport coordinates, given what is selected.
+ *
+ * `x` is the bar's *centre*, because that is what the transform positions by.
+ * Clamping it therefore has to allow for half the bar's own width — clamping
+ * the centre alone still leaves half the controls off-screen, which is exactly
+ * the failure the clamp is here to prevent. `width` is measured rather than
+ * assumed, and is 0 on the first paint, when the clamp simply does less.
+ *
+ * `below` derives from the selection's *bottom*, not its top. Flipping the
+ * transform while keeping the top would draw the bar downwards from above the
+ * cards and cover them.
+ */
+export function barPosition(cards, viewport, stage, width = 0) {
   if (!cards.length) return null;
 
   const left = Math.min(...cards.map((card) => card.x));
   const right = Math.max(...cards.map((card) => card.x + card.w));
   const top = Math.min(...cards.map((card) => card.y));
+  const bottom = Math.max(...cards.map((card) => card.y + card.h));
 
-  const a = viewport.toScreen(left, top);
-  const b = viewport.toScreen(right, top);
+  const topLeft = viewport.toScreen(left, top);
+  const topRight = viewport.toScreen(right, top);
+  const under = viewport.toScreen(left, bottom);
+
+  const half = width / 2;
+  const lowest = MIN_MARGIN + half;
+  const highest = stage.width - MIN_MARGIN - half;
+
+  // A bar wider than the stage cannot satisfy both margins; centring it is the
+  // least bad answer, and is what `Math.max` picks when the bounds cross.
+  const centre = (topLeft.x + topRight.x) / 2;
+  const below = topLeft.y - GAP < MIN_MARGIN;
 
   return {
-    // Centred over the selection, then held inside the stage: a card near the
-    // left edge would otherwise put half the bar off-screen, where its
-    // swatches cannot be clicked.
-    x: Math.min(Math.max((a.x + b.x) / 2, MIN_MARGIN), Math.max(stage.width - MIN_MARGIN, MIN_MARGIN)),
-    // Above the selection, or below it when there is no room — a card at the
-    // top of the view is exactly the one whose bar would be off the top.
-    y: a.y - GAP,
-    below: a.y - GAP < MIN_MARGIN,
+    x: Math.min(Math.max(centre, lowest), Math.max(highest, lowest)),
+    y: below ? under.y + GAP : topLeft.y - GAP,
+    below,
   };
 }
-
-const GAP = 14;
-const MIN_MARGIN = 8;
 
 export function FormatBar({ app, stage: stageEl }) {
   const { store, selection, viewport } = app;
@@ -76,8 +106,25 @@ export function FormatBar({ app, stage: stageEl }) {
     .map((id) => store.get(id))
     .filter((obj) => obj?.type === 'card');
 
-  const stage = { width: stageEl.clientWidth, height: stageEl.clientHeight };
-  const at = barPosition(cards, viewport, stage);
+  /**
+   * The bar's own width and the stage's, measured after paint rather than read
+   * during render.
+   *
+   * Reading `clientWidth` while rendering forces a layout, and this renders on
+   * every viewport event — so a pan would pay for one per frame. Measuring in a
+   * layout effect keeps it off that path, and the value only changes when the
+   * window resizes or the controls do.
+   */
+  const ref = useRef(null);
+  const [measured, setMeasured] = useState({ bar: 0, stage: 0 });
+
+  useLayoutEffect(() => {
+    const bar = ref.current?.offsetWidth ?? 0;
+    const stage = stageEl?.clientWidth ?? 0;
+    setMeasured((was) => (was.bar === bar && was.stage === stage ? was : { bar, stage }));
+  });
+
+  const at = barPosition(cards, viewport, { width: measured.stage }, measured.bar);
   if (!at) return null;
 
   /**
@@ -91,7 +138,16 @@ export function FormatBar({ app, stage: stageEl }) {
     return values.size === 1 ? [...values][0] : null;
   };
 
-  const applyToAll = (patch) => {
+  /**
+   * `guard` is the value a control is about to write, when it has one that can
+   * be empty. The selects show a `—` placeholder while the selection disagrees,
+   * and choosing it would otherwise write `''` to every card — a token no
+   * stylesheet matches, saved into the board and broadcast to everyone on it.
+   * `cardStyle` would paper over it on the way out, which is exactly why it
+   * would go unnoticed.
+   */
+  const applyToAll = (patch, guard) => {
+    if (guard !== undefined && guard === '') return;
     store.apply(cards.map((card) => ({ t: 'set', id: card.id, patch })));
   };
 
@@ -103,14 +159,15 @@ export function FormatBar({ app, stage: stageEl }) {
       data-value={value}
       data-current={value === current ? '' : undefined}
       aria-pressed={value === current}
-      aria-label={`${field} ${value}`}
-      title={value}
+      aria-label={SWATCH_LABELS[field][value]}
+      title={SWATCH_LABELS[field][value]}
       onClick={() => applyToAll({ [field]: value })}
     />
   ));
 
   return (
     <div
+      ref={ref}
       className="format-bar"
       data-format-bar
       data-below={at.below ? '' : undefined}
@@ -137,7 +194,7 @@ export function FormatBar({ app, stage: stageEl }) {
         data-field="font"
         aria-label="Font"
         value={shared('font') ?? ''}
-        onChange={(event) => applyToAll({ font: event.target.value })}
+        onChange={(event) => applyToAll({ font: event.target.value }, event.target.value)}
       >
         {shared('font') === null && <option value="">—</option>}
         {CARD_FONTS.map((font) => <option key={font} value={font}>{FONT_LABELS[font]}</option>)}
@@ -148,7 +205,7 @@ export function FormatBar({ app, stage: stageEl }) {
         data-field="size"
         aria-label="Text size"
         value={shared('size') ?? ''}
-        onChange={(event) => applyToAll({ size: event.target.value })}
+        onChange={(event) => applyToAll({ size: event.target.value }, event.target.value)}
       >
         {shared('size') === null && <option value="">—</option>}
         {CARD_SIZES.map((size) => <option key={size} value={size}>{SIZE_LABELS[size]}</option>)}

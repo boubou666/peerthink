@@ -123,10 +123,16 @@ body:has(.board-page) { overflow: hidden; }
 /*
  * A card's style, one attribute per field.
  *
- * The stylesheet owns what each token means, which is what lets the two themes
- * disagree about a colour and lets one be retuned in a single place. The PNG
- * export reads these back out of the document rather than keeping its own
- * copy — see `readPalette` — so nothing here has to be remembered twice.
+ * The stylesheet owns what each token means, so a value is retuned in one
+ * place and the PNG export reads it back out of the document rather than
+ * keeping a copy — see `readPalette`.
+ *
+ * These are deliberately the same in both themes. A card is paper: it keeps a
+ * light background in the dark theme too, which is why `.card` fixes its text
+ * colour rather than following `--ink`, and why the ink tokens below are dark
+ * on the assumption of a light card. `none` is the exception, and the one
+ * combination that can go wrong — transparent fill plus dark text on a dark
+ * board. Left as the user's choice rather than second-guessed.
  *
  * `data-color` is still matched alongside `data-fill`: boards written before
  * the field was renamed are still out there, and a card is not worth losing
@@ -146,6 +152,7 @@ body:has(.board-page) { overflow: hidden; }
  */
 .card[data-fill="none"] {
   --card-bg: transparent;
+
   box-shadow: none;
   outline: calc(1px / var(--z)) dashed var(--line);
   outline-offset: calc(-1px / var(--z));
@@ -382,12 +389,15 @@ body:has(.board-page) { overflow: hidden; }
 .fmt-group { display: flex; align-items: center; gap: 4px; }
 .fmt-sep { width: 1px; height: 18px; background: var(--line); }
 
+/* 24px, which is the smallest thing a finger reliably hits. The visible
+   square is smaller than the button; the padding is the target. */
 .fmt-swatch {
-  width: 18px;
-  height: 18px;
-  padding: 0;
+  width: 24px;
+  height: 24px;
+  padding: 3px;
+  background-clip: content-box;
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: 7px;
   cursor: pointer;
 }
 .fmt-swatch[data-current] { outline: 2px solid var(--accent); outline-offset: 1px; }

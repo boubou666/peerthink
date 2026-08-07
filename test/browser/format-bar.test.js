@@ -27,10 +27,17 @@ describe('format bar', () => {
 
   const select = (...ids) => page.eval(`app.selection.set(${JSON.stringify(ids)})`);
 
-  /** The bar renders on a React commit, which follows the selection change. */
-  const bar = async () => {
-    await page.waitFor('true', { timeout: 1 }).catch(() => {});
-    return page.eval(`document.querySelector('[data-format-bar]') !== null`);
+  /**
+   * Whether the bar is absent, after giving React a commit to render it in.
+   *
+   * Asserting absence needs a settled page, and there is no positive condition
+   * to wait for — so this waits for something that *would* have happened by
+   * then: the selection reaching the renderer, which runs on the same frames.
+   */
+  const noBar = async () => {
+    await page.waitFor('Boolean(window.app?.store)', { label: 'the app' });
+    await page.eval('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+    return page.eval(`document.querySelector('[data-format-bar]') === null`);
   };
 
   const click = async (selector) => {
@@ -39,6 +46,16 @@ describe('format bar', () => {
     });
     await page.eval(`document.querySelector(${JSON.stringify(selector)}).click()`);
   };
+
+  /**
+   * A click writes an op; the renderer applies it on a frame. Reading the DOM
+   * straight afterwards is a race that passes on a fast machine — the shape of
+   * flake this suite has produced before.
+   */
+  const settled = (id, field, value) =>
+    page.waitFor(`document.querySelector('[data-id="${id}"]').dataset.${field} === ${JSON.stringify(value)}`, {
+      label: `${field} to become ${value} on screen`,
+    });
 
   const styleOf = (id) => page.eval(`(() => {
     const el = document.querySelector('[data-id="${id}"]');
@@ -62,7 +79,7 @@ describe('format bar', () => {
   test('is not offered for things that are not cards', async () => {
     const envelope = await page.eval(`app.board.add('envelope', { x: 0, y: 0 }).id`);
     await select(envelope);
-    assert.equal(await bar(), false, 'an envelope was offered card formatting');
+    assert.equal(await noBar(), true, 'an envelope was offered card formatting');
   });
 
   test('each control writes its field, and the card shows it', async () => {
@@ -77,6 +94,7 @@ describe('format bar', () => {
       el.value = 'xl';
       el.dispatchEvent(new Event('change', { bubbles: true }));
     })()`);
+    await settled(id, 'size', 'xl');
 
     const style = await styleOf(id);
     assert.equal(style.fill, 'blue');
@@ -101,6 +119,7 @@ describe('format bar', () => {
     await select(id);
 
     await click('[data-format-bar] .fmt-fill[data-value="none"]');
+    await settled(id, 'fill', 'none');
 
     assert.equal(
       await page.eval(`getComputedStyle(document.querySelector('[data-id="${id}"]')).backgroundColor`),
@@ -114,11 +133,16 @@ describe('format bar', () => {
     await select(first, second);
 
     await click('[data-format-bar] .fmt-fill[data-value="green"]');
+    await settled(first, 'fill', 'green');
+    await settled(second, 'fill', 'green');
     assert.equal((await styleOf(first)).fill, 'green');
     assert.equal((await styleOf(second)).fill, 'green');
 
     // One op batch, so one undo — not one per card.
     await page.eval('app.store.undo()');
+    await page.waitFor(`document.querySelector('[data-id="${first}"]').dataset.fill !== 'green'`, {
+      label: 'the undo to reach the screen',
+    });
     assert.notEqual((await styleOf(first)).fill, 'green');
     assert.notEqual((await styleOf(second)).fill, 'green');
   });
@@ -144,7 +168,11 @@ describe('format bar', () => {
   });
 
   test('the bar follows the card when the camera moves', async () => {
-    const id = await addCard();
+    // The camera is pinned and the card put mid-stage, because the bar is
+    // ~540px wide and the clamp holds it inside the viewport — at the edges
+    // it deliberately stops following, which the next test is about.
+    await page.eval('app.viewport.x = 0; app.viewport.y = 0; app.viewport.scale = 1; app.viewport.emit();');
+    const id = await addCard({ x: 400 });
     await select(id);
     await page.waitFor(`document.querySelector('[data-format-bar]') !== null`, { label: 'the bar' });
 
@@ -157,5 +185,25 @@ describe('format bar', () => {
     });
 
     assert.ok(Math.abs((await left()) - (before - 160)) < 2, 'the bar did not move with the board');
+  });
+
+  /**
+   * The bar is positioned by its centre, so clamping the centre alone still
+   * leaves half of it off screen — which is most of the controls, and the
+   * swatches cannot be clicked where they cannot be seen.
+   */
+  test('a card at the edge keeps the whole bar on screen', async () => {
+    const id = await addCard({ x: -4000 });
+    await select(id);
+    await page.waitFor(`document.querySelector('[data-format-bar]') !== null`, { label: 'the bar' });
+
+    const box = await page.eval(`(() => {
+      const r = document.querySelector('[data-format-bar]').getBoundingClientRect();
+      return { left: r.left, right: r.right, width: r.width, stage: window.innerWidth };
+    })()`);
+
+    assert.ok(box.width > 0, 'the bar was not laid out');
+    assert.ok(box.left >= 0, `the bar starts off screen at ${box.left}`);
+    assert.ok(box.right <= box.stage, `the bar ends off screen at ${box.right} of ${box.stage}`);
   });
 });
