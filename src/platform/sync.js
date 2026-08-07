@@ -90,7 +90,39 @@ export function createBoardSync({
   // this client writes, and so is one where the channel never came up. The
   // version guard in the repository is what covers the case where that is
   // wrong, which is exactly the case presence cannot see.
-  let writer = true;
+  // What presence says: true until it says otherwise — a board nobody else is
+  // on is a board this client writes.
+  let elected = true;
+
+  /**
+   * Whether the channel is up *now*, rather than whether it ever came up.
+   *
+   * This is the difference between deferring to another writer and merely
+   * hoping there is one. `channel.send` for a broadcast without `ack` resolves
+   * `'ok'` the moment it is called — before the socket has been written to,
+   * never mind the server reached — so a send that went nowhere is
+   * indistinguishable from one that landed. Nothing in a single message can
+   * tell us. The connection can.
+   */
+  let live = false;
+
+  /**
+   * Whether this client should write the snapshot.
+   *
+   * Elected, or unable to be sure anyone else is receiving what it sends. The
+   * second half is the point: standing down is a promise that somebody *else*
+   * is saving these edits, and that promise is only as good as the channel
+   * carrying them. A client whose channel has dropped holds ops the elected
+   * writer has never seen, and is the only one that can store them.
+   *
+   * Two clients writing at once is the case the version guard in the
+   * repository already exists for — and it is much the better failure. One is
+   * a refused write that retries; the other is work that was never anywhere.
+   */
+  const shouldWrite = () => elected || !live;
+
+  // What `onWriter` was last told, so a change is reported once.
+  let announced = shouldWrite();
 
   /**
    * Ops go out immediately, and then at most every `sendEvery` ms while they
@@ -222,17 +254,24 @@ export function createBoardSync({
       .filter((meta) => typeof meta?.id === 'string' && Number.isFinite(meta.at))
       .map(({ id, at, label }) => ({ id, at, label }));
 
+  /** Report a change in who writes, whatever caused it. */
+  const announce = () => {
+    if (stopped) return;
+    const next = shouldWrite();
+    if (next === announced) return;
+    announced = next;
+    onWriter?.(next);
+  };
+
   const settleWriter = () => {
     if (stopped) return;
     const present = members();
     onMembers?.(present.filter((member) => member.id !== clientId));
-    const elected = electWriter(present);
+    const winner = electWriter(present);
     // No presence state yet is not "somebody else writes" — it is nobody
     // having reported in, which leaves this client as the only one it knows.
-    const next = elected ? elected.id === clientId : true;
-    if (next === writer) return;
-    writer = next;
-    onWriter?.(writer);
+    elected = winner ? winner.id === clientId : true;
+    announce();
   };
 
   channel.on('presence', { event: 'sync' }, settleWriter);
@@ -249,11 +288,23 @@ export function createBoardSync({
     // join the policy refuses reports CLOSED, not an error.
     channel.subscribe((status) => {
       onStatus?.(status);
+
+      // Called again on every rejoin and every drop, not only the first time —
+      // which is what makes it a connection state rather than a record of how
+      // the join went. A client that stood down for an elected writer and then
+      // lost the channel takes the job back here, because its ops are no
+      // longer reaching whoever it stood down for.
+      live = status === 'SUBSCRIBED';
+
       // Announcing presence is what makes this client electable — and what
       // tells the incumbent it is no longer alone. Until it lands, everyone
       // already here has an answer that does not include us, which is the
       // right answer for a client that has not arrived.
       if (status === 'SUBSCRIBED') channel.track({ ...identity, id: clientId, at: now() });
+
+      // After track(), so a rejoin does not report itself as the writer for
+      // the moment before presence has been told this client is back.
+      announce();
       resolve(status);
     });
   });
@@ -280,8 +331,23 @@ export function createBoardSync({
     ready,
     clientId,
 
-    /** Whether this client is the one that writes the snapshot. */
-    isWriter: () => writer,
+    /**
+     * Whether this client is the one that writes the snapshot.
+     *
+     * True when elected, and also when the channel is down — see
+     * `shouldWrite`. Standing down is a promise that somebody else is storing
+     * these edits, and a client with no channel cannot keep it.
+     */
+    isWriter: () => shouldWrite(),
+
+    /**
+     * Whether the channel is up right now.
+     *
+     * Separate from `isWriter()` because they answer different questions, and
+     * a caller that wants to say something to the person at the keyboard needs
+     * this one: "saved" while disconnected is a different claim from "saved".
+     */
+    isLive: () => live,
 
     /**
      * Everyone else presence currently reports, with their labels — the same
