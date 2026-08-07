@@ -16,7 +16,14 @@
 const toAccount = (session) => {
   const user = session?.user;
   if (!user) return null;
-  return { id: user.id, email: user.email ?? null, guest: user.is_anonymous === true };
+  // `|| null`, not `?? null`: an anonymous user arrives from Supabase with
+  // `email: ''`, which `??` passes straight through. An account is then
+  // carrying an address that is not one, and every caller written as
+  // `account.email ?? 'Guest'` gets the empty string instead of the fallback
+  // it was promised — which is how a cursor came to be labelled with nothing
+  // at all. The contract here is an address or null; the empty string is
+  // neither.
+  return { id: user.id, email: user.email || null, guest: user.is_anonymous === true };
 };
 
 /** Supabase's errors are already written for people; a fallback covers the rest. */

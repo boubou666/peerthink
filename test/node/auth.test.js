@@ -15,7 +15,11 @@ import { createSupabaseClient, readSupabaseConfig } from '../../src/platform/sup
  */
 
 const sessionFor = (user) => ({ access_token: 'token', user });
-const GUEST = { id: 'u-guest', email: null, is_anonymous: true };
+// `email: ''` because that is what Supabase actually sends for an anonymous
+// user — this fixture said `null` for a long time, and a stub that is kinder
+// than the service is a stub that agrees with bugs. The empty string is what
+// let an unlabelled cursor through: `?? 'Guest'` never fired on it.
+const GUEST = { id: 'u-guest', email: '', is_anonymous: true };
 const MEMBER = { id: 'u-guest', email: 'ada@example.com' };
 
 function stubClient({ session = null, ...responses } = {}) {

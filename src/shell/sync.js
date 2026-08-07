@@ -19,6 +19,10 @@ export const createSync = client
         // What the people on this board see above each other's cursors. An
         // address is shared with the board's members, who are people it has
         // been shared with — a guest has none to share and is just a guest.
-        identity: { label: auth.current()?.email ?? 'Guest' },
+        // `||` rather than `??`, for the same reason toAccount now normalises:
+        // a label is a thing to write above a pointer, and an empty string is
+        // not one. Belt and braces now that the account is normalised — this
+        // is the side that fails visibly, so it is the side worth over-guarding.
+        identity: { label: auth.current()?.email || 'Guest' },
       })
   : null;
