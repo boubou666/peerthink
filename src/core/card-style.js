@@ -13,11 +13,35 @@
  * default".
  */
 
-/** Backgrounds. `none` is transparent — the card keeps its text and loses its paper. */
+/**
+ * Named backgrounds, kept for the boards that already use them.
+ *
+ * The pickers write hex now, but `fill: 'blue'` is what earlier cards carry
+ * and what the stylesheet still answers for — a token means "whatever the
+ * stylesheet says blue is", which is the one kind of colour that follows a
+ * retune. `none` is transparent: the card keeps its text and loses its paper.
+ */
 export const CARD_FILLS = ['yellow', 'blue', 'green', 'pink', 'white', 'none'];
 
-/** Text colours. `ink` is the default near-black the stylesheet already uses. */
+/** Named text colours. `ink` is the default near-black the stylesheet uses. */
 export const CARD_INKS = ['ink', 'muted', 'red', 'blue', 'white'];
+
+/** No background at all — the one colour a picker cannot express. */
+export const TRANSPARENT = 'none';
+
+/**
+ * A colour a card may carry, beyond the named ones.
+ *
+ * Hex only, and matched strictly. This value ends up in a CSS custom property,
+ * and it does not come only from the person at the keyboard: a card arrives
+ * over the board's channel from anyone authorised to edit it. `url(...)`,
+ * `image-set(...)` and friends in a custom property are a way to make a
+ * browser fetch something, so what is not plainly a colour is not passed
+ * through — the same reason `cardStyle` refuses tokens it does not know.
+ */
+const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+export const isCustomColour = (value) => typeof value === 'string' && HEX.test(value);
 
 export const CARD_FONTS = ['sans', 'serif', 'mono'];
 export const CARD_SIZES = ['sm', 'md', 'lg', 'xl'];
@@ -42,7 +66,12 @@ const VOCABULARY = {
 /** The style fields, in the order the format bar offers them. */
 export const CARD_STYLE_FIELDS = Object.keys(VOCABULARY);
 
-export const isCardStyleValue = (field, value) => VOCABULARY[field]?.includes(value) ?? false;
+/** Which fields carry a colour, and so may hold a hex value as well as a token. */
+const COLOUR_FIELDS = new Set(['fill', 'ink']);
+
+export const isCardStyleValue = (field, value) =>
+  (VOCABULARY[field]?.includes(value) ?? false)
+  || (COLOUR_FIELDS.has(field) && isCustomColour(value));
 
 /**
  * A card's style, with every field resolved.
@@ -55,6 +84,11 @@ export const isCardStyleValue = (field, value) => VOCABULARY[field]?.includes(va
  *
  * `color` is read as a fallback for `fill` because that is what cards were
  * called before this existed, and boards made then are still out there.
+ *
+ * A colour field answers either a name the stylesheet knows or a hex value the
+ * card carries itself. `namedColour` below is what tells a caller which it has
+ * — the view needs an attribute for one and an inline property for the other,
+ * and the PNG export needs the stylesheet for one and the value for the other.
  */
 export function cardStyle(obj = {}) {
   const chosen = { ...CARD_STYLE_DEFAULTS };
@@ -67,3 +101,6 @@ export function cardStyle(obj = {}) {
 
   return chosen;
 }
+
+/** Whether a resolved colour is a stylesheet name rather than the card's own. */
+export const namedColour = (value) => !isCustomColour(value);

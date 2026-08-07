@@ -389,41 +389,39 @@ body:has(.board-page) { overflow: hidden; }
 .fmt-group { display: flex; align-items: center; gap: 4px; }
 .fmt-sep { width: 1px; height: 18px; background: var(--line); }
 
-/* 24px, which is the smallest thing a finger reliably hits. The visible
-   square is smaller than the button; the padding is the target. */
-.fmt-swatch {
+/*
+ * The colour pickers, and the one colour they cannot express.
+ *
+ * `<input type="color">` has no alpha and no empty state, so transparent is a
+ * button beside it rather than a value inside it.
+ */
+.fmt-picker {
+  width: 28px;
+  height: 24px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  cursor: pointer;
+}
+.fmt-picker::-webkit-color-swatch-wrapper { padding: 0; }
+.fmt-picker::-webkit-color-swatch { border: 0; border-radius: 4px; }
+.fmt-picker::-moz-color-swatch { border: 0; border-radius: 4px; }
+
+/* A diagonal through an empty square: an empty square alone reads as white. */
+.fmt-transparent {
   width: 24px;
   height: 24px;
-  padding: 3px;
-  background-clip: content-box;
+  padding: 0;
   border: 1px solid var(--line);
   border-radius: 7px;
   cursor: pointer;
-}
-.fmt-swatch[data-current] { outline: 2px solid var(--accent); outline-offset: 1px; }
-
-.fmt-fill[data-value="yellow"] { background: #ffe98a; }
-.fmt-fill[data-value="blue"]   { background: #b4d5ff; }
-.fmt-fill[data-value="green"]  { background: #b8e6bd; }
-.fmt-fill[data-value="pink"]   { background: #ffc4d6; }
-.fmt-fill[data-value="white"]  { background: #ffffff; }
-
-/*
- * Transparent, shown as a diagonal through an empty square rather than as an
- * empty square — which would read as white, the swatch next to it.
- */
-.fmt-fill[data-value="none"] {
   background:
     linear-gradient(to top right,
       transparent calc(50% - 1px), var(--muted) calc(50% - 1px),
       var(--muted) calc(50% + 1px), transparent calc(50% + 1px));
 }
-
-.fmt-ink[data-value="ink"]   { background: #1c1b19; }
-.fmt-ink[data-value="muted"] { background: #78766f; }
-.fmt-ink[data-value="red"]   { background: #b3261e; }
-.fmt-ink[data-value="blue"]  { background: #1a4fb4; }
-.fmt-ink[data-value="white"] { background: #ffffff; }
+.fmt-transparent[data-current] { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .fmt-select {
   height: 22px;

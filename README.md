@@ -18,7 +18,7 @@ npm start        # serve the built site
 | | |
 |---|---|
 | **Boards** | Many per workspace — listed, renamed, deleted; the board id lives in the URL |
-| **Cards** | Notes with editable text, resizable from eight handles — and formattable: fill (transparent included), text colour, font, size and alignment |
+| **Cards** | Notes with editable text, resizable from eight handles — and formattable: any background and text colour (transparent included), font, size and alignment |
 | **Envelopes** | Grouping containers — dragging one carries everything fully inside it, transitively |
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
@@ -35,7 +35,7 @@ npm start        # serve the built site
 | Select | Click, `Shift`-click, or drag a marquee on empty canvas |
 | Edit | Double-click any text |
 | Create | `C` / `E` / `L`, the toolbar, or double-click empty canvas |
-| Format | Select cards; a bar appears above them with fill, text colour, font, size and alignment |
+| Format | Select cards; a bar appears above them — colour pickers for background and text, a no-background toggle, font, size and alignment |
 | Snapping | On by default; hold `Alt` to disable |
 | Undo / redo | `⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z` |
 | Fit / reset zoom | `Shift+1` / `Shift+0` |
