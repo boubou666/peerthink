@@ -61,7 +61,7 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
       },
     });
     const status = await sync.ready;
-    return {
+    const participant = {
       store,
       scheduler,
       sync,
@@ -71,7 +71,41 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
         taps.add(fn);
         return () => taps.delete(fn);
       },
+      label: `${user === alice ? 'alice' : 'bob'} on ${boardId}`,
     };
+
+    // Registered so a timeout can describe every client in the test without
+    // each call site having to remember to say so — the one that flakes is
+    // never the one anybody thought to annotate.
+    joined.add(participant);
+    return participant;
+  };
+
+  /**
+   * Everyone `join()` has made, and what state they are in.
+   *
+   * Cleared per test, so a timeout describes this test's clients rather than
+   * the accumulated cast of the file. Nothing removes a participant on
+   * destroy(): a client that has been torn down is exactly the sort of thing
+   * worth seeing in a report about something that did not arrive.
+   */
+  const joined = new Set();
+  beforeEach(() => joined.clear());
+
+  const whoIsHere = () => {
+    // Guarded, because a description that throws replaces the timeout with its
+    // own error and the actual failure is lost — the one moment this exists
+    // for is the one moment it must not be the thing that breaks.
+    try {
+      return [...joined]
+        .map(
+          (p) =>
+            `${p.label}: status=${p.status}, writer=${p.sync.isWriter()}, objects=[${p.store.order.join(',')}]`,
+        )
+        .join('; ');
+    } catch (error) {
+      return `(could not describe the clients: ${error.message})`;
+    }
   };
 
   const card = (id, text = 'hello') => ({ id, type: 'card', x: 0, y: 0, w: 100, h: 60, text });
@@ -108,7 +142,12 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
     const deadline = Date.now() + timeout;
     for (;;) {
       if (predicate()) return;
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+      // Every client in the test, not just the one this wait was about. These
+      // have flaked on CI and passed on re-run, and for a failure that does
+      // not reproduce the one report is the whole of the evidence — "timed out
+      // waiting for the op to arrive" says a thing did not happen and nothing
+      // about the state it did not happen in.
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${label} — ${whoIsHere()}`);
       await new Promise((r) => setTimeout(r, 20));
     }
   };

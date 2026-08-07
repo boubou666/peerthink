@@ -66,12 +66,32 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
     for (const id of created) await alice.repository.remove(id);
   });
 
+  /**
+   * Save, and if it refuses, say what the database had to say about it.
+   *
+   * `save()` answers false and discards the reason — deliberately, since a
+   * repository answers rather than throws — so a refusal here asserts as
+   * `false !== true` and nothing else. That is survivable for a failure that
+   * reproduces, and this one has flaked on CI and passed on re-run, where the
+   * single report is all the evidence there will ever be. So the reason is
+   * fetched on the way to failing rather than reconstructed afterwards from a
+   * run nobody can repeat.
+   */
+  const savedOrWhy = async (user, id, doc, options) => {
+    if (await user.repository.save(id, doc, options)) return;
+
+    const { data, error } = await user.client.from('boards').select('id, owner_id, version').eq('id', id);
+    assert.fail(
+      `save was refused for ${id} — row = ${JSON.stringify(data ?? null)}, read error = ${error?.message ?? 'none'}`,
+    );
+  };
+
   describe('save and load', () => {
     test('a first save creates the board, and load hands it back', async () => {
       const id = newId();
       const doc = board({ objects: [card('c1')], order: ['c1'] });
 
-      assert.equal(await alice.repository.save(id, doc), true);
+      await savedOrWhy(alice, id, doc);
 
       const record = await alice.repository.load(id);
       assert.deepEqual(record.board, doc);

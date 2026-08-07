@@ -133,12 +133,30 @@ export async function openApp({
      * Poll until an expression is truthy. Use this instead of sleeping past a
      * debounce — a fixed delay that is generous on a laptop is a coin flip on
      * a loaded CI runner.
+     *
+     * `context` is an expression evaluated only when the wait expires, and its
+     * value is put in the error. A timeout says a thing did not happen and
+     * nothing about the state it did not happen in, which is survivable when
+     * the failure is reproducible and useless when it is not — and these
+     * suites have flaked on CI and passed on re-run, which is exactly the case
+     * where the one report you get is the only evidence there will be.
      */
-    async waitFor(expression, { timeout = 5_000, label = expression } = {}) {
+    async waitFor(expression, { timeout = 5_000, label = expression, context = null } = {}) {
       const deadline = Date.now() + timeout;
       for (;;) {
         if (await api.eval(expression).catch(() => false)) return;
-        if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+        if (Date.now() > deadline) {
+          // Read after the deadline, so a passing wait never pays for it. The
+          // read can itself fail — a page that has gone is a fact worth
+          // reporting rather than an error to replace the timeout with.
+          const state = context
+            ? await api
+                .eval(context)
+                .then((value) => JSON.stringify(value))
+                .catch((error) => `unreadable: ${error.message}`)
+            : null;
+          throw new Error(`timed out waiting for ${label}${state ? `; state = ${state}` : ''}`);
+        }
         await sleep(25);
       }
     },
