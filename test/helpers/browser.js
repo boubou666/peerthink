@@ -147,15 +147,25 @@ export async function openApp({
         if (await api.eval(expression).catch(() => false)) return;
         if (Date.now() > deadline) {
           // Read after the deadline, so a passing wait never pays for it. The
-          // read can itself fail — a page that has gone is a fact worth
-          // reporting rather than an error to replace the timeout with.
+          // read can fail, and it can also hang: a page busy enough to miss
+          // the deadline is exactly the page whose next evaluate might never
+          // come back, and a diagnostic that hangs replaces a failing test
+          // with one that never finishes. So it races a timer, and every way
+          // it can go wrong ends in a string rather than in an error that
+          // would take the place of the timeout being reported.
           const state = context
-            ? await api
-                .eval(context)
-                .then((value) => JSON.stringify(value))
-                .catch((error) => `unreadable: ${error.message}`)
+            ? await Promise.race([
+                api.eval(context).then(
+                  // `undefined` survives as a word: JSON.stringify gives back
+                  // undefined rather than a string for it, which would print
+                  // as though no context had been asked for at all.
+                  (value) => (value === undefined ? 'undefined' : JSON.stringify(value)),
+                  (error) => `unreadable: ${error.message}`,
+                ),
+                sleep(2_000).then(() => 'unreadable: the page did not answer'),
+              ])
             : null;
-          throw new Error(`timed out waiting for ${label}${state ? `; state = ${state}` : ''}`);
+          throw new Error(`timed out waiting for ${label}${state === null ? '' : `; state = ${state}`}`);
         }
         await sleep(25);
       }

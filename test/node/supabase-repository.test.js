@@ -80,10 +80,17 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
   const savedOrWhy = async (user, id, doc, options) => {
     if (await user.repository.save(id, doc, options)) return;
 
-    const { data, error } = await user.client.from('boards').select('id, owner_id, version').eq('id', id);
-    assert.fail(
-      `save was refused for ${id} — row = ${JSON.stringify(data ?? null)}, read error = ${error?.message ?? 'none'}`,
-    );
+    // The read is allowed to fail without taking the refusal with it. A
+    // diagnostic that throws would replace "save was refused" — the thing
+    // actually being reported — with whatever went wrong while explaining it.
+    const detail = await user.client
+      .from('boards')
+      .select('id, owner_id, version')
+      .eq('id', id)
+      .then(({ data, error }) => `row = ${JSON.stringify(data ?? null)}, read error = ${error?.message ?? 'none'}`)
+      .catch((error) => `the row could not be read back either: ${error.message}`);
+
+    assert.fail(`save was refused for ${id} — ${detail}`);
   };
 
   describe('save and load', () => {

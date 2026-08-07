@@ -92,21 +92,37 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
   const joined = new Set();
   beforeEach(() => joined.clear());
 
-  const whoIsHere = () => {
-    // Guarded, because a description that throws replaces the timeout with its
-    // own error and the actual failure is lost — the one moment this exists
-    // for is the one moment it must not be the thing that breaks.
-    try {
-      return [...joined]
-        .map(
-          (p) =>
-            `${p.label}: status=${p.status}, writer=${p.sync.isWriter()}, objects=[${p.store.order.join(',')}]`,
-        )
-        .join('; ');
-    } catch (error) {
-      return `(could not describe the clients: ${error.message})`;
-    }
-  };
+  /**
+   * What a store holds, with enough of each object to settle an argument.
+   *
+   * Ids alone answer "did it arrive". They do not answer "did the right thing
+   * arrive", which is what several of these waits are actually about — one of
+   * them waits for `get('c1').text === 'third'`, and against that a report
+   * saying `c1` is present is no help at all.
+   */
+  const describeStore = (store) =>
+    store.order
+      .map((id) => {
+        const object = store.get(id);
+        return typeof object?.text === 'string' ? `${id}="${object.text}"` : String(id);
+      })
+      .join(',');
+
+  const whoIsHere = () =>
+    // Guarded per participant rather than around the lot: one client that
+    // cannot be described should cost its own line, not everybody else's. A
+    // description that throws would otherwise replace the timeout with its own
+    // error, and the one moment this exists for is the one moment it must not
+    // be the thing that breaks.
+    [...joined]
+      .map((p) => {
+        try {
+          return `${p.label}: status=${p.status}, writer=${p.sync.isWriter()}, objects=[${describeStore(p.store)}]`;
+        } catch (error) {
+          return `${p.label ?? 'a client'}: could not be described (${error.message})`;
+        }
+      })
+      .join('; ');
 
   const card = (id, text = 'hello') => ({ id, type: 'card', x: 0, y: 0, w: 100, h: 60, text });
   const board = () => ({ v: 1, order: [], objects: [] });
