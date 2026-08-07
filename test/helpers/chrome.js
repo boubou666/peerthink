@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -31,9 +31,30 @@ export function findChrome() {
   return null;
 }
 
-export async function launchChrome({ port, userDataDir }) {
+/**
+ * Start a headless Chromium and wait until its debugging port answers.
+ *
+ * The port is chosen by Chromium, not by us. Picking one here means opening a
+ * socket to see that it is free, closing it, and hoping nothing takes it in
+ * between — and on CI the gap straddles a Supabase stack coming up, which is a
+ * lot of processes binding a lot of ports. Chromium writes the port it
+ * actually bound to `DevToolsActivePort` once it is listening, so asking it
+ * afterwards replaces a guess that is usually right with an answer that is
+ * always right.
+ *
+ * Failures are reported with what Chromium said. The old version discarded
+ * stderr and polled a dead process until the deadline, so a binary that could
+ * not start, a port that was taken, and a genuinely slow boot all arrived as
+ * the same "did not expose a debugging port in time" — which is exactly the
+ * message a CI run produced with no way to tell which had happened.
+ */
+export async function launchChrome({ userDataDir, timeout = 60_000 }) {
   const bin = findChrome();
   if (!bin) throw new Error('No Chromium found. Set CHROME_PATH to a Chrome/Chromium binary.');
+
+  // A file from an earlier run would otherwise be read as this run's port.
+  const portFile = join(userDataDir, 'DevToolsActivePort');
+  rmSync(portFile, { force: true });
 
   const child = spawn(bin, [
     '--headless=new',
@@ -43,23 +64,55 @@ export async function launchChrome({ port, userDataDir }) {
     '--disable-dev-shm-usage',
     '--no-first-run',
     '--no-default-browser-check',
-    `--remote-debugging-port=${port}`,
+    '--remote-debugging-port=0',
     `--user-data-dir=${userDataDir}`,
     'about:blank',
-  ], { stdio: 'ignore' });
+  ], { stdio: ['ignore', 'ignore', 'pipe'] });
 
-  const base = `http://127.0.0.1:${port}`;
-  const deadline = Date.now() + 20_000;
+  // Kept to a tail: a Chromium that will not start can be very talkative, and
+  // the last few lines are the ones that say why.
+  let stderr = '';
+  child.stderr.on('data', (chunk) => {
+    stderr = (stderr + chunk).slice(-2000);
+  });
+
+  let exited = null;
+  let failedToSpawn = null;
+  child.on('exit', (code, signal) => { exited = { code, signal }; });
+  child.on('error', (error) => { failedToSpawn = error; });
+
+  const giveUp = (reason) => {
+    child.kill();
+    return new Error([
+      reason,
+      failedToSpawn && `spawning ${bin} failed: ${failedToSpawn.message}`,
+      exited && `chromium exited early (code ${exited.code}, signal ${exited.signal})`,
+      stderr.trim() && `chromium said:\n${stderr.trim()}`,
+    ].filter(Boolean).join('\n'));
+  };
+
+  const deadline = Date.now() + timeout;
   for (;;) {
-    try {
-      await (await fetch(`${base}/json/version`)).json();
-      return { child, base };
-    } catch {
-      if (Date.now() > deadline) {
-        child.kill();
-        throw new Error('Chromium did not expose a debugging port in time');
+    // Checked before the port file: a process that is gone is never going to
+    // write one, and waiting out the deadline to say so buries the reason.
+    if (failedToSpawn) throw giveUp('Chromium could not be started.');
+    if (exited) throw giveUp('Chromium exited before it was ready.');
+
+    // The first line is the port; the second is the browser's websocket path.
+    // The file appears when the socket is bound, which is a moment before the
+    // HTTP endpoint answers — hence still asking it.
+    const port = existsSync(portFile) ? readFileSync(portFile, 'utf8').split('\n')[0].trim() : '';
+    if (port) {
+      const base = `http://127.0.0.1:${port}`;
+      try {
+        await (await fetch(`${base}/json/version`)).json();
+        return { child, base };
+      } catch {
+        // bound but not answering yet
       }
-      await new Promise((r) => setTimeout(r, 150));
     }
+
+    if (Date.now() > deadline) throw giveUp(`Chromium did not answer within ${timeout}ms.`);
+    await new Promise((r) => setTimeout(r, 50));
   }
 }
