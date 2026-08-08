@@ -189,6 +189,25 @@ describe('sheets', () => {
       );
     });
 
+    /**
+     * The menu is placed once, from the button's box, and drawn fixed. A wheel
+     * over the strip moves the button without any pointer going down, so the
+     * dismissal listeners never hear about it and the menu is left pointing at
+     * where the tab used to be.
+     */
+    test('closes when the strip scrolls under it', async () => {
+      await openMenu();
+      await page.eval(`(() => {
+        const strip = document.querySelector('[data-sheet-tabs]');
+        strip.scrollLeft = 40;
+        strip.dispatchEvent(new Event('scroll'));
+      })()`);
+
+      await page.waitFor(`document.querySelector('[data-sheet-tabs] .sheet-menu') === null`, {
+        label: 'the menu to close',
+      });
+    });
+
     test('closes on Escape, leaving the selection alone', async () => {
       const first = await addCard('first');
       await page.eval(`app.selection.set(["${first}"])`);

@@ -42,21 +42,31 @@ export function SheetTabs({ app }) {
       setMenu(null);
     };
 
-    // The position was measured once, when the button was clicked, and the
-    // menu is fixed — so a strip that scrolls under it leaves it pointing at
-    // a tab that has moved. Closing is the honest answer to that; following
-    // would be re-measuring on every frame of a scroll to keep a menu open
-    // that the person has already stopped looking at.
-    const scrolled = () => setMenu(null);
+    /**
+     * The position was measured once, when the button was clicked, and the
+     * menu is fixed — so anything that moves the button afterwards leaves the
+     * menu pointing at where it used to be. Two things do that without a
+     * pointer going down anywhere: a wheel scroll over the strip, and the
+     * window being resized.
+     *
+     * Closing is the honest answer. Following would mean re-measuring on every
+     * frame of a scroll to keep open a menu the person has already left.
+     */
+    const stale = () => setMenu(null);
+
+    // Captured now, because the effect's cleanup runs after a render in which
+    // the ref may already point somewhere else.
+    const scroller = strip.current;
 
     document.addEventListener('pointerdown', dismiss, true);
     window.addEventListener('keydown', onKey, true);
-    strip.current?.addEventListener('scroll', scrolled);
-    const held = strip.current;
+    window.addEventListener('resize', stale);
+    scroller?.addEventListener('scroll', stale);
     return () => {
       document.removeEventListener('pointerdown', dismiss, true);
       window.removeEventListener('keydown', onKey, true);
-      held?.removeEventListener('scroll', scrolled);
+      window.removeEventListener('resize', stale);
+      scroller?.removeEventListener('scroll', stale);
     };
   }, [menu]);
 
