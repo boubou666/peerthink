@@ -96,8 +96,13 @@ export function createApp({
   const cameras = new Map();
 
   /**
-   * Do something that may change which sheet is on screen, and put the screen
-   * in order afterwards.
+   * Put the screen in order whenever the sheet on it changes.
+   *
+   * Subscribed rather than wrapped around the commands, because a switch is no
+   * longer always this person's doing: someone else deleting the sheet you are
+   * looking at moves you to its neighbour, and that arrives through the channel
+   * with no command of yours to hang this on. One subscription covers both, and
+   * cannot be forgotten by a command added later.
    *
    * The selection is emptied because it names objects on the sheet being left,
    * and a selection of things nobody can see is a delete key pointed at
@@ -106,15 +111,16 @@ export function createApp({
    * goes to its origin, because there is nothing to frame and `fit` leaves an
    * empty board's camera exactly where the last sheet had it.
    */
-  const showingSheet = (change) => {
-    const from = sheets.activeId;
-    cameras.set(from, { x: viewport.x, y: viewport.y, scale: viewport.scale });
+  let showing = sheets.activeId;
+  sheets.on(() => {
+    if (sheets.activeId === showing) return;
 
-    const result = change();
-    if (sheets.activeId === from) return result;
+    // The camera has not moved yet, so it is still the outgoing sheet's.
+    cameras.set(showing, { x: viewport.x, y: viewport.y, scale: viewport.scale });
+    showing = sheets.activeId;
 
     selection.clear();
-    const camera = cameras.get(sheets.activeId);
+    const camera = cameras.get(showing);
     if (camera) {
       viewport.scale = camera.scale;
       viewport.moveTo(camera.x, camera.y);
@@ -124,8 +130,7 @@ export function createApp({
       viewport.scale = 1;
       viewport.moveTo(0, 0);
     }
-    return result;
-  };
+  });
 
   const commands = {
     addAt(type, point) {
@@ -171,18 +176,14 @@ export function createApp({
     },
 
     /**
-     * The sheet commands, which are the model's with the screen seen to.
-     *
-     * Every one of them can change what is on screen — adding and duplicating
-     * show what they made, and removing shows a neighbour — so every one goes
-     * through `showingSheet` rather than only the obvious one.
+     * The sheet commands are the model's, unwrapped: what the screen does when
+     * the sheet on it changes is the subscription above, which does not care
+     * whether the change came from this person or another one.
      */
-    selectSheet: (id) => showingSheet(() => sheets.select(id)),
-    addSheet: (options) => showingSheet(() => sheets.add(options)),
-    duplicateSheet: (id) => showingSheet(() => sheets.duplicate(id)),
-    removeSheet: (id) => showingSheet(() => sheets.remove(id)),
-    // Renaming cannot change which sheet is on screen, and a tab that is being
-    // renamed is one the user is already looking at.
+    selectSheet: (id) => sheets.select(id),
+    addSheet: (options) => sheets.add(options),
+    duplicateSheet: (id) => sheets.duplicate(id),
+    removeSheet: (id) => sheets.remove(id),
     renameSheet: (id, name) => sheets.rename(id, name),
   };
 
@@ -336,6 +337,14 @@ export function createApp({
       // needed the replay.
       seed(board);
     }
+
+    /**
+     * The sheets on screen are the board's now, in both branches — loaded, or
+     * seeded because there was nothing to load. Until this, they are a
+     * placeholder that `sheets.load` is about to replace, and the tab strip
+     * offers nothing that would be wiped by it.
+     */
+    sheets.ready();
 
     // There is a document now, so whatever the channel delivered while there
     // was not can be replayed onto it. Before autosave is wired, so the ops

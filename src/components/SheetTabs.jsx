@@ -126,7 +126,7 @@ export function SheetTabs({ app }) {
                 {sheet.name}
               </button>
 
-              {current && (
+              {current && sheets.settled && (
                 <button
                   type="button"
                   className="sheet-more"
@@ -193,16 +193,23 @@ export function SheetTabs({ app }) {
           );
         })}
 
-        <button
-          type="button"
-          className="sheet-add"
-          data-action="add-sheet"
-          aria-label="New sheet"
-          title="New sheet"
-          onClick={() => commands.addSheet()}
-        >
-          +
-        </button>
+        {/*
+          Absent until the board has arrived. The sheets on screen before that
+          are a placeholder the load replaces, so a sheet added to them would
+          be wiped a moment later — and on a fast load nobody sees this at all.
+        */}
+        {sheets.settled && (
+          <button
+            type="button"
+            className="sheet-add"
+            data-action="add-sheet"
+            aria-label="New sheet"
+            title="New sheet"
+            onClick={() => commands.addSheet()}
+          >
+            +
+          </button>
+        )}
       </div>
     </>
   );

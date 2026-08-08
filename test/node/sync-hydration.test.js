@@ -15,7 +15,7 @@ import { REMOTE, Store } from '../../src/core/store.js';
 import { createSheets } from '../../src/core/sheets.js';
 import { createIdGenerator } from '../../src/core/ids.js';
 import { createManualScheduler } from '../../src/core/scheduler.js';
-import { EVENT, createBoardSync } from '../../src/platform/sync.js';
+import { EVENT, SHEET_EVENT, createBoardSync } from '../../src/platform/sync.js';
 
 const card = (id, text = 'hello') => ({ id, type: 'card', x: 0, y: 0, w: 100, h: 60, text });
 
@@ -42,6 +42,7 @@ const build = ({ heldUntil } = {}) => {
   // routing they now go through rather than around it.
   const sheets = createSheets({ store, newId: createIdGenerator() });
   sheets.load(null);
+  sheets.ready();
 
   const sync = createBoardSync({
     client: { channel: () => channel, removeChannel: async () => {} },
@@ -61,7 +62,14 @@ const build = ({ heldUntil } = {}) => {
     }
   };
 
-  return { store, sheets, sync, arrive, sent, scheduler };
+  /** Somebody else adding, renaming or removing a sheet. */
+  const arriveSheet = (changes) => {
+    for (const l of listeners) {
+      if (l.type === 'broadcast' && l.filter?.event === SHEET_EVENT) l.callback({ payload: { changes } });
+    }
+  };
+
+  return { store, sheets, sync, arrive, arriveSheet, sent, scheduler };
 };
 
 /** Let the promise callbacks that release the buffer actually run. */
@@ -299,5 +307,121 @@ describe('ops and the sheet they were made on', () => {
     assert.equal(sheets.activeId, second);
     sheets.select(first.id);
     assert.equal(store.has('hers'), true);
+  });
+});
+
+/**
+ * Sheets themselves crossing: added, renamed, duplicated, removed.
+ *
+ * A separate event from the ops, because it is a change to the board rather
+ * than to a canvas — and held in the same queue as the ops, because the order
+ * between the two is the point. A sheet that is added and then drawn on is two
+ * messages, and the second means nothing until the first has landed.
+ */
+describe('sheets crossing between clients', () => {
+  test('one made here goes out as it happens', async () => {
+    const { sheets, sent } = build();
+    const id = sheets.add({ name: 'Themes' });
+    await settle();
+
+    const [message] = sent.filter((m) => m.event === SHEET_EVENT);
+    assert.deepEqual(message.payload.changes, [
+      { t: 'sheet-add', id, name: 'Themes', index: 1, order: [], objects: [] },
+    ]);
+  });
+
+  test('one made elsewhere turns up here', () => {
+    const { sheets, arriveSheet } = build();
+    arriveSheet([{ t: 'sheet-add', id: 'hers', name: 'Hers', index: 1, order: [], objects: [] }]);
+
+    assert.deepEqual(sheets.list().map((s) => s.name), ['Sheet 1', 'Hers']);
+  });
+
+  /** Applied, not echoed: a change sent back would loop between two clients. */
+  test('one that arrived is not sent straight back out', async () => {
+    const { sheets, arriveSheet, sent } = build();
+    arriveSheet([{ t: 'sheet-rename', id: sheets.activeId, name: 'Discovery' }]);
+    await settle();
+
+    assert.deepEqual(sent.filter((m) => m.event === SHEET_EVENT), []);
+  });
+
+  test('a batch this client cannot read is dropped whole', () => {
+    const { sheets, arriveSheet } = build();
+    arriveSheet([
+      { t: 'sheet-add', id: 'hers', name: 'Hers', index: 1, order: [], objects: [] },
+      { t: 'sheet-reorder', id: 'hers', to: 0 },
+    ]);
+
+    assert.equal(sheets.size, 1, 'half a batch from a newer client was applied');
+  });
+
+  /**
+   * The ordering the one queue exists for: a sheet arriving before this client
+   * has a board, and ops for it arriving behind it. Replayed the other way
+   * round, the ops would name a sheet that did not exist yet and be dropped.
+   */
+  test('a sheet and the ops for it are replayed in the order they arrived', async () => {
+    let landed;
+    const { store, sheets, arrive, arriveSheet } = build({
+      heldUntil: new Promise((resolve) => { landed = resolve; }),
+    });
+
+    arriveSheet([{ t: 'sheet-add', id: 'hers', name: 'Hers', index: 1, order: [], objects: [] }]);
+    arrive([{ t: 'add', obj: card('on-hers') }], 'hers');
+    assert.equal(sheets.size, 1, 'a sheet was added before there was a board to add it to');
+
+    landed();
+    await settle();
+
+    assert.equal(sheets.size, 2, 'the sheet never arrived');
+    sheets.select('hers');
+    assert.equal(store.has('on-hers'), true, 'the ops landed before the sheet they were for');
+  });
+
+  /**
+   * Nothing to send, rather than something withheld. The sheets a client has
+   * before its board arrives are a placeholder that the load replaces, so they
+   * cannot be added to at all — see `sheets.settled`. This is the sync side of
+   * that: no suppression here, because there is nothing to suppress.
+   */
+  test('a sheet cannot be made, or sent, before there is a board', async () => {
+    let landed;
+    const store = new Store();
+    const sheets = createSheets({ store, newId: createIdGenerator() });
+    sheets.load(null);
+
+    const sent = [];
+    const channel = {
+      on: () => channel,
+      subscribe: (cb) => { cb('SUBSCRIBED'); return channel; },
+      send: async (message) => { sent.push(message); },
+      presenceState: () => ({}),
+      track: async () => {},
+    };
+
+    createBoardSync({
+      client: { channel: () => channel, removeChannel: async () => {} },
+      boardId: 'board-1',
+      store,
+      sheets,
+      scheduler: createManualScheduler(),
+      clientId: 'me',
+      heldUntil: new Promise((resolve) => { landed = resolve; }),
+    });
+
+    assert.equal(sheets.add({ name: 'Early' }), null, 'a sheet was made on a placeholder board');
+    await settle();
+    assert.deepEqual(sent.filter((m) => m.event === SHEET_EVENT), []);
+
+    // And once the board is here, the same click works and crosses.
+    sheets.ready();
+    landed();
+    await settle();
+
+    const made = sheets.add({ name: 'Themes' });
+    await settle();
+    const [message] = sent.filter((m) => m.event === SHEET_EVENT);
+    assert.equal(message.payload.changes[0].id, made, 'the sheet never went out once the board had landed');
   });
 });

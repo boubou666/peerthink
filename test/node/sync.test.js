@@ -54,6 +54,10 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
     // "the one on screen" would agree with a broken sync.
     const sheets = createSheets({ store, newId: createIdGenerator() });
     sheets.load(null);
+    // Both halves of what `hydrate` does — the board, and the word that it has
+    // arrived, without which the set of sheets is a placeholder and refuses to
+    // be changed.
+    sheets.ready();
     const scheduler = createManualScheduler();
     const taps = new Set();
     const sync = createBoardSync({
@@ -349,6 +353,119 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
     await new Promise((r) => setTimeout(r, 250));
 
     assert.equal(his.store.has('c1'), false, 'a destroyed sync was still listening');
+  });
+
+  /**
+   * Sheets, over the real channel.
+   *
+   * Two people on one board need not be looking at the same canvas, and the
+   * whole of the addressing exists so that they do not write into each other's.
+   * This is the pair of claims a fake channel cannot make for itself: that a
+   * sheet somebody makes turns up for everyone else, and that an edit on one
+   * sheet stays on it.
+   */
+  describe('sheets', () => {
+    test('a sheet one person adds turns up for the other', async () => {
+      const id = await sharedBoard();
+      const hers = await join(alice, id);
+      const his = await join(bob, id);
+
+      const made = hers.sheets.add({ name: 'Themes' });
+
+      await waitFor(() => his.sheets.has(made), 'the sheet to reach Bob');
+      assert.deepEqual(his.sheets.list().map((s) => s.name), ['Sheet 1', 'Themes']);
+
+      // It is hers, not his: somebody else pressing `+` must not move this
+      // person off what they were doing.
+      assert.notEqual(his.sheets.activeId, made, 'Bob was dragged onto a sheet Alice made');
+      assert.equal(hers.sheets.activeId, made);
+
+      await hers.sync.destroy();
+      await his.sync.destroy();
+    });
+
+    test('renaming and removing cross too', async () => {
+      const id = await sharedBoard();
+      const hers = await join(alice, id);
+      const his = await join(bob, id);
+
+      const made = hers.sheets.add({ name: 'Themes' });
+      await waitFor(() => his.sheets.has(made), 'the sheet to reach Bob');
+
+      hers.sheets.rename(made, 'Discovery');
+      await waitFor(
+        () => his.sheets.list().some((s) => s.name === 'Discovery'),
+        'the rename to reach Bob',
+      );
+
+      hers.sheets.remove(made);
+      await waitFor(() => !his.sheets.has(made), 'the removal to reach Bob');
+      assert.equal(his.sheets.size, 1);
+
+      await hers.sync.destroy();
+      await his.sync.destroy();
+    });
+
+    /**
+     * The reason ops carry a sheet at all. Alice draws on the second sheet
+     * while Bob is looking at the first: it has to reach his copy of the
+     * second, and leave the canvas in front of him alone.
+     */
+    test('an edit on one sheet does not land on another', async () => {
+      const id = await sharedBoard();
+      const hers = await join(alice, id);
+      const his = await join(bob, id);
+
+      const made = hers.sheets.add({ name: 'Themes' });
+      await waitFor(() => his.sheets.has(made), 'the sheet to reach Bob');
+
+      const onFirst = his.sheets.activeId;
+      hers.store.apply([{ t: 'add', obj: card('c1', 'on the second sheet') }]);
+      hers.scheduler.flushTimers();
+
+      // Nothing arrives on the sheet Bob is looking at — asserted once a
+      // message sent after it has landed, so the edit has had its turn.
+      await overtake(hers, his);
+      assert.equal(his.store.has('c1'), false, "Alice's edit landed on the sheet Bob was looking at");
+      assert.equal(his.sheets.activeId, onFirst);
+
+      // And it is on his copy of the sheet it was made on.
+      his.sheets.select(made);
+      assert.equal(his.store.get('c1')?.text, 'on the second sheet', 'the edit never reached the sheet it was for');
+
+      await hers.sync.destroy();
+      await his.sync.destroy();
+    });
+
+    /**
+     * A duplicate is one message carrying the copy, so both clients get the
+     * same objects with the same ids — a copy announced as "make a sheet, then
+     * here is everything on it" would be the board twice over.
+     */
+    test('a duplicated sheet arrives with its objects', async () => {
+      const id = await sharedBoard();
+      const hers = await join(alice, id);
+      const his = await join(bob, id);
+
+      hers.store.apply([{ t: 'add', obj: card('c1', 'copy me') }]);
+      hers.scheduler.flushTimers();
+      await waitFor(() => his.store.has('c1'), 'the card to reach Bob');
+
+      const copy = hers.sheets.duplicate(hers.sheets.activeId);
+      await waitFor(() => his.sheets.has(copy), 'the copy to reach Bob');
+
+      his.sheets.select(copy);
+      assert.equal(his.store.order.length, 1);
+      assert.equal(his.store.get(his.store.order[0]).text, 'copy me');
+      assert.deepEqual(
+        his.store.order,
+        hers.store.order,
+        'the two clients gave the copy different object ids',
+      );
+
+      await hers.sync.destroy();
+      await his.sync.destroy();
+    });
   });
 
   describe('authorization', () => {
