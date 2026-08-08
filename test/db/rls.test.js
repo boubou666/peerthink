@@ -1340,16 +1340,22 @@ describe('row level security', { skip: URL ? false : 'DATABASE_URL is not set' }
       });
 
       /**
-       * The owner's account going takes the organization with it — `owner_id`
-       * is `on delete cascade` — and that reaches the boards through a second
-       * cascade, with `auth.uid()` null because nobody is signed in. The
-       * trigger's test is `owner_id = auth.uid() or org_role(...) = 'owner'`,
-       * which under a null identity is `null or null`; plpgsql treats a null
-       * `if not (...)` as false and lets it through, which is the answer we
-       * want. Asserted because it is reached by three-valued logic rather than
-       * by anything written down, and a later `coalesce` around that test —
-       * exactly the fix the second half of this trigger needed — would turn a
-       * working account deletion into one that raises.
+       * The same detach, one cascade further out and with no identity at all.
+       *
+       * `organizations.owner_id` is `on delete cascade`, so the account going
+       * takes its organizations with it, and those reach the boards through
+       * `boards.org_id`'s `on delete set null`. Nobody is signed in for any of
+       * it, so `auth.uid()` is null.
+       *
+       * What lets this through is the trigger's explicit cascade branch —
+       * `new.org_id is null` and the old organization no longer there — and
+       * nothing else: the identity test below it is `coalesce`d to false, so a
+       * null caller is refused rather than waved through.
+       *
+       * Take the branch away and this fails — which is how the pair was
+       * arrived at. Before either existed the cascade got through only because
+       * `null or null` made the `if` not fire, and hardening that test with the
+       * `coalesce` it plainly wanted turned deleting an account into an error.
        */
       test('and so does the owner’s account going, with nobody signed in', async () => {
         // The address is per-run and the user is cleaned up in a `finally`,
