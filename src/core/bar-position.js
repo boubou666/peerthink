@@ -20,15 +20,15 @@ const MIN_MARGIN = 8;
  *
  * `below` derives from the selection's *bottom*, not its top. Flipping the
  * transform while keeping the top would draw the bar downwards from above the
- * cards and cover them.
+ * objects and cover them.
  */
-export function barPosition(cards, viewport, stage, width = 0) {
-  if (!cards.length) return null;
+export function barPosition(objects, viewport, stage, width = 0) {
+  if (!objects.length) return null;
 
-  const left = Math.min(...cards.map((card) => card.x));
-  const right = Math.max(...cards.map((card) => card.x + card.w));
-  const top = Math.min(...cards.map((card) => card.y));
-  const bottom = Math.max(...cards.map((card) => card.y + card.h));
+  const left = Math.min(...objects.map((obj) => obj.x));
+  const right = Math.max(...objects.map((obj) => obj.x + obj.w));
+  const top = Math.min(...objects.map((obj) => obj.y));
+  const bottom = Math.max(...objects.map((obj) => obj.y + obj.h));
 
   const topLeft = viewport.toScreen(left, top);
   const topRight = viewport.toScreen(right, top);

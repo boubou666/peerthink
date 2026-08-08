@@ -40,6 +40,61 @@ describe('renderer', () => {
     assert.deepEqual(style, { left: '120px', top: '40px', width: '210px', height: '90px' });
   });
 
+  /**
+   * The corner token is set here rather than in each view, so this is the one
+   * place it is checked for every type at once.
+   */
+  test('every type carries its corner style as an attribute', async () => {
+    for (const type of ['card', 'envelope', 'list']) {
+      const round = await add(type, { x: 0, y: 0 });
+      const square = await add(type, { x: 0, y: 400, corners: 'square' });
+      assert.equal(await page.eval(`document.querySelector('[data-id="${round}"]').dataset.corners`), 'round');
+      assert.equal(await page.eval(`document.querySelector('[data-id="${square}"]').dataset.corners`), 'square');
+    }
+  });
+
+  describe('an image', () => {
+    // A one-pixel PNG, small enough to write down.
+    const PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';
+
+    const srcOf = (id) =>
+      page.eval(`document.querySelector('[data-id="${id}"] img').getAttribute('src')`);
+
+    test('draws the picture it carries', async () => {
+      const id = await add('image', { x: 0, y: 0, w: 40, h: 30, src: PIXEL });
+      assert.equal(await srcOf(id), PIXEL);
+      assert.equal(await page.eval(`document.querySelector('[data-id="${id}"] img').draggable`), false);
+    });
+
+    /**
+     * An object arrives over the board's channel from anyone authorised to edit
+     * it. A remote URL in an `img` is a request this browser would make to a
+     * host of somebody else's choosing, so it is not made at all — and the
+     * attribute is *absent* rather than empty, because an empty `src` is a
+     * request for the page itself.
+     */
+    test('is not drawn from anywhere but the document', async () => {
+      for (const src of ['https://example.test/pixel.png', 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=', 42]) {
+        const id = await page.eval(
+          `app.board.add('image', { x: 0, y: 0, w: 40, h: 30, src: ${JSON.stringify(src)} }).id`,
+        );
+        assert.equal(await srcOf(id), null, String(src));
+      }
+    });
+
+    test('and a source that changes is followed', async () => {
+      const id = await add('image', { x: 0, y: 0, w: 40, h: 30, src: 'https://example.test/pixel.png' });
+      assert.equal(await srcOf(id), null);
+
+      await page.eval(`app.store.apply([{ t: 'set', id: '${id}', patch: { src: ${JSON.stringify(PIXEL)} } }])`);
+      await page.waitFor(
+        `document.querySelector('[data-id="${id}"] img').getAttribute('src') !== null`,
+        { label: 'the picture to arrive' },
+      );
+      assert.equal(await srcOf(id), PIXEL);
+    });
+  });
+
   test('deleting an object removes its element', async () => {
     const id = await add('card', { x: 0, y: 0 });
     await page.eval(`app.store.apply([{ t: 'del', id: "${id}" }])`);

@@ -1,3 +1,4 @@
+import { cornersOf, hasCorners } from '../core/corners.js';
 import { rectsIntersect } from '../core/geometry.js';
 
 const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -48,6 +49,13 @@ export function createRenderer({ document, elements, store, viewport, selection,
     el.style.top = `${obj.y}px`;
     el.style.width = `${obj.w}px`;
     el.style.height = `${obj.h}px`;
+    /**
+     * Corners are the one piece of style every type shares, so they are resolved
+     * here rather than inside each view — four copies of the same line would be
+     * four places to forget it the next time a type is added. Everything else
+     * about how an object looks is per type and stays in `views`.
+     */
+    if (hasCorners(obj)) el.dataset.corners = cornersOf(obj);
     views[obj.type].update(el, obj);
   }
 

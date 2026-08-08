@@ -30,16 +30,16 @@ describe('format bar', () => {
   const select = (...ids) => page.eval(`app.selection.set(${JSON.stringify(ids)})`);
 
   /**
-   * Whether the bar is absent, after giving React a commit to render it in.
+   * Whether something is absent, after giving React a commit to render it in.
    *
    * Asserting absence needs a settled page, and there is no positive condition
    * to wait for — so this waits for something that *would* have happened by
    * then: the selection reaching the renderer, which runs on the same frames.
    */
-  const noBar = async () => {
+  const absent = async (selector = '[data-format-bar]') => {
     await page.waitFor('Boolean(window.app?.store)', { label: 'the app' });
     await page.eval('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
-    return page.eval(`document.querySelector('[data-format-bar]') === null`);
+    return page.eval(`document.querySelector(${JSON.stringify(selector)}) === null`);
   };
 
   const click = async (selector) => {
@@ -120,10 +120,87 @@ describe('format bar', () => {
     await page.waitFor(`document.querySelector('[data-format-bar]') === null`, { label: 'the bar to go' });
   });
 
-  test('is not offered for things that are not cards', async () => {
+  /**
+   * Colour, font, size and alignment are a card's. Corners are not, so the bar
+   * appears with that group alone rather than not appearing at all.
+   */
+  test('offers an envelope its corners and none of the card controls', async () => {
     const envelope = await page.eval(`app.board.add('envelope', { x: 0, y: 0 }).id`);
     await select(envelope);
-    assert.equal(await noBar(), true, 'an envelope was offered card formatting');
+    await page.waitFor(`document.querySelector('[data-format-bar]') !== null`, { label: 'the bar' });
+
+    assert.equal(await absent('[data-format-bar] [data-field="fill"]'), true, 'a fill picker for an envelope');
+    assert.equal(await absent('[data-format-bar] [data-field="size"]'), true, 'a font size for an envelope');
+    assert.equal(await absent('[data-format-bar] .fmt-align'), true, 'text alignment for an envelope');
+    assert.equal(await page.eval(`document.querySelectorAll('[data-format-bar] .fmt-corner').length`), 2);
+  });
+
+  describe('corners', () => {
+    const corner = (value) => `[data-format-bar] .fmt-corner[data-value="${value}"]`;
+    const radiusOf = (id) =>
+      page.eval(`getComputedStyle(document.querySelector('[data-id="${id}"]')).borderTopLeftRadius`);
+
+    test('squares a card, and rounds it again', async () => {
+      const id = await addCard();
+      await select(id);
+
+      await click(corner('square'));
+      await settled(id, 'corners', 'square');
+      assert.equal(await radiusOf(id), '0px', 'the DOM kept the radius');
+
+      await click(corner('round'));
+      await settled(id, 'corners', 'round');
+      assert.equal(await radiusOf(id), '8px');
+    });
+
+    /** The one control the bar offers a selection that has no cards in it. */
+    test('applies to every kind of object at once', async () => {
+      const card = await addCard();
+      const envelope = await page.eval(`app.board.add('envelope', { x: 400, y: 0 }).id`);
+      const list = await page.eval(`app.board.add('list', { x: 900, y: 0 }).id`);
+      await select(card, envelope, list);
+
+      await click(corner('square'));
+      for (const id of [card, envelope, list]) {
+        await settled(id, 'corners', 'square');
+        assert.equal(await radiusOf(id), '0px', id);
+      }
+    });
+
+    /**
+     * Pre-selecting a value that is only true of one object is how people
+     * change something they meant to leave alone — so a selection that
+     * disagrees shows neither as current, exactly as the alignment group does.
+     */
+    test('a selection that disagrees shows neither as current', async () => {
+      const round = await addCard();
+      const square = await addCard({ x: 600, corners: 'square' });
+
+      await select(square);
+      await page.waitFor(`document.querySelector('${corner('square')}[data-current]') !== null`, {
+        label: 'square to read as current',
+      });
+
+      await select(round, square);
+      assert.equal(await absent(`${corner('square')}[data-current]`), true);
+      assert.equal(await absent(`${corner('round')}[data-current]`), true);
+
+      // And it still writes to both, which is the point of offering it.
+      await click(corner('round'));
+      await settled(square, 'corners', 'round');
+      await settled(round, 'corners', 'round');
+    });
+
+    test('a board written before corners existed draws them round', async () => {
+      const id = await addCard();
+      assert.equal(await page.eval(`'corners' in app.store.get('${id}')`), false);
+      await select(id);
+
+      await page.waitFor(`document.querySelector('${corner('round')}[data-current]') !== null`, {
+        label: 'round to read as current',
+      });
+      assert.equal(await radiusOf(id), '8px');
+    });
   });
 
   test('each control writes its field, and the card shows it', async () => {
@@ -559,7 +636,7 @@ describe('format bar', () => {
      * Two frames after the call, because the rejection is handled in a
      * microtask and microtasks are drained before the next frame — so anything
      * this flow was going to do has happened by then. The same reasoning as
-     * `noBar` above: asserting that nothing changed needs a settled page, and
+     * `absent` above: asserting that nothing changed needs a settled page, and
      * there is no positive condition to wait for.
      */
     const settledDropper = async () => {

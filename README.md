@@ -21,7 +21,10 @@ npm start        # serve the built site
 | **Cards** | Notes with editable text, resizable from eight handles — and formattable: any background and text colour (transparent included), font, size and alignment |
 | **Envelopes** | Grouping containers — dragging one carries everything fully inside it, transitively |
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
+| **Images** | Paste a picture from anywhere and it becomes an object on the sheet, carried by the document itself |
+| **Corners** | Cards, envelopes, lists and images are rounded or square, per object |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
+| **Clipboard** | Copy and paste the selection — between sheets, between boards, between windows |
 | **Saving** | The bar says whether your work is stored — a refused write retries itself, and closing the tab flushes what the debounce is still holding |
 | **Export** | The board as a PNG — the selection if there is one, everything otherwise |
 | **Together** | With a project configured: share a board by link, live edits, and other people's cursors |
@@ -35,7 +38,8 @@ npm start        # serve the built site
 | Select | Click, `Shift`-click, or drag a marquee on empty canvas |
 | Edit | Double-click any text |
 | Create | `C` / `E` / `L`, the toolbar, or double-click empty canvas |
-| Format | Select cards; a bar appears above them — colour pickers for background and text, a no-background toggle, font, size and alignment |
+| Format | Select something; a bar appears above it — for cards, colour pickers for background and text, a no-background toggle, font, size and alignment; for anything, rounded or square corners |
+| Copy / paste | `⌘/Ctrl+C`, `⌘/Ctrl+V` — and `⌘/Ctrl+V` for an image on the clipboard, which lands as an object |
 | Snapping | On by default; hold `Alt` to disable |
 | Undo / redo | `⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z` |
 | Fit / reset zoom | `Shift+1` / `Shift+0` |
@@ -54,7 +58,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
         └── app.js  composition root — builds the object graph, wires commands
               ├── core/       the domain. No DOM, no window, no clock, no React.
               │   ├── store.js       document as an op log (add / del / set / order)
-              │   ├── board.js       cards, envelopes, lists, z-order, snapping
+              │   ├── board.js       cards, envelopes, lists, images, z-order, snapping
               │   ├── selection.js   what is selected
               │   ├── viewport.js    the camera
               │   ├── autosave.js    persistence policy, and its retries
@@ -64,11 +68,16 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
               │   ├── geometry.js    rectangle maths
               │   ├── ids.js         id generation
               │   ├── card-style.js  how a card looks, as tokens
+              │   ├── corners.js     rounded or square, for every type
+              │   ├── clipboard.js   what copied objects look like as text
+              │   ├── image.js       what a picture may be, and how big
               │   ├── bar-position.js where the format bar sits
               │   └── seed.js        the starter board
               └── platform/   the browser. Adapters, nothing else.
                   ├── renderer.js    reconciles the store into the DOM
                   ├── input.js       pointer and keyboard gestures
+                  ├── clipboard.js   copy and paste, on the system clipboard
+                  ├── images.js      a pasted file, made into something storable
                   ├── views.js       per-type markup
                   ├── export-png.js  the same objects, drawn to a canvas
                   ├── storage.js     BoardRepository over Web Storage
@@ -164,6 +173,89 @@ everything it mentions, and anything it does not mention keeps the depth it has
 here. There is no operational transform beyond that: two people dragging the
 same object settle on whoever's message landed last.
 
+### The clipboard, and pictures on it
+
+Copy and paste go through the `copy` and `paste` events rather than
+`navigator.clipboard`. That is not a style preference: reading the clipboard
+asynchronously needs a permission the browser prompts for, and a prompt in the
+middle of ⌘V is not paste. The event hands the data over with no permission at
+all, because the keystroke *is* the consent — and it is the only route by which
+an image on the clipboard arrives as a file rather than as nothing.
+
+The listeners are on `document`, for the reason the board's shortcuts are on
+`window`: a canvas is a place where the thing you are acting on is selected
+rather than focused, so there is no element to hang them on. That means they
+hear the app's own chrome too, and `isTyping` is what keeps a copy inside the
+board title from copying the board instead.
+
+A copied selection travels as **`text/plain`**, holding a JSON envelope with a
+marker in it. The cost is visible and accepted — paste three cards into a text
+editor and you get JSON. The alternative is a custom clipboard type, which
+pastes into a text editor as nothing at all and is not carried between browsers
+or reliably between tabs; text is what makes a card copied on one board appear
+on another. Anything that is not ours is left to the browser rather than
+swallowed, so pasting a paragraph from a web page onto a board does nothing.
+
+A paste lands **under the pointer** when the pointer is over the board, and in
+the middle of the view when it is not. That is what makes pasting twice into two
+places one gesture rather than two, and the pointer is the only thing the person
+can be said to have pointed at. Everything else follows the rules the board
+already has: new ids, because the same object cannot be in a document twice; an
+envelope brings what it holds, exactly as dragging one does; pasted envelopes go
+to the back, exactly as a new one does; and the whole paste is one entry in the
+undo stack, because it is one thing that happened.
+
+An image is an object like any other — `{ type: 'image', x, y, w, h, src }` —
+and `src` is the picture itself as a data URL rather than a link to one. The
+board is a document that is stored whole, broadcast to the other people on it and
+drawn to a PNG: three places a link would have to still resolve, from whatever
+network the reader happens to be on. Carrying the bytes means an image that is on
+the board is on the board.
+
+The bytes being in the document is also what makes the import a *policy* rather
+than a formality, in `core/image.js` and `platform/images.js`:
+
+- **A source is a base64 data URL of a raster type, or it is not drawn.** An
+  object arrives over the board's channel from anyone authorised to edit it and
+  goes into an `img`. A remote URL in there is a request this browser makes to a
+  host of somebody else's choosing, which reports the reader's address to it;
+  `svg+xml` is a document rather than a bitmap. The same rule the style tokens
+  follow: fall back to nothing rather than pass it through. The attribute is
+  *removed* rather than emptied, because `src=""` is a request for the page.
+- **Bytes already small enough are kept exactly as they came.** A screenshot
+  pasted straight from the clipboard is crisp, lossless and usually small, and
+  re-encoding it would store a lossy copy of itself for no benefit.
+- **Anything larger is redrawn through a canvas and encoded as WebP**, at most
+  1200 pixels on its long side, retried smaller until it fits the budget and
+  refused out loud if it never does. A canvas also normalises what it draws: a
+  type this app does not render becomes one it does, and the camera position a
+  photograph was taken at is left behind, because a canvas has no metadata to
+  give it.
+
+The budget — around 180KB of image — is set by the *channel*, not the disk. Ops
+are broadcast, and an `add` carrying a whole picture is the only op that can
+reach a payload limit. Under it, pasting an image is a live edit like every
+other; over it, the send fails and the picture reaches the other people on the
+board on their next load instead. The failure is soft, which is exactly why it is
+worth spending some quality to stay under it.
+
+### Corners
+
+`corners: 'round' | 'square'` is a token on the object, and the radius itself
+stays in `canvas.css` — the same split colour already uses. A card carrying
+`corners: 8` would be a card to find and rewrite the day the radius changes, and
+one carrying `corners: 400` is a card nobody meant to make. The stylesheet needs
+one rule for it, because round is what every object has always been and remains
+the default: an object with no `corners` field renders exactly as it did before
+any of this existed.
+
+It lives in its own module rather than in `card-style.js`, which is about what a
+*card* looks like and means nothing for an envelope. That is what lets the format
+bar offer the control to a selection with no cards in it — an envelope selected
+on its own gets a bar with that one control on it, where before it got no bar at
+all. Each control is offered to whatever it means something for, and to nothing
+else.
+
 ### Saying whether it saved
 
 Autosave knew all of this already and told nobody. A write that was refused
@@ -235,6 +327,13 @@ tokens off `:root`, and probe elements for the two things a token cannot
 answer, since `--card-bg` is chosen by an attribute selector and the envelope's
 background is a `color-mix` only the browser can resolve. Retuning a colour or
 adding a theme needs no change here; only geometry is restated.
+
+Images are the one thing that cannot be drawn in the same pass they are read in:
+a 2D context has no way to wait for a bitmap mid-drawing, so every picture on the
+board is decoded first, keyed by source so the same one pasted twice is one
+decode. A source that will not decode is left out and its object is drawn as the
+empty box the DOM would show, because the rest of the board is still worth a file
+and drawing nothing would look like the export lost it.
 
 What it deliberately does not reproduce: selection rings, handles and guides,
 which are affordances for someone working rather than part of the document; the
@@ -660,6 +759,24 @@ to a team appears on your next load, not under your cursor — and with paging,
 "your next load" means page one, so a board that arrives while you are three
 pages down is not inserted where it belongs. Live lists would mean a
 subscription per scope on top of the per-board channel that already exists.
+
+There is no cut. Copy and paste are here because they were asked for; ⌘X is a
+third gesture with its own question — whether the objects go when the copy is
+made or when the paste lands — and inventing an answer to that was not part of
+the request.
+
+A pasted image is bounded to fit one broadcast, and nothing checks that it did.
+`channel.send` for a broadcast resolves before the socket has been written to
+(three sections up), so an `add` too large to deliver is indistinguishable from
+one that arrived — the picture is in the snapshot either way, so the other people
+on the board see it on their next load rather than under their cursor. What would
+close this is the same `broadcast: { ack: true }` that the writer election cannot
+afford.
+
+Images are also the first thing on a board big enough to reach the Web Storage
+quota. A refused write is already reported honestly — the bar says the board is
+not stored and the retry is right there — but nothing distinguishes "this browser
+is full" from "this write failed", and the difference is one a person can act on.
 
 Routing is hash-based (`/#/b/:id`) because GitHub Pages has no SPA rewrite.
 Moving to a host that can serve `index.html` for any path makes that a one-line

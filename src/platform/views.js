@@ -10,6 +10,8 @@
  */
 
 import { CARD_STYLE_FIELDS, cardStyle, namedColour } from '../core/card-style.js';
+import { isImageSource } from '../core/image.js';
+
 export function createViews({ document }) {
   const element = (html) => {
     const template = document.createElement('template');
@@ -101,6 +103,39 @@ export function createViews({ document }) {
           row.classList.toggle('done', !!item.done);
           setText(row.querySelector('[data-field="item"]'), item.text);
         }
+      },
+    },
+
+    /**
+     * A picture, carried by the document rather than linked from it.
+     *
+     * `alt` is empty because there is nothing true to put in it: nobody typed a
+     * description, and inventing "image" would read out a word that adds nothing
+     * to what the board already says. `draggable` is off so that dragging the
+     * object moves it, instead of the browser offering to drag the picture out
+     * of the page.
+     */
+    image: {
+      create: () => element(`<div class="obj image">
+        <img class="image-bitmap" alt="" draggable="false">
+      </div>`),
+      update(el, obj) {
+        const img = el.querySelector('img');
+        const src = typeof obj.src === 'string' ? obj.src : '';
+
+        /**
+         * Compared with what is already there before anything else happens.
+         * `update` runs for every op that touches the object — which is every
+         * frame of a drag — and the guard below is a regular expression over the
+         * whole picture, so an unchanged source is worth not looking at twice.
+         */
+        if (img.getAttribute('src') === src) return;
+
+        // Removed rather than emptied: `src=""` is a request for the page
+        // itself, so an object whose source is not a picture would fetch the
+        // document and draw a broken image where nothing belongs.
+        if (isImageSource(src)) img.setAttribute('src', src);
+        else img.removeAttribute('src');
       },
     },
   };
