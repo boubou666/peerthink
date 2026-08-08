@@ -33,6 +33,8 @@ import {
   cardStyle,
   namedColour,
 } from '../core/card-style.js';
+import { cornersOf } from '../core/corners.js';
+import { isImageSource } from '../core/image.js';
 
 /**
  * How long the object URL is kept alive as a backstop, in ms. Long enough that
@@ -43,6 +45,8 @@ export const REVOKE_AFTER_MS = 2_000;
 
 /** Geometry from `canvas.css`, in world units. Colour is never copied here. */
 const RADIUS = 8;
+/** The radius an object is drawn with, which is a property of the object now. */
+const radiusOf = (obj) => (cornersOf(obj) === 'square' ? 0 : RADIUS);
 const CARD = { pad: 12, size: 14, line: 1.4 };
 // The dash is the browser's, not a choice: Chrome draws a dashed border in
 // dashes roughly twice the border width with gaps to match, and a coarser
@@ -136,6 +140,10 @@ export function createPngExporter({ document, window }) {
     const cardFamily = styleOf('font', CARD_FONTS, (read) => read.family);
     const cardSize = styleOf('size', CARD_SIZES, (read) => read.size);
     const envelope = probe('obj envelope');
+    // What shows through a picture with transparency in it, and what an image
+    // whose source did not decode is drawn as. A `color-mix` again, so it is
+    // asked for rather than restated.
+    const image = probe('obj image');
     const family = window.getComputedStyle(document.body).fontFamily;
 
     host.remove();
@@ -153,6 +161,7 @@ export function createPngExporter({ document, window }) {
       cardSize,
       envelopeBg: envelope.background,
       envelopeBorder: envelope.border,
+      imageBg: image.background,
       family,
     };
   };
@@ -277,7 +286,7 @@ export function createPngExporter({ document, window }) {
      * on the board rather than the scaffolding for putting it there.
      */
     if (style.fill !== 'none') {
-      rounded(ctx, obj.x, obj.y, obj.w, obj.h, RADIUS);
+      rounded(ctx, obj.x, obj.y, obj.w, obj.h, radiusOf(obj));
       // A named colour is whatever the stylesheet currently says it is, so it
       // is looked up; one the card carries is already the answer.
       ctx.fillStyle = namedColour(style.fill)
@@ -306,7 +315,7 @@ export function createPngExporter({ document, window }) {
   };
 
   const drawEnvelope = (ctx, obj, palette) => {
-    rounded(ctx, obj.x, obj.y, obj.w, obj.h, RADIUS);
+    rounded(ctx, obj.x, obj.y, obj.w, obj.h, radiusOf(obj));
     ctx.fillStyle = palette.envelopeBg;
     ctx.fill();
 
@@ -337,7 +346,7 @@ export function createPngExporter({ document, window }) {
   };
 
   const drawList = (ctx, obj, palette) => {
-    rounded(ctx, obj.x, obj.y, obj.w, obj.h, RADIUS);
+    rounded(ctx, obj.x, obj.y, obj.w, obj.h, radiusOf(obj));
     ctx.fillStyle = palette.panel;
     shadowed(ctx, () => ctx.fill());
     ctx.lineWidth = LIST.border;
@@ -347,7 +356,7 @@ export function createPngExporter({ document, window }) {
     // Everything below is clipped to the object: a list resized shorter than
     // its rows hides them on screen, and must hide them here.
     ctx.save();
-    rounded(ctx, obj.x, obj.y, obj.w, obj.h, RADIUS);
+    rounded(ctx, obj.x, obj.y, obj.w, obj.h, radiusOf(obj));
     ctx.clip();
 
     const left = obj.x + LIST.pad;
@@ -419,7 +428,66 @@ export function createPngExporter({ document, window }) {
     ctx.restore();
   };
 
-  const drawers = { card: drawCard, envelope: drawEnvelope, list: drawList };
+  /**
+   * A picture, at the size its box says.
+   *
+   * The background goes down first whether or not there is a bitmap, which is
+   * both what the DOM does — `.image` has one, and a PNG with transparency in it
+   * shows it through — and the only thing to draw for an image that did not
+   * decode. A box where the picture should be says an object is there; nothing
+   * at all says the export lost it.
+   */
+  const drawImage = (ctx, obj, palette, bitmaps) => {
+    const radius = radiusOf(obj);
+    rounded(ctx, obj.x, obj.y, obj.w, obj.h, radius);
+    ctx.fillStyle = palette.imageBg;
+    shadowed(ctx, () => ctx.fill());
+
+    const bitmap = bitmaps?.get(obj.src);
+    if (!bitmap) return;
+
+    // Clipped, so a rounded image is rounded here too — the radius is on the
+    // picture in the stylesheet, and a 2D context has no border-radius to give
+    // a drawImage.
+    ctx.save();
+    rounded(ctx, obj.x, obj.y, obj.w, obj.h, radius);
+    ctx.clip();
+    ctx.drawImage(bitmap, obj.x, obj.y, obj.w, obj.h);
+    ctx.restore();
+  };
+
+  const drawers = { card: drawCard, envelope: drawEnvelope, list: drawList, image: drawImage };
+
+  /**
+   * Every picture on the board, decoded and ready to draw.
+   *
+   * `paint` is synchronous — it has to be, because a context is a thing you draw
+   * into in order — and `drawImage` will not wait for a bitmap. So the images
+   * are decoded first, by source rather than by object, since the same picture
+   * pasted twice is one decode.
+   *
+   * A source that will not decode is left out of the map rather than failing the
+   * export: the rest of the board is still worth a file, and `drawImage` has
+   * something to draw for it.
+   */
+  const loadBitmaps = async (objects) => {
+    const sources = [...new Set(objects
+      .filter((obj) => obj?.type === 'image')
+      .map((obj) => obj.src))].filter(isImageSource);
+
+    const bitmaps = new Map();
+    await Promise.all(sources.map(async (src) => {
+      const img = new window.Image();
+      img.src = src;
+      try {
+        await img.decode();
+        bitmaps.set(src, img);
+      } catch {
+        // Not a picture after all, or not one this browser reads.
+      }
+    }));
+    return bitmaps;
+  };
 
   /**
    * Paint `objects` into a context already sized to `frame`.
@@ -428,7 +496,7 @@ export function createPngExporter({ document, window }) {
    * The array is drawn in the order it arrives — `store.all()` is already
    * back-to-front, and re-sorting here would be a second opinion about depth.
    */
-  const paint = (ctx, objects, frame, palette) => {
+  const paint = (ctx, objects, frame, palette, bitmaps) => {
     ctx.save();
     ctx.fillStyle = palette.bg;
     ctx.fillRect(0, 0, frame.width, frame.height);
@@ -440,7 +508,7 @@ export function createPngExporter({ document, window }) {
       // An object of a type this file has never heard of is skipped rather
       // than drawn wrong — a board saved by a newer version is still worth
       // exporting for the parts that are understood.
-      drawers[obj?.type]?.(ctx, obj, palette);
+      drawers[obj?.type]?.(ctx, obj, palette, bitmaps);
     }
     ctx.restore();
   };
@@ -448,6 +516,7 @@ export function createPngExporter({ document, window }) {
   return {
     paint,
     readPalette,
+    loadBitmaps,
 
     /**
      * Render to a PNG blob, or null when the browser would not give one.
@@ -465,7 +534,11 @@ export function createPngExporter({ document, window }) {
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
 
-      paint(ctx, objects, frame, readPalette());
+      // Decoded before the palette is read, so that reading it and drawing with
+      // it stay in one turn — `paint` cannot wait for a bitmap, so this is the
+      // one thing here that has to happen first.
+      const bitmaps = await loadBitmaps(objects);
+      paint(ctx, objects, frame, readPalette(), bitmaps);
       return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
     },
 

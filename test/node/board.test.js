@@ -113,6 +113,136 @@ describe('Board', () => {
     });
   });
 
+  describe('copyable', () => {
+    test('is the selection, as copies rather than the objects themselves', () => {
+      const card = at('card', { x: 10, y: 20, text: 'mine' });
+      const copied = board.copyable();
+
+      assert.deepEqual(copied.map((obj) => obj.id), [card.id]);
+      assert.equal(copied[0].text, 'mine');
+
+      copied[0].text = 'changed on the clipboard';
+      assert.equal(store.get(card.id).text, 'mine', 'the board is untouched');
+    });
+
+    test('is empty with nothing selected', () => {
+      at('card');
+      selection.clear();
+      assert.deepEqual(board.copyable(), []);
+    });
+
+    /** Copying a container that arrives empty is not what anybody meant. */
+    test('an envelope brings what it holds', () => {
+      const inside = at('card', { x: 150, y: 150, w: 100, h: 80 });
+      const outside = at('card', { x: 900, y: 900, w: 100, h: 80 });
+      const envelope = at('envelope', { x: 100, y: 100, w: 400, h: 300 });
+      selection.set([envelope.id]);
+
+      const ids = board.copyable().map((obj) => obj.id);
+      assert.ok(ids.includes(inside.id));
+      assert.ok(!ids.includes(outside.id));
+    });
+
+    /** Depth is part of what is copied, and `add` puts an envelope at the back. */
+    test('comes back in the order the objects are stacked, not the order selected', () => {
+      const card = at('card', { x: 150, y: 150, w: 100, h: 80 });
+      const envelope = at('envelope', { x: 100, y: 100, w: 400, h: 300 });
+      selection.set([card.id, envelope.id]);
+
+      assert.deepEqual(board.copyable().map((obj) => obj.id), [envelope.id, card.id]);
+    });
+  });
+
+  describe('paste', () => {
+    const copied = (props = {}) => ({ id: 'from-elsewhere', type: 'card', x: 0, y: 0, w: 100, h: 50, ...props });
+
+    test('centres what arrives on the point, and selects it', () => {
+      const [pasted] = board.paste([copied()], { x: 500, y: 300 });
+
+      assert.deepEqual({ x: pasted.x, y: pasted.y }, { x: 450, y: 275 });
+      assert.deepEqual(selection.list(), [pasted.id]);
+      assert.deepEqual(store.order, [pasted.id]);
+    });
+
+    test('a group keeps its shape, centred as a whole', () => {
+      const pasted = board.paste(
+        [copied({ x: 0, y: 0 }), copied({ id: 'b', x: 100, y: 0 })],
+        { x: 100, y: 100 },
+      );
+      assert.deepEqual(pasted.map((obj) => obj.x), [0, 100], 'the gap between them is unchanged');
+      assert.deepEqual(pasted.map((obj) => obj.y), [75, 75]);
+      assert.deepEqual(selection.list(), pasted.map((obj) => obj.id));
+    });
+
+    test('coordinates land on whole numbers', () => {
+      const [pasted] = board.paste([copied({ w: 101, h: 51 })], { x: 0, y: 0 });
+      assert.ok(Number.isInteger(pasted.x) && Number.isInteger(pasted.y));
+    });
+
+    /** Two objects sharing an id is a document where an op means two things. */
+    test('what is pasted gets new ids, even pasted onto itself', () => {
+      const card = at('card', { x: 0, y: 0 });
+      const [pasted] = board.paste(board.copyable(), { x: 400, y: 400 });
+
+      assert.notEqual(pasted.id, card.id);
+      assert.equal(store.order.length, 2);
+      assert.equal(store.get(card.id).x, 0, 'the original has not moved');
+    });
+
+    /**
+     * By mutating what was handed in, not what came out. A payload read off a
+     * clipboard is somebody else's object — the caller may hold it, paste it
+     * twice, or paste it into two sheets — so the test has to depend on the
+     * clone rather than on `store.apply`, which clones its own patch and would
+     * pass this whether `paste` copied anything or not.
+     */
+    test('nested data is copied, not shared', () => {
+      const source = copied({ type: 'list', items: [{ id: 'i1', text: 'a' }] });
+      const [pasted] = board.paste([source], { x: 0, y: 0 });
+
+      source.items[0].text = 'changed after pasting';
+
+      assert.equal(pasted.items[0].text, 'a');
+      assert.equal(store.get(pasted.id).items[0].text, 'a');
+    });
+
+    /**
+     * The renderer builds an element by asking `views` for the type, so an
+     * object from a newer client would not draw wrong — it would throw.
+     */
+    test('a type this build does not know is dropped', () => {
+      const pasted = board.paste([copied(), copied({ id: 'x', type: 'sticker' })], { x: 0, y: 0 });
+      assert.equal(pasted.length, 1);
+      assert.equal(store.order.length, 1);
+    });
+
+    test('nothing placeable changes nothing', () => {
+      at('card');
+      selection.clear();
+      assert.deepEqual(board.paste([copied({ type: 'sticker' })], { x: 0, y: 0 }), []);
+      assert.equal(store.order.length, 1);
+      assert.equal(selection.size, 0, 'and does not announce a selection of nothing');
+    });
+
+    /** The rule `add` follows, applied to a group. */
+    test('pasted envelopes go behind what is already on the board', () => {
+      const there = at('card', { x: 0, y: 0 });
+      const pasted = board.paste(
+        [copied({ id: 'e1', type: 'envelope' }), copied({ id: 'e2', type: 'envelope' }), copied({ id: 'c1' })],
+        { x: 0, y: 0 },
+      );
+
+      const [e1, e2, c1] = pasted.map((obj) => obj.id);
+      assert.deepEqual(store.order, [e1, e2, there.id, c1], 'envelopes at the back, in their own order');
+    });
+
+    test('every pasted object is one entry in the undo stack', () => {
+      board.paste([copied(), copied({ id: 'b' })], { x: 0, y: 0 });
+      store.undo();
+      assert.deepEqual(store.order, []);
+    });
+  });
+
   describe('deleteSelected', () => {
     test('removes the selection and clears it', () => {
       const card = at('card');

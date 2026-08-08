@@ -86,6 +86,17 @@ body:has(.board-page) { overflow: hidden; }
 }
 .obj[hidden] { display: none; }
 
+/*
+ * Corners, as a token on the object — see core/corners.js.
+ *
+ * The radius above is the default and stays where it is, so an object with no
+ * `corners` field renders exactly as it always has; only `square` is a rule, and
+ * it is one line rather than a value repeated per type. In world units like the
+ * rest of the geometry inside an object, so a rounded corner is as round at 300%
+ * as it is at 100%.
+ */
+.obj[data-corners="square"] { border-radius: 0; }
+
 .obj.selected {
   box-shadow: 0 0 0 calc(2px / var(--z)) var(--accent);
   z-index: 1;
@@ -230,6 +241,36 @@ body:has(.board-page) { overflow: hidden; }
   cursor: pointer;
 }
 .list-add:hover { color: var(--accent); }
+
+/* image */
+
+.image {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  box-shadow: var(--shadow);
+}
+/*
+ * The radius is clipped by the picture rather than by the object: `overflow:
+ * hidden` here would cut off the resize handles, which sit outside the bounds on
+ * purpose. `inherit` is what keeps the two in step with the corner token without
+ * naming a radius twice.
+ *
+ * `fill` rather than `contain`, because the box is the size the person dragged
+ * the handles to. Letterboxing inside it would mean the object's edges and the
+ * picture's edges are different rectangles, and the selection ring would stop
+ * saying where the picture is.
+ */
+.image-bitmap {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: fill;
+  /* Nothing is aimed at the picture: the object under it is what gets selected,
+     dragged and resized, and `draggable` above is what keeps the browser from
+     offering to drag the picture out of the page instead. */
+  pointer-events: none;
+  user-select: none;
+}
 
 /* resize handles */
 
@@ -433,6 +474,27 @@ body:has(.board-page) { overflow: hidden; }
 .fmt-align[data-value="right"]  { align-items: flex-end; }
 
 .fmt-bar { height: 2px; background: var(--ink); border-radius: 1px; }
+
+/* The control is the shape it makes: a box drawn with the corners in question. */
+.fmt-corner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+.fmt-corner[data-current] { border-color: var(--accent); }
+.fmt-corner-box {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--ink);
+}
+.fmt-corner[data-value="round"] .fmt-corner-box { border-radius: 4px; }
 .fmt-bar:nth-child(1) { width: 100%; }
 .fmt-bar:nth-child(2) { width: 60%; }
 .fmt-bar:nth-child(3) { width: 85%; }

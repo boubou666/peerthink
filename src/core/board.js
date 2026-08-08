@@ -16,6 +16,14 @@ export const OBJECT_DEFAULTS = {
   card: () => ({ w: 200, h: 120, text: '' }),
   envelope: () => ({ w: 440, h: 320, title: 'Envelope' }),
   list: () => ({ w: 260, h: 230, title: 'List', items: [] }),
+  /**
+   * An image is the one type nobody creates empty: it arrives from a clipboard
+   * with its own proportions, and both the size and the `src` are handed in.
+   * The defaults are what an image with neither would be — a box of nothing,
+   * which is what a picture that failed to arrive should look like rather than
+   * a full-width blank.
+   */
+  image: () => ({ w: 240, h: 180, src: '' }),
 };
 
 export const CARD_COLORS = ['yellow', 'blue', 'green', 'pink', 'white'];
@@ -73,6 +81,73 @@ export class Board {
       x: Math.round(point.x - size.w / 2),
       y: Math.round(point.y - size.h / 2),
     });
+  }
+
+  /**
+   * The selection as objects to copy, in the order they are stacked.
+   *
+   * An envelope brings what it holds, exactly as dragging one does: an envelope
+   * is a container, and copying a container that arrives empty is not what
+   * anybody selecting one meant. The same transitive rule, so an envelope of
+   * envelopes copies whole.
+   *
+   * Ordered by the z-order rather than by the selection, because depth is part
+   * of what is being copied — `store.all()` is already back-to-front, and
+   * `paste` puts them back in the order it receives them.
+   */
+  copyable() {
+    const wanted = new Set(this.withEnvelopeChildren(this.selection.list()));
+    return this.store.all().filter((obj) => wanted.has(obj.id)).map((obj) => structuredClone(obj));
+  }
+
+  /**
+   * Place copied objects, centred on a world point, and select them.
+   *
+   * New ids, always: these may be a copy of objects still on this sheet, and
+   * two objects sharing an id is a document where an op means two things. Item
+   * ids inside a list are left alone, as `duplicate` and `Sheets#duplicate`
+   * leave them — they are addressed within their list and no op names one from
+   * outside.
+   *
+   * Types this build does not know are dropped here rather than added. The
+   * renderer builds an element by asking `views` for the type, so an object
+   * from a newer client would not draw wrong — it would throw, and take the
+   * sheet's rendering with it. Board is where the vocabulary lives, so this is
+   * where the question is answered.
+   *
+   * Centred on the point rather than offset from where they were copied,
+   * because the point is where the person is looking: the objects may have come
+   * from another sheet, another board or another window, and "24 pixels down and
+   * right of wherever this was" is a place off the side of the screen.
+   */
+  paste(objects, point) {
+    const usable = objects.filter((obj) => OBJECT_DEFAULTS[obj?.type]);
+    if (!usable.length) return [];
+
+    const box = bbox(usable);
+    const dx = point.x - (box.x + box.w / 2);
+    const dy = point.y - (box.y + box.h / 2);
+
+    const clones = usable.map((obj) => ({
+      ...structuredClone(obj),
+      id: this.newId(),
+      x: Math.round(obj.x + dx),
+      y: Math.round(obj.y + dy),
+    }));
+
+    /**
+     * Envelopes go in at the back, in their own order, and everything else on
+     * top — the rule `add` follows, applied to a group. Appending a pasted
+     * envelope where it happens to fall in the copied order would drop it over
+     * the objects already on the board and bury them.
+     */
+    let depth = 0;
+    this.store.apply(clones.map((obj) => (obj.type === 'envelope'
+      ? { t: 'add', obj, index: depth++ }
+      : { t: 'add', obj })));
+
+    this.selection.set(clones.map((obj) => obj.id));
+    return clones;
   }
 
   duplicate(offset = 24) {

@@ -12,6 +12,17 @@ import { repository } from '../shell/storage.js';
 const EMPTY_BOARD = { v: 1, order: [], objects: [] };
 
 /**
+ * What the canvas layer's problem codes mean, in words.
+ *
+ * The codes come up from `platform/clipboard.js`, which knows that a file could
+ * not be turned into an image and has no business knowing how to say so. Every
+ * other sentence the user reads is written in the shell, and so is this one.
+ */
+const PROBLEMS = {
+  'image-refused': 'Could not paste that image — it may not be a format this browser reads, or it may be too large to store on a board.',
+};
+
+/**
  * The board's stored name, and where it lives. A board with no record yet —
  * one seeded on a first visit — has neither, and the placeholder and a null
  * organization are the right answers for it.
@@ -44,7 +55,16 @@ export function BoardPage() {
   // in the title field.
   const [saveStatus, setSaveStatus] = useState(SAVED);
   const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState(null);
+  /**
+   * The one thing the page has to say, as `{ kind, text }`, or null.
+   *
+   * One banner and not two: it is a fixed strip over the canvas rather than
+   * something in a flow, so a second would be drawn on top of the first. The
+   * newest thing that went wrong is also the one the person just did, which is
+   * the one worth reading — `kind` is there so that what the banner is about is
+   * legible to a test, rather than only to whoever reads the sentence.
+   */
+  const [notice, setNotice] = useState(null);
   const app = useRef(null);
   const cancelled = useRef(false);
   /**
@@ -54,6 +74,15 @@ export function BoardPage() {
    * as much theirs to keep as a finished rename.
    */
   const claimed = useRef(false);
+  /**
+   * Which board the page is on, readable from inside a promise.
+   *
+   * `boardId` in a closure is the board that was on screen when the closure was
+   * made, which is exactly what a result arriving late must not be compared
+   * against. The effect below keeps this current, so anything that resolves
+   * after a board change can tell that it did.
+   */
+  const showing = useRef(boardId);
 
   // The router reuses this component when only :boardId changes, so both the
   // committed title and the field have to follow the parameter. A controlled
@@ -62,12 +91,13 @@ export function BoardPage() {
   useEffect(() => {
     let live = true;
     claimed.current = false;
+    showing.current = boardId;
 
     // The router reuses this component when only :boardId changes, so anything
-    // said about the last board has to go with it. An export banner left up
-    // would be reporting a failure that belongs to a board no longer on
-    // screen, against a button that would now do something different.
-    setExportError(null);
+    // said about the last board has to go with it. A banner left up would be
+    // reporting something that happened on a board no longer on screen, against
+    // a button that would now do something different.
+    setNotice(null);
     setExporting(false);
 
     detailsOf(boardId).then(
@@ -115,6 +145,16 @@ export function BoardPage() {
     app.current = instance;
   }, []);
 
+  /**
+   * Something the canvas could not do, in words. `useCallback` because
+   * BoardCanvas mounts the whole board in an effect keyed on its props — a new
+   * function each render would tear the board down and rebuild it on every
+   * keystroke in the title field.
+   */
+  const handleProblem = useCallback((code) => {
+    setNotice({ kind: 'paste', text: PROBLEMS[code] ?? 'That did not work.' });
+  }, []);
+
   // Autosave retries on its own, on a backoff that reaches half a minute. This
   // is for the person who has fixed whatever it was and does not want to wait
   // out the timer to find out.
@@ -134,7 +174,21 @@ export function BoardPage() {
    */
   const exportPng = async () => {
     setExporting(true);
-    setExportError(null);
+    setNotice(null);
+    /**
+     * Which board this export is of. A large board spends real time in
+     * `toBlob`, which is long enough to press the back arrow and open another
+     * one — and the report belongs to the board that was exported, so if that
+     * is no longer the board on screen there is nobody to give it to. The same
+     * rule the title read follows, and the same rule the effect above applies
+     * to a banner already up.
+     */
+    const of = boardId;
+    const said = (text) => {
+      if (showing.current !== of) return;
+      setNotice({ kind: 'export', text });
+    };
+
     try {
       // The bar renders before the canvas hands its instance back, so this is
       // reachable — briefly — by a fast click on a slow load. It is its own
@@ -142,15 +196,15 @@ export function BoardPage() {
       // for something that has not been attempted yet.
       const board = app.current;
       if (!board) {
-        setExportError('The board is still opening — try again in a moment.');
+        said('The board is still opening — try again in a moment.');
         return;
       }
 
       const result = await board.commands.exportPng();
-      if (result === 'empty') setExportError('Nothing to export — this board is empty.');
-      else if (result !== 'ok') setExportError('Could not export this board. It may be too large.');
+      if (result === 'empty') said('Nothing to export — this board is empty.');
+      else if (result !== 'ok') said('Could not export this board. It may be too large.');
     } catch {
-      setExportError('Could not export this board.');
+      said('Could not export this board.');
     } finally {
       setExporting(false);
     }
@@ -227,16 +281,16 @@ export function BoardPage() {
         )}
       </header>
 
-      {exportError && (
-        <p className="error board-export-error" role="alert" data-export-error>
-          <span>{exportError}</span>
+      {notice && (
+        <p className="error board-notice" role="alert" data-board-notice={notice.kind}>
+          <span>{notice.text}</span>
           {/*
             Dismissible, unlike the list's errors: this one floats over the
             canvas rather than sitting above a list, and a red banner parked
             on someone's board until they happen to try exporting again is
             not a report, it is furniture.
           */}
-          <button type="button" data-action="dismiss-export-error" onClick={() => setExportError(null)}>
+          <button type="button" data-action="dismiss-notice" onClick={() => setNotice(null)}>
             Dismiss
           </button>
         </p>
@@ -254,7 +308,12 @@ export function BoardPage() {
         />
       )}
 
-      <BoardCanvas boardId={boardId} onReady={handleReady} onSaveStatus={setSaveStatus} />
+      <BoardCanvas
+        boardId={boardId}
+        onReady={handleReady}
+        onSaveStatus={setSaveStatus}
+        onProblem={handleProblem}
+      />
     </div>
   );
 }

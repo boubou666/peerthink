@@ -37,7 +37,10 @@ describe('export', () => {
     const { createPngExporter } = await import('/src/platform/export-png.js');
     const { exportFrame } = await import('/src/core/export.js');
 
-    const objects = ${JSON.stringify(objects)};
+    // A string is an expression evaluated in the page, for the objects that
+    // cannot be written down here — an image carries a whole picture, and the
+    // only honest way to get one is to have the browser make it.
+    const objects = ${typeof objects === 'string' ? objects : JSON.stringify(objects)};
     const exporter = createPngExporter({ document, window });
     const palette = exporter.readPalette();
     const frame = exportFrame(objects, { padding: ${padding}, scale: ${scale} });
@@ -46,7 +49,9 @@ describe('export', () => {
     canvas.width = frame.width;
     canvas.height = frame.height;
     const ctx = canvas.getContext('2d');
-    exporter.paint(ctx, objects, frame, palette);
+    // Pictures are decoded before painting, exactly as render() does it: a 2D
+    // context cannot wait for a bitmap mid-drawing.
+    exporter.paint(ctx, objects, frame, palette, await exporter.loadBitmaps(objects));
 
     const at = (x, y) => Array.from(ctx.getImageData(x, y, 1, 1).data).slice(0, 3);
 
@@ -264,6 +269,105 @@ describe('export', () => {
       ]);
 
       assert.deepEqual(overfull, empty, 'text escaped the card it belongs to');
+    });
+  });
+
+  /**
+   * The corner token, on the second renderer.
+   *
+   * The corner pixel is compared with the object's own fill rather than with the
+   * background, because the background at that pixel also has a shadow falling
+   * on it — what is being asked is whether the paper reaches the corner, and the
+   * paper's colour is the only thing that answers it.
+   */
+  describe('corners', () => {
+    const cornerPixel = (corners) => painted(
+      [{ id: 'a', type: 'card', x: 0, y: 0, w: 60, h: 40, fill: 'white', ...corners }],
+      `({ at, swatch, palette }) => ({ corner: at(0, 0), fill: swatch(palette.card.white) })`,
+    );
+
+    test('a square card is drawn into its corners', async () => {
+      const { corner, fill } = await cornerPixel({ corners: 'square' });
+      assert.deepEqual(corner, fill);
+    });
+
+    test('a round one is not', async () => {
+      const { corner, fill } = await cornerPixel({ corners: 'round' });
+      assert.notDeepEqual(corner, fill);
+    });
+
+    test('and a card that says nothing about corners is round', async () => {
+      const { corner, fill } = await cornerPixel({});
+      assert.notDeepEqual(corner, fill);
+    });
+
+    test('a squared list and envelope reach their corners too', async () => {
+      for (const type of ['list', 'envelope']) {
+        const result = await painted(
+          `[{ id: 'a', type: '${type}', x: 0, y: 0, w: 120, h: 90, corners: 'square', title: '' }]`,
+          `({ at, swatch, palette }) => ({
+            corner: at(1, 1),
+            background: swatch(palette.bg),
+          })`,
+        );
+        assert.notDeepEqual(result.corner, result.background, `a square ${type} left its corner empty`);
+      }
+    });
+  });
+
+  describe('an image', () => {
+    /** A flat pink PNG, made by the browser, as an object on the board. */
+    const picture = (props = {}) => `(() => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 40; canvas.height = 30;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#f0378a';
+      ctx.fillRect(0, 0, 40, 30);
+      return [{
+        id: 'i', type: 'image', x: 0, y: 0, w: 40, h: 30,
+        src: canvas.toDataURL('image/png'),
+        ...${JSON.stringify(props)},
+      }];
+    })()`;
+
+    test('is drawn, at the size its box says', async () => {
+      const result = await painted(
+        picture({ corners: 'square' }),
+        `({ at }) => ({ middle: at(20, 15), corner: at(0, 0), outside: at(39, 29) })`,
+      );
+      assert.deepEqual(result.middle, [240, 55, 138]);
+      assert.deepEqual(result.corner, [240, 55, 138], 'a square image is drawn into its corner');
+      assert.deepEqual(result.outside, [240, 55, 138]);
+    });
+
+    test('is clipped to its corners when they are round', async () => {
+      const result = await painted(
+        picture({ corners: 'round' }),
+        `({ at }) => ({ middle: at(20, 15), corner: at(0, 0) })`,
+      );
+      assert.deepEqual(result.middle, [240, 55, 138]);
+      assert.notDeepEqual(result.corner, [240, 55, 138], 'the picture ran past its rounded corner');
+    });
+
+    /**
+     * A picture that did not decode is still an object on the board. Drawing the
+     * box says so; drawing nothing would look like the export lost it.
+     */
+    test('whose source is not a picture is drawn as its own empty box', async () => {
+      const result = await painted(
+        [{ id: 'i', type: 'image', x: 0, y: 0, w: 40, h: 30, src: 'https://example.test/pixel.png' }],
+        `({ at, swatch, palette }) => ({ middle: at(20, 15), expected: swatch(palette.bg, palette.imageBg) })`,
+      );
+      /**
+       * Within a shade rather than exactly: the box's fill is 6% ink over
+       * whatever is behind it, and behind it is also the object's own shadow —
+       * so the pixel is a shade darker than the fill over the background alone.
+       * A tolerance of one is the difference between "the box was drawn" and
+       * "the box was drawn and so was its shadow", and both are wanted.
+       */
+      for (const [channel, value] of result.middle.entries()) {
+        assert.ok(Math.abs(value - result.expected[channel]) <= 2, `${result.middle} is not ${result.expected}`);
+      }
     });
   });
 
@@ -540,11 +644,11 @@ describe('export', () => {
       await page.eval(`app.store.load({ v: 1, order: [], objects: [] })`);
 
       await clickExport();
-      await page.waitFor(`document.querySelector('[data-export-error]') !== null`, {
+      await page.waitFor(`document.querySelector('[data-board-notice]') !== null`, {
         label: 'the empty board to be reported',
       });
 
-      assert.match(await page.eval(`document.querySelector('[data-export-error]').textContent`), /empty/i);
+      assert.match(await page.eval(`document.querySelector('[data-board-notice]').textContent`), /empty/i);
       assert.deepEqual(await page.eval('window.__downloads'), [], 'downloaded a file anyway');
     });
 
@@ -558,12 +662,12 @@ describe('export', () => {
       await page.eval(`app.store.load({ v: 1, order: [], objects: [] })`);
 
       await clickExport();
-      await page.waitFor(`document.querySelector('[data-export-error]') !== null`, {
+      await page.waitFor(`document.querySelector('[data-board-notice]') !== null`, {
         label: 'the error',
       });
 
-      await page.eval(`document.querySelector('[data-action="dismiss-export-error"]').click()`);
-      await page.waitFor(`document.querySelector('[data-export-error]') === null`, {
+      await page.eval(`document.querySelector('[data-action="dismiss-notice"]').click()`);
+      await page.waitFor(`document.querySelector('[data-board-notice]') === null`, {
         label: 'the error to go away',
       });
     });
@@ -592,7 +696,7 @@ describe('export', () => {
 
       await page.goto('/#/b/one');
       await clickExport();
-      await page.waitFor(`document.querySelector('[data-export-error]') !== null`, {
+      await page.waitFor(`document.querySelector('[data-board-notice]') !== null`, {
         label: 'the empty board to be reported',
       });
 
@@ -601,7 +705,7 @@ describe('export', () => {
       await page.waitFor(`window.app?.boardId === 'two'`, { label: 'board two to mount' });
 
       assert.equal(
-        await page.eval(`document.querySelector('[data-export-error]') === null`),
+        await page.eval(`document.querySelector('[data-board-notice]') === null`),
         true,
         "board one's failure was still on screen over board two",
       );
@@ -614,12 +718,12 @@ describe('export', () => {
       await page.eval(`app.exporter.render = async () => null`);
 
       await clickExport();
-      await page.waitFor(`document.querySelector('[data-export-error]') !== null`, {
+      await page.waitFor(`document.querySelector('[data-board-notice]') !== null`, {
         label: 'the refused encode to be reported',
       });
 
       assert.match(
-        await page.eval(`document.querySelector('[data-export-error]').textContent`),
+        await page.eval(`document.querySelector('[data-board-notice]').textContent`),
         /could not export/i,
       );
     });

@@ -446,12 +446,12 @@ button.link:hover { color: var(--ink); }
 }
 
 /*
- * The export error sits under the bar that caused it, not in the page flow.
- * The board page has no flow to speak of — the canvas is fixed behind it — so
- * a banner left in it lands in the top-left corner, the one place nothing
- * about this button is.
+ * What the board page has to say sits under the bar, not in the page flow. The
+ * board page has no flow to speak of — the canvas is fixed behind it — so a
+ * banner left in it lands in the top-left corner, the one place nothing on this
+ * page is.
  */
-.board-export-error {
+.board-notice {
   position: fixed;
   top: 56px;
   right: 14px;
@@ -462,7 +462,7 @@ button.link:hover { color: var(--ink); }
   align-items: baseline;
   gap: 8px;
 }
-.board-export-error button {
+.board-notice button {
   font: inherit;
   font-size: 13px;
   font-weight: 500;
@@ -474,7 +474,7 @@ button.link:hover { color: var(--ink); }
   cursor: pointer;
   opacity: .75;
 }
-.board-export-error button:hover { opacity: 1; }
+.board-notice button:hover { opacity: 1; }
 
 .share-backdrop {
   position: fixed;

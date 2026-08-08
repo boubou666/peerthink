@@ -13,6 +13,8 @@ import { exportFrame, fileName } from './core/export.js';
 import { createViews } from './platform/views.js';
 import { createRenderer } from './platform/renderer.js';
 import { createInput } from './platform/input.js';
+import { createClipboard } from './platform/clipboard.js';
+import { createImageImport } from './platform/images.js';
 import { createCursors } from './platform/cursors.js';
 import { createFlushOnHide } from './platform/lifecycle.js';
 import { createPngExporter } from './platform/export-png.js';
@@ -48,6 +50,13 @@ export function createApp({
   namespace,
   now,
   seed = seedBoard,
+  /**
+   * Something the user did that produced nothing, by a code the shell turns
+   * into a sentence — a pasted file that was not a picture this can hold, so
+   * far. The wording lives up there with every other message a person reads,
+   * and the canvas layer does not acquire an opinion about copy.
+   */
+  onProblem,
 } = {}) {
   const dom = elements;
 
@@ -191,6 +200,8 @@ export function createApp({
   const views = createViews({ document });
   const renderer = createRenderer({ document, elements: dom, store, viewport, selection, views, scheduler: clock, ResizeObserver });
   const input = createInput({ document, window, elements: dom, store, selection, viewport, board, commands });
+  const images = createImageImport({ document, window });
+  const clipboard = createClipboard({ document, elements: dom, selection, viewport, board, images, onProblem });
 
   let autosave = null;
   let sync = null;
@@ -396,6 +407,8 @@ export function createApp({
     commands,
     renderer,
     input,
+    clipboard,
+    images,
     exporter,
     repository: boardRepository,
     autosave,
@@ -410,6 +423,10 @@ export function createApp({
       // leaves the channel; the promise is nobody's to wait for
       sync?.destroy();
       input.destroy();
+      // Before the renderer, for the same reason autosave is stopped before
+      // anything else: an image still being decoded would otherwise land in a
+      // store nothing is drawing.
+      clipboard.destroy();
       renderer.destroy();
     },
   };

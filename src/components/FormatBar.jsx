@@ -9,6 +9,7 @@ import {
   TRANSPARENT,
   cardStyle,
 } from '../core/card-style.js';
+import { CORNERS, cornersOf, hasCorners } from '../core/corners.js';
 
 import { recentColours } from '../shell/colours.js';
 import { cardPalette } from '../shell/palette.js';
@@ -16,25 +17,29 @@ import { cardPalette } from '../shell/palette.js';
 import { ColourPicker, resolveColour } from './ColourPicker.jsx';
 
 /**
- * Formatting for the selected cards, floating above them.
+ * Formatting for the selection, floating above it.
  *
  * It renders in screen space over the stage rather than inside the transformed
  * world layer, for the same reason the cursors and the resize handles do: it
  * is chrome, and chrome that scales with the zoom is unreadable at 30% and
  * absurd at 300%.
  *
- * Only cards are offered. A selection that also holds an envelope or a list
- * still formats the cards in it and leaves the rest alone, which is what
- * anyone who drew a marquee round a group and reached for the colour swatch
- * meant.
+ * Each control is offered to whatever it means something for, and to nothing
+ * else. Colour, font, size and alignment are a card's, so a selection holding an
+ * envelope and three cards formats the cards and leaves the envelope alone —
+ * which is what anyone who drew a marquee round a group and reached for the
+ * colour swatch meant. Corners belong to every object with an edge, so they are
+ * offered for all of them, and an envelope selected on its own gets a bar with
+ * that one control on it rather than no bar at all.
  *
- * Every change is one `set` op per card, which means it crosses to the other
+ * Every change is one `set` op per object, which means it crosses to the other
  * people on the board and enters the undo stack for free — the point of
  * everything being an op.
  */
 
 const SIZE_LABELS = { sm: 'S', md: 'M', lg: 'L', xl: 'XL' };
 const FONT_LABELS = { sans: 'Sans', serif: 'Serif', mono: 'Mono' };
+const CORNER_LABELS = { round: 'Rounded corners', square: 'Square corners' };
 
 export function FormatBar({ app, stage: stageEl }) {
   const { store, selection, viewport } = app;
@@ -75,10 +80,15 @@ export function FormatBar({ app, stage: stageEl }) {
     return () => stops.forEach((stop) => stop());
   }, [store, selection, viewport, bump]);
 
-  const cards = selection
-    .list()
-    .map((id) => store.get(id))
-    .filter((obj) => obj?.type === 'card');
+  const objects = selection.list().map((id) => store.get(id)).filter(Boolean);
+  const cards = objects.filter((obj) => obj.type === 'card');
+  /**
+   * What the corner control writes to. Every type this build draws is in it, so
+   * in practice this is the selection — but it is asked rather than assumed,
+   * because an object from a newer client is one whose corners no rule here
+   * knows how to draw.
+   */
+  const cornered = objects.filter(hasCorners);
 
   /**
    * The bar's own width and the stage's, measured after paint rather than read
@@ -98,19 +108,31 @@ export function FormatBar({ app, stage: stageEl }) {
     setMeasured((was) => (was.bar === bar && was.stage === stage ? was : { bar, stage }));
   });
 
-  const at = barPosition(cards, viewport, { width: measured.stage }, measured.bar);
+  /**
+   * Above everything the bar can act on, rather than above everything selected.
+   * A type this build has no control for contributes nothing to where the bar
+   * goes — and a selection of nothing but those gets no bar, which is the same
+   * answer as a selection of nothing.
+   */
+  const at = barPosition(cornered, viewport, { width: measured.stage }, measured.bar);
   if (!at) return null;
 
   /**
-   * What the controls show with several cards selected: the shared value, or
-   * nothing when they disagree. Showing the first card's would claim the
-   * others match it, and pre-selecting a swatch that is only true of one of
-   * them is how people change something they meant to leave alone.
+   * What a control shows for several objects: the shared value, or nothing when
+   * they disagree. Showing the first one's would claim the others match it, and
+   * pre-selecting a swatch that is only true of one of them is how people change
+   * something they meant to leave alone.
    */
-  const shared = (field) => {
-    const values = new Set(cards.map((card) => cardStyle(card)[field]));
+  const sharedIn = (list, read) => {
+    const values = new Set(list.map(read));
     return values.size === 1 ? [...values][0] : null;
   };
+
+  const shared = (field) => sharedIn(cards, (card) => cardStyle(card)[field]);
+  const sharedCorners = () => sharedIn(cornered, cornersOf);
+
+  /** One `set` op per object, which is what puts a change on the wire and in the undo stack. */
+  const applyTo = (list, patch) => store.apply(list.map((obj) => ({ t: 'set', id: obj.id, patch })));
 
   /**
    * `guard` is the value a control is about to write, when it has one that can
@@ -122,7 +144,7 @@ export function FormatBar({ app, stage: stageEl }) {
    */
   const applyToAll = (patch, guard) => {
     if (guard !== undefined && guard === '') return;
-    store.apply(cards.map((card) => ({ t: 'set', id: card.id, patch })));
+    applyTo(cards, patch);
   };
 
   /**
@@ -161,82 +183,122 @@ export function FormatBar({ app, stage: stageEl }) {
       // formatted, and the click would then land on nothing.
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <div className="fmt-group" role="group" aria-label="Fill">
-        {picker('fill', 'Background colour', '#ffe98a')}
-        {/*
-          Transparent is not a colour, so it is not in the panel: a spectrum
-          has no corner for "no paint at all", and an alpha slider would be a
-          second, vaguer way of saying it. A toggle rather than a swatch —
-          pressing it again puts back the colour the picker is showing, which
-          is what "no fill" being off has to mean.
-        */}
-        <button
-          type="button"
-          className="fmt-transparent"
-          data-value={TRANSPARENT}
-          data-current={shared('fill') === TRANSPARENT ? '' : undefined}
-          aria-pressed={shared('fill') === TRANSPARENT}
-          aria-label="No background"
-          title="No background"
-          onClick={() => applyToAll({
-            fill: shared('fill') === TRANSPARENT
-              ? resolveColour(shared('fill'), palettes.fill, '#ffe98a')
-              : TRANSPARENT,
-          })}
-        />
-      </div>
-
-      <span className="fmt-sep" />
-
-      <div className="fmt-group" role="group" aria-label="Text colour">
-        {picker('ink', 'Text colour', '#1c1b19')}
-      </div>
-
-      <span className="fmt-sep" />
-
-      <select
-        className="fmt-select"
-        data-field="font"
-        aria-label="Font"
-        value={shared('font') ?? ''}
-        onChange={(event) => applyToAll({ font: event.target.value }, event.target.value)}
-      >
-        {shared('font') === null && <option value="">—</option>}
-        {CARD_FONTS.map((font) => <option key={font} value={font}>{FONT_LABELS[font]}</option>)}
-      </select>
-
-      <select
-        className="fmt-select"
-        data-field="size"
-        aria-label="Text size"
-        value={shared('size') ?? ''}
-        onChange={(event) => applyToAll({ size: event.target.value }, event.target.value)}
-      >
-        {shared('size') === null && <option value="">—</option>}
-        {CARD_SIZES.map((size) => <option key={size} value={size}>{SIZE_LABELS[size]}</option>)}
-      </select>
-
-      <span className="fmt-sep" />
-
-      <div className="fmt-group" role="group" aria-label="Alignment">
-        {CARD_ALIGNS.map((align) => (
+      {/*
+        A selection with no cards in it — an envelope, a list, a pasted image —
+        gets none of this. Every control in here writes a field only a card
+        renders, and one that does nothing visible is worse than one that is
+        not there.
+      */}
+      {cards.length > 0 && (
+        <>
+        <div className="fmt-group" role="group" aria-label="Fill">
+          {picker('fill', 'Background colour', '#ffe98a')}
+          {/*
+            Transparent is not a colour, so it is not in the panel: a spectrum
+            has no corner for "no paint at all", and an alpha slider would be a
+            second, vaguer way of saying it. A toggle rather than a swatch —
+            pressing it again puts back the colour the picker is showing, which
+            is what "no fill" being off has to mean.
+          */}
           <button
-            key={align}
             type="button"
-            className="fmt-align"
-            data-value={align}
-            data-current={align === shared('align') ? '' : undefined}
-            aria-pressed={align === shared('align')}
-            aria-label={`Align ${align}`}
-            title={`Align ${align}`}
-            onClick={() => applyToAll({ align })}
+            className="fmt-transparent"
+            data-value={TRANSPARENT}
+            data-current={shared('fill') === TRANSPARENT ? '' : undefined}
+            aria-pressed={shared('fill') === TRANSPARENT}
+            aria-label="No background"
+            title="No background"
+            onClick={() => applyToAll({
+              fill: shared('fill') === TRANSPARENT
+                ? resolveColour(shared('fill'), palettes.fill, '#ffe98a')
+                : TRANSPARENT,
+            })}
+          />
+        </div>
+
+        <span className="fmt-sep" />
+
+        <div className="fmt-group" role="group" aria-label="Text colour">
+          {picker('ink', 'Text colour', '#1c1b19')}
+        </div>
+
+        <span className="fmt-sep" />
+
+        <select
+          className="fmt-select"
+          data-field="font"
+          aria-label="Font"
+          value={shared('font') ?? ''}
+          onChange={(event) => applyToAll({ font: event.target.value }, event.target.value)}
+        >
+          {shared('font') === null && <option value="">—</option>}
+          {CARD_FONTS.map((font) => <option key={font} value={font}>{FONT_LABELS[font]}</option>)}
+        </select>
+
+        <select
+          className="fmt-select"
+          data-field="size"
+          aria-label="Text size"
+          value={shared('size') ?? ''}
+          onChange={(event) => applyToAll({ size: event.target.value }, event.target.value)}
+        >
+          {shared('size') === null && <option value="">—</option>}
+          {CARD_SIZES.map((size) => <option key={size} value={size}>{SIZE_LABELS[size]}</option>)}
+        </select>
+
+        <span className="fmt-sep" />
+
+        <div className="fmt-group" role="group" aria-label="Alignment">
+          {CARD_ALIGNS.map((align) => (
+            <button
+              key={align}
+              type="button"
+              className="fmt-align"
+              data-value={align}
+              data-current={align === shared('align') ? '' : undefined}
+              aria-pressed={align === shared('align')}
+              aria-label={`Align ${align}`}
+              title={`Align ${align}`}
+              onClick={() => applyToAll({ align })}
+            >
+              {/* Three bars rather than a glyph: no font ships distinct
+                  characters for the three alignments, and `≡` three times says
+                  nothing about which is which. */}
+              <span className="fmt-bar" />
+              <span className="fmt-bar" />
+              <span className="fmt-bar" />
+            </button>
+          ))}
+        </div>
+
+          <span className="fmt-sep" />
+        </>
+      )}
+
+      {/*
+        Corners, for everything selected that has any.
+
+        Two buttons rather than one toggle: a selection where some objects are
+        rounded and some are not has no true answer for a pressed state, and a
+        toggle would have to invent one. This way neither is current, which is
+        what the alignment group already does and says the same thing.
+      */}
+      <div className="fmt-group" role="group" aria-label="Corners">
+        {CORNERS.map((corners) => (
+          <button
+            key={corners}
+            type="button"
+            className="fmt-corner"
+            data-value={corners}
+            data-current={corners === sharedCorners() ? '' : undefined}
+            aria-pressed={corners === sharedCorners()}
+            aria-label={CORNER_LABELS[corners]}
+            title={CORNER_LABELS[corners]}
+            onClick={() => applyTo(cornered, { corners })}
           >
-            {/* Three bars rather than a glyph: no font ships distinct
-                characters for the three alignments, and `≡` three times says
-                nothing about which is which. */}
-            <span className="fmt-bar" />
-            <span className="fmt-bar" />
-            <span className="fmt-bar" />
+            {/* The control is the shape it makes — a box with the corners in
+                question, which no glyph says as plainly. */}
+            <span className="fmt-corner-box" />
           </button>
         ))}
       </div>

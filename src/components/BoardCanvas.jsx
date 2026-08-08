@@ -21,7 +21,7 @@ import { Toolbar } from './Toolbar.jsx';
  * await here: `destroy()` cancels an in-flight hydrate on its own, which is
  * exactly what unmounting mid-load needs.
  */
-export function BoardCanvas({ boardId, onReady, onSaveStatus }) {
+export function BoardCanvas({ boardId, onReady, onSaveStatus, onProblem }) {
   const stage = useRef(null);
   const bg = useRef(null);
   const layer = useRef(null);
@@ -44,6 +44,7 @@ export function BoardCanvas({ boardId, onReady, onSaveStatus }) {
       boardId,
       repository,
       createSync,
+      onProblem,
       elements: {
         stage: stage.current,
         bg: bg.current,
@@ -98,7 +99,7 @@ export function BoardCanvas({ boardId, onReady, onSaveStatus }) {
       setApp(null);
       if (window.app === app) delete window.app;
     };
-  }, [boardId, onReady, onSaveStatus]);
+  }, [boardId, onReady, onSaveStatus, onProblem]);
 
   return (
     <>
