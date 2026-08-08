@@ -3,7 +3,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { hexToHsv, hsvToHex, normaliseHex } from '../../src/core/colour.js';
+import { hexToHsv, hsvToHex, normaliseHex, rgbToHex } from '../../src/core/colour.js';
 
 /** The card palette, which is what the picker is asked to show most often. */
 const PALETTE = ['#ffe98a', '#b4d5ff', '#b8e6bd', '#ffc4d6', '#ffffff', '#1c1b19', '#78766f', '#b3261e'];
@@ -110,4 +110,45 @@ test('and so does every colour on a coarse sweep of the cylinder', () => {
       }
     }
   }
+});
+
+/**
+ * What a browser answers when asked what a stylesheet's colour is. It never
+ * answers in the hex that was written — always `rgb()` or `rgba()` — which is
+ * why the palette has to be read back through this.
+ */
+describe('rgb to hex', () => {
+  test('reads what computed style gives', () => {
+    assert.equal(rgbToHex('rgb(180, 213, 255)'), '#b4d5ff');
+    assert.equal(rgbToHex('rgb(0, 0, 0)'), '#000000');
+    // Both spellings: the space-separated form is what newer engines return.
+    assert.equal(rgbToHex('rgb(180 213 255)'), '#b4d5ff');
+    assert.equal(rgbToHex('rgba(180, 213, 255, 0.5)'), '#b4d5ff', 'alpha is dropped, not refused');
+    assert.equal(rgbToHex('rgb(180 213 255 / 0.5)'), '#b4d5ff', 'the slash form of alpha');
+  });
+
+  /**
+   * A card with no fill computes to this, and it is not black. Reading it as
+   * `#000000` would put a black swatch in the palette where "no fill" belongs.
+   */
+  test('fully transparent is not a colour', () => {
+    assert.equal(rgbToHex('rgba(0, 0, 0, 0)'), null);
+    assert.equal(rgbToHex('rgba(180, 213, 255, 0)'), null);
+  });
+
+  test('is null for anything else', () => {
+    assert.equal(rgbToHex('color(srgb 1 0 0)'), null, 'a form this cannot read is not guessed at');
+    assert.equal(rgbToHex('#b4d5ff'), null, 'hex is not this function\'s business');
+    assert.equal(rgbToHex('transparent'), null);
+    assert.equal(rgbToHex(''), null);
+    assert.equal(rgbToHex(null), null);
+  });
+
+  test('the round trip a palette makes', () => {
+    for (const hex of PALETTE) {
+      const { 1: r, 2: g, 3: b } = hex.match(/#(..)(..)(..)/);
+      const rgb = `rgb(${[r, g, b].map((pair) => parseInt(pair, 16)).join(', ')})`;
+      assert.equal(rgbToHex(rgb), hex, `${rgb} did not come back as ${hex}`);
+    }
+  });
 });

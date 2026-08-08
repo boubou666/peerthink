@@ -90,3 +90,27 @@ export function hsvToHex({ h, s, v }) {
   const pair = (n) => Math.round(channel(n) * 255).toString(16).padStart(2, '0');
   return `#${pair(5)}${pair(3)}${pair(1)}`;
 }
+
+/**
+ * `#rrggbb` for a browser's `rgb(…)`, or null for anything that is not a
+ * colour a card could carry.
+ *
+ * Computed style is the only way to ask the stylesheet what a name means, and
+ * it never answers in the hex that was written — always `rgb()` or `rgba()`.
+ *
+ * Fully transparent answers null rather than black. `rgba(0, 0, 0, 0)` is what
+ * a card with no fill computes to, and it is not a dark colour: reading it as
+ * `#000000` would put a black swatch in the palette where "no fill" belongs,
+ * and that control is elsewhere. Partial alpha keeps its colour and loses its
+ * alpha, which is the same trade `normaliseHex` makes for `#rrggbbaa`.
+ */
+const RGB = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)\s*(?:[,/]\s*([\d.]+)\s*)?\)$/i;
+
+export function rgbToHex(value) {
+  const parts = typeof value === 'string' ? value.trim().match(RGB) : null;
+  if (!parts) return null;
+  if (parts[4] !== undefined && Number(parts[4]) === 0) return null;
+
+  const pair = (n) => Math.min(255, Math.max(0, Math.round(Number(n)))).toString(16).padStart(2, '0');
+  return `#${pair(parts[1])}${pair(parts[2])}${pair(parts[3])}`;
+}

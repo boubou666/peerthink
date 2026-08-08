@@ -4,13 +4,14 @@ import { barPosition } from '../core/bar-position.js';
 
 import {
   CARD_ALIGNS,
-  CARD_FILLS,
   CARD_FONTS,
-  CARD_INKS,
   CARD_SIZES,
   TRANSPARENT,
   cardStyle,
 } from '../core/card-style.js';
+
+import { recentColours } from '../shell/colours.js';
+import { cardPalette } from '../shell/palette.js';
 
 import { ColourPicker, resolveColour } from './ColourPicker.jsx';
 
@@ -35,44 +36,32 @@ import { ColourPicker, resolveColour } from './ColourPicker.jsx';
 const SIZE_LABELS = { sm: 'S', md: 'M', lg: 'L', xl: 'XL' };
 const FONT_LABELS = { sans: 'Sans', serif: 'Serif', mono: 'Mono' };
 
-/**
- * What each named colour looks like, so a picker can point at one.
- *
- * A card carrying `fill: 'blue'` is asking canvas.css what blue is, and a
- * picker cannot ask — it needs a colour to draw. These are the values that
- * stylesheet gives those names, restated because a swatch has to be painted
- * before anything is on screen to measure. Per field, because the two
- * vocabularies disagree: a blue card is pale paper, blue text is ink.
- *
- * They are what the palette *shows*. Choosing one writes the name, so the card
- * goes on asking the stylesheet and follows a retune; only a colour mixed by
- * hand is written as hex.
- */
-const NAMED_AS_HEX = {
-  fill: { yellow: '#ffe98a', blue: '#b4d5ff', green: '#b8e6bd', pink: '#ffc4d6', white: '#ffffff' },
-  ink: { ink: '#1c1b19', muted: '#78766f', red: '#b3261e', blue: '#1a4fb4', white: '#ffffff' },
-};
-
-/**
- * The palette a field offers, in the vocabulary's own order.
- *
- * Derived from the vocabulary rather than listed again, so a colour added to
- * `card-style.js` appears here as soon as the stylesheet says what it is —
- * and, until it does, is left out rather than drawn as undefined. `none` is
- * the standing example: it is a real fill with no colour to show, and the bar
- * offers it as a toggle instead.
- */
-const PALETTES = Object.fromEntries(
-  Object.entries({ fill: CARD_FILLS, ink: CARD_INKS }).map(([field, names]) => [
-    field,
-    names
-      .filter((name) => NAMED_AS_HEX[field][name])
-      .map((name) => ({ name, hex: NAMED_AS_HEX[field][name] })),
-  ]),
-);
-
 export function FormatBar({ app, stage: stageEl }) {
   const { store, selection, viewport } = app;
+
+  /**
+   * What the palette shows, asked of the stylesheet that decides.
+   *
+   * A card carrying `fill: 'blue'` is asking canvas.css what blue is, and a
+   * swatch has to be painted before anything blue is on screen to measure — so
+   * this used to be a table of hex values copied out of that stylesheet, and a
+   * copy is what goes stale when a colour is retuned. `cardPalette` probes
+   * instead, once per page.
+   *
+   * Choosing one still writes the *name*, so the card goes on asking the
+   * stylesheet; only a colour mixed by hand is written as hex.
+   */
+  const palettes = cardPalette();
+
+  /**
+   * The colours mixed on this browser lately, which the palette has no name
+   * for. Held here rather than read on each render because reading is Web
+   * Storage and this renders on every viewport event — and because the picker
+   * has to see the new list the moment a colour joins it.
+   */
+  const colours = useRef(null);
+  colours.current ??= recentColours();
+  const [recent, setRecent] = useState(() => colours.current.list());
 
   /**
    * Re-read on every change to either. The selection decides which cards, the
@@ -148,9 +137,15 @@ export function FormatBar({ app, stage: stageEl }) {
       field={field}
       label={label}
       value={shared(field)}
-      presets={PALETTES[field]}
+      presets={palettes[field]}
+      // Not the colours the palette already names: a row repeating the
+      // swatches above it spends the panel's width saying nothing. Filtered
+      // per field, because the two palettes are different — a hex that is the
+      // fill blue is still worth offering as ink.
+      recent={recent.filter((colour) => !palettes[field].some((preset) => preset.hex === colour))}
       fallback={fallback}
       onPick={(value) => applyToAll({ [field]: value })}
+      onRemember={(hex) => setRecent(colours.current.add(hex))}
     />
   );
 
@@ -185,7 +180,7 @@ export function FormatBar({ app, stage: stageEl }) {
           title="No background"
           onClick={() => applyToAll({
             fill: shared('fill') === TRANSPARENT
-              ? resolveColour(shared('fill'), PALETTES.fill, '#ffe98a')
+              ? resolveColour(shared('fill'), palettes.fill, '#ffe98a')
               : TRANSPARENT,
           })}
         />

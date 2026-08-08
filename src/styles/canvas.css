@@ -572,12 +572,31 @@ body:has(.board-page) { overflow: hidden; }
    this is what the selection currently is. */
 .cp-preset[data-current] { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+/*
+ * The colours mixed here lately, under a hairline rather than a heading.
+ *
+ * A word would cost a line of the panel to label a row of swatches that is
+ * already obviously a row of swatches; the rule says "a different set" in the
+ * space it takes to draw it.
+ */
+.cp-presets[data-colour-recent] {
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+}
+
 .cp-field {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: 11px;
   color: var(--muted);
+}
+.cp-hex {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .cp-field input {
   flex: 1;
@@ -596,3 +615,25 @@ body:has(.board-page) { overflow: hidden; }
   outline-offset: -1px;
   border-color: transparent;
 }
+
+/* Square, so it reads as a tool beside the field rather than another swatch. */
+.cp-dropper {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.cp-dropper:hover {
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.cp-dropper:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cp-dropper svg { width: 15px; height: 15px; }
