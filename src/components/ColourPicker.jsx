@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { hexToHsv, hsvToHex, normaliseHex } from '../core/colour.js';
+import { canPickFromScreen, pickFromScreen } from '../platform/eyedropper.js';
 
 /**
  * A colour picker drawn by the app, in the app's own chrome.
@@ -59,7 +60,7 @@ export function resolveColour(value, presets, fallback) {
 
 const draftFrom = (hex) => ({ hex, hsv: hexToHsv(hex), text: hex });
 
-export function ColourPicker({ field, label, value, presets, fallback, onPick }) {
+export function ColourPicker({ field, label, value, presets, recent = [], fallback, onPick, onRemember }) {
   const hex = resolveColour(value, presets, fallback);
 
   const [open, setOpen] = useState(false);
@@ -92,6 +93,21 @@ export function ColourPicker({ field, label, value, presets, fallback, onPick })
   const area = useRef(null);
 
   /**
+   * What to remember when the panel closes, kept in a ref because the closing
+   * happens inside listeners that were subscribed when it opened.
+   *
+   * `mixed` is the colour to keep and null when there is nothing to keep — a
+   * panel opened and closed again has mixed nothing, and a colour taken off the
+   * palette already has a swatch of its own. Written on every render rather
+   * than captured, so a listener from three colours ago still closes on the
+   * one that is showing.
+   */
+  const mixed = useRef(null);
+  useEffect(() => {
+    if (!open) mixed.current = null;
+  }, [open]);
+
+  /**
    * Which side the panel opens on.
    *
    * The bar follows the selection and the selection can be anywhere, so there
@@ -107,6 +123,20 @@ export function ColourPicker({ field, label, value, presets, fallback, onPick })
     setPlacement(anchor.bottom + PANEL_GAP + height <= window.innerHeight ? 'below' : 'above');
   }, [open]);
 
+  /**
+   * Shut the panel, keeping whatever was mixed in it.
+   *
+   * On closing rather than on every change: a drag across the square writes a
+   * colour per pointer move, and a list of the last six would be six frames of
+   * one gesture. What somebody settled on is the colour that was showing when
+   * they walked away from it.
+   */
+  const close = useCallback(() => {
+    if (mixed.current) onRemember?.(mixed.current);
+    mixed.current = null;
+    setOpen(false);
+  }, [onRemember]);
+
   useEffect(() => {
     if (!open) return;
 
@@ -118,7 +148,7 @@ export function ColourPicker({ field, label, value, presets, fallback, onPick })
      * at once.
      */
     const dismiss = (event) => {
-      if (!root.current?.contains(event.target)) setOpen(false);
+      if (!root.current?.contains(event.target)) close();
     };
 
     const onKey = (event) => {
@@ -127,7 +157,7 @@ export function ColourPicker({ field, label, value, presets, fallback, onPick })
       // and this panel with it. The panel is what is in front, so the key is
       // spent closing it.
       event.stopPropagation();
-      setOpen(false);
+      close();
       swatch.current?.focus();
     };
 
@@ -137,7 +167,7 @@ export function ColourPicker({ field, label, value, presets, fallback, onPick })
       document.removeEventListener('pointerdown', dismiss, true);
       window.removeEventListener('keydown', onKey, true);
     };
-  }, [open]);
+  }, [open, close]);
 
   /**
    * Take a point in the cylinder as the new colour, and tell the board.
@@ -149,10 +179,16 @@ export function ColourPicker({ field, label, value, presets, fallback, onPick })
    * the honest record of what happened, and cheaper than guessing when
    * somebody has settled on a colour.
    */
+  /** A colour arrived at in this panel, rather than chosen off the palette. */
+  const mix = (next) => {
+    mixed.current = next;
+    onPick(next);
+  };
+
   const take = (hsv) => {
     const next = hsvToHex(hsv);
     setDraft({ hex: next, hsv, text: next });
-    onPick(next);
+    mix(next);
   };
 
   const pointInSquare = (event) => {
@@ -195,7 +231,24 @@ export function ColourPicker({ field, label, value, presets, fallback, onPick })
     // The text is kept as typed either way: correcting `#B4D` to `#bbdd44`
     // under the cursor makes the field impossible to type in.
     setDraft((was) => (typed ? { hex: typed, hsv: hexToHsv(typed), text } : { ...was, text }));
-    if (typed) onPick(typed);
+    if (typed) mix(typed);
+  };
+
+  /**
+   * Sample a colour from anywhere on the screen.
+   *
+   * Not from the board only: the whole point of the browser's eyedropper is
+   * that it reaches past the window, to the image in the other tab that the
+   * board is being built from.
+   *
+   * Null is every ordinary way this ends without a colour — Escape, or a
+   * browser that refuses — and leaves the panel exactly as it was.
+   */
+  const sample = async () => {
+    const picked = await pickFromScreen(window);
+    if (!picked) return;
+    setDraft(draftFrom(picked));
+    mix(picked);
   };
 
   return (
@@ -212,7 +265,10 @@ export function ColourPicker({ field, label, value, presets, fallback, onPick })
         title={label}
         aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={() => setOpen((was) => !was)}
+        // Through `close`, not a plain toggle: the swatch is a third way of
+        // shutting the panel, and every way of shutting it is a way of
+        // settling on a colour.
+        onClick={() => (open ? close() : setOpen(true))}
       />
 
       {open && (
@@ -299,21 +355,73 @@ export function ColourPicker({ field, label, value, presets, fallback, onPick })
             ))}
           </div>
 
-          <label className="cp-field">
-            <span>Hex</span>
-            <input
-              data-colour-hex
-              value={draft.text}
-              spellCheck={false}
-              autoComplete="off"
-              aria-label={`${label}: hex`}
-              onChange={onTyped}
-              // Half a colour is worth keeping while it is being typed and not
-              // once the field is left, where it would sit looking like the
-              // colour of the card.
-              onBlur={() => setDraft((was) => ({ ...was, text: was.hex }))}
-            />
-          </label>
+          {/*
+            The colours mixed here lately, and only those — a row repeating the
+            swatches above it would say nothing. Absent rather than empty until
+            there is one, so a picker that has never been used is the panel it
+            always was.
+          */}
+          {recent.length > 0 && (
+            <div className="cp-presets" data-colour-recent role="group" aria-label={`${label}: recent`}>
+              {recent.map((colour) => (
+                <button
+                  key={colour}
+                  type="button"
+                  className="cp-preset"
+                  data-value={colour}
+                  data-current={value === colour ? '' : undefined}
+                  aria-pressed={value === colour}
+                  style={{ '--cp-value': colour }}
+                  aria-label={colour}
+                  title={colour}
+                  // A hex, because that is what it is: a colour with no name
+                  // for the stylesheet to answer for.
+                  onClick={() => { setDraft(draftFrom(colour)); mix(colour); }}
+                />
+              ))}
+            </div>
+          )}
+
+          <div className="cp-field">
+            <label className="cp-hex">
+              <span>Hex</span>
+              <input
+                data-colour-hex
+                value={draft.text}
+                spellCheck={false}
+                autoComplete="off"
+                aria-label={`${label}: hex`}
+                onChange={onTyped}
+                // Half a colour is worth keeping while it is being typed and
+                // not once the field is left, where it would sit looking like
+                // the colour of the card.
+                onBlur={() => setDraft((was) => ({ ...was, text: was.hex }))}
+              />
+            </label>
+
+            {/*
+              Only where the browser has an eyedropper to lend. A control that
+              is missing is honest; one that is there and throws is not.
+            */}
+            {canPickFromScreen(window) && (
+              <button
+                type="button"
+                className="cp-dropper"
+                data-colour-dropper
+                aria-label={`${label}: pick from the screen`}
+                title="Pick from the screen"
+                onClick={sample}
+              >
+                {/* A dropper: barrel on the diagonal, and the drop it holds. */}
+                <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                  <path
+                    d="M10.4 2.6a1.9 1.9 0 0 1 2.7 2.7l-1 1 .6.6-1.1 1.1-.6-.6-4.3 4.3-2.4.6.6-2.4 4.3-4.3-.6-.6L9.7 3.9l.6.6z"
+                    fill="currentColor"
+                  />
+                </svg>
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

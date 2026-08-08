@@ -385,6 +385,241 @@ describe('format bar', () => {
     assert.ok(laid.y >= 0, `the panel starts off screen at ${laid.y}`);
   });
 
+  /**
+   * The palette is read from the stylesheet that decides what the names mean,
+   * rather than restated in the component — so retuning a colour in canvas.css
+   * moves the swatch with it, and cannot leave the two disagreeing.
+   */
+  describe('the palette', () => {
+    const swatchColours = (field) => page.eval(`(() => {
+      const swatches = document.querySelectorAll('${panel(field)} .cp-presets:not([data-colour-recent]) .cp-preset');
+      return [...swatches].map((el) => [el.dataset.value, getComputedStyle(el).backgroundColor]);
+    })()`);
+
+    test('shows what the stylesheet says each name is', async () => {
+      const id = await addCard();
+      await select(id);
+
+      await openPicker('fill');
+      assert.deepEqual(await swatchColours('fill'), [
+        ['yellow', 'rgb(255, 233, 138)'],
+        ['blue', 'rgb(180, 213, 255)'],
+        ['green', 'rgb(184, 230, 189)'],
+        ['pink', 'rgb(255, 196, 214)'],
+        ['white', 'rgb(255, 255, 255)'],
+      ]);
+    });
+
+    /** The same names, and deliberately not the same colours. */
+    test('ink is read separately from fill', async () => {
+      const id = await addCard();
+      await select(id);
+
+      await openPicker('ink');
+      const inks = Object.fromEntries(await swatchColours('ink'));
+      assert.equal(inks.blue, 'rgb(26, 79, 180)', 'ink blue was read as the paper blue');
+      assert.equal(inks.ink, 'rgb(28, 27, 25)');
+    });
+
+    /**
+     * `none` is a fill the stylesheet has no colour for, and reading its
+     * transparent background as a colour would put a black swatch in the
+     * palette where "no fill" belongs.
+     */
+    test('a fill with no colour is not a swatch', async () => {
+      const id = await addCard();
+      await select(id);
+
+      await openPicker('fill');
+      const names = (await swatchColours('fill')).map(([name]) => name);
+      assert.equal(names.includes('none'), false, 'transparent was drawn as a colour');
+    });
+  });
+
+  describe('recent colours', () => {
+    const recentSwatches = (field) =>
+      page.eval(`[...document.querySelectorAll('${panel(field)} [data-colour-recent] .cp-preset')].map((el) => el.dataset.value)`);
+
+    /**
+     * On closing rather than on every change: a drag across the square writes
+     * a colour per pointer move, and a row of the last six would be six frames
+     * of one gesture.
+     */
+    test('a mixed colour is remembered when the panel closes', async () => {
+      const id = await addCard();
+      await select(id);
+
+      await pick('fill', '#123456');
+      await page.key('Escape', { code: 'Escape', vk: 27 });
+      await page.waitFor(`document.querySelector('${panel('fill')}') === null`, { label: 'the panel to close' });
+
+      await openPicker('fill');
+      assert.deepEqual(await recentSwatches('fill'), ['#123456']);
+    });
+
+    /**
+     * Every way of shutting the panel is a way of settling on a colour. The
+     * swatch is a toggle, so it closes the panel without going anywhere near
+     * the dismissal listeners the other two ways run through.
+     */
+    test('closing on the swatch remembers it too', async () => {
+      const id = await addCard();
+      await select(id);
+
+      await pick('fill', '#654321');
+      await click('[data-format-bar] [data-field="fill"]');
+      await page.waitFor(`document.querySelector('${panel('fill')}') === null`, { label: 'the panel to close' });
+
+      await openPicker('fill');
+      assert.deepEqual(await recentSwatches('fill'), ['#654321']);
+    });
+
+    test('and is offered back, as a colour rather than a name', async () => {
+      const first = await addCard();
+      await select(first);
+      await pick('fill', '#123456');
+      await page.key('Escape', { code: 'Escape', vk: 27 });
+
+      const second = await addCard({ x: 600 });
+      await select(second);
+      await openPicker('fill');
+      await click(`${panel('fill')} [data-colour-recent] .cp-preset[data-value="#123456"]`);
+
+      await settled(second, 'fill', 'custom');
+      assert.equal(await page.eval(`app.store.get('${second}').fill`), '#123456');
+    });
+
+    /** A row repeating the swatches directly above it would say nothing. */
+    test('a colour the palette already names is not repeated', async () => {
+      const id = await addCard();
+      await select(id);
+
+      // The fill blue, typed as hex rather than taken off the palette.
+      await pick('fill', '#b4d5ff');
+      await page.key('Escape', { code: 'Escape', vk: 27 });
+
+      await openPicker('fill');
+      assert.deepEqual(await recentSwatches('fill'), [], 'the palette was repeated back');
+
+      // But it is not the *ink* blue, so ink still offers it.
+      await page.key('Escape', { code: 'Escape', vk: 27 });
+      await openPicker('ink');
+      assert.deepEqual(await recentSwatches('ink'), ['#b4d5ff']);
+    });
+
+    test('opening and closing without mixing anything remembers nothing', async () => {
+      const id = await addCard();
+      await select(id);
+
+      await openPicker('fill');
+      await click(`${panel('fill')} .cp-preset[data-value="blue"]`);
+      await settled(id, 'fill', 'blue');
+      await page.key('Escape', { code: 'Escape', vk: 27 });
+
+      await openPicker('fill');
+      assert.deepEqual(await recentSwatches('fill'), [], 'a colour off the palette was remembered as if mixed');
+    });
+
+    test('it is the browser that remembers, so a reload keeps them', async () => {
+      const id = await addCard();
+      await select(id);
+      await pick('fill', '#123456');
+      await page.key('Escape', { code: 'Escape', vk: 27 });
+
+      await page.goto();
+      await page.waitFor('Boolean(window.app?.autosave)', { label: 'the board to load' });
+      const again = await addCard();
+      await select(again);
+
+      await openPicker('fill');
+      assert.deepEqual(await recentSwatches('fill'), ['#123456']);
+    });
+  });
+
+  describe('the eyedropper', () => {
+    /**
+     * Chromium has one; the others do not, which is why it is asked for rather
+     * than assumed. The stub records that it was opened, which is the only
+     * moment the test can see — a dismissal changes nothing, so there is no
+     * state to wait for afterwards.
+     */
+    const stubEyeDropper = (answer) => page.eval(`(() => {
+      window.opened = false;
+      window.EyeDropper = class {
+        open() {
+          window.opened = true;
+          return ${answer === null ? 'Promise.reject(new DOMException("aborted"))' : `Promise.resolve({ sRGBHex: ${JSON.stringify(answer)} })`};
+        }
+      };
+    })()`);
+
+    /**
+     * The eyedropper has been opened and its answer dealt with.
+     *
+     * Two frames after the call, because the rejection is handled in a
+     * microtask and microtasks are drained before the next frame — so anything
+     * this flow was going to do has happened by then. The same reasoning as
+     * `noBar` above: asserting that nothing changed needs a settled page, and
+     * there is no positive condition to wait for.
+     */
+    const settledDropper = async () => {
+      await page.waitFor('window.opened === true', { label: 'the eyedropper to open' });
+      await page.eval('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+    };
+
+    test('samples a colour onto the cards', async () => {
+      const id = await addCard();
+      await select(id);
+      await stubEyeDropper('#0a7d33');
+
+      await openPicker('fill');
+      await click(`${panel('fill')} [data-colour-dropper]`);
+
+      await settled(id, 'fill', 'custom');
+      assert.equal(await page.eval(`app.store.get('${id}').fill`), '#0a7d33');
+      assert.equal(
+        await page.eval(`document.querySelector('${panel('fill')} [data-colour-hex]').value`),
+        '#0a7d33',
+        'the panel did not follow the colour it sampled',
+      );
+    });
+
+    /**
+     * Escape dismisses the browser's eyedropper, which rejects. That is an
+     * ordinary way to end and leaves the panel as it was.
+     */
+    test('a dismissed eyedropper changes nothing', async () => {
+      const id = await addCard({ fill: 'blue' });
+      await select(id);
+      await stubEyeDropper(null);
+
+      await openPicker('fill');
+      await click(`${panel('fill')} [data-colour-dropper]`);
+      await settledDropper();
+
+      assert.equal(await page.eval(`app.store.get('${id}').fill`), 'blue');
+      assert.equal(
+        await page.eval(`document.querySelector('${panel('fill')} [data-colour-hex]').value`),
+        '#b4d5ff',
+        'the panel moved off the colour it was showing',
+      );
+      assert.deepEqual(page.errors, [], 'a dismissal was reported as an error');
+    });
+
+    test('the button is absent where the browser has no eyedropper', async () => {
+      const id = await addCard();
+      await select(id);
+      await page.eval('delete window.EyeDropper');
+
+      await openPicker('fill');
+      assert.equal(
+        await page.eval(`document.querySelector('${panel('fill')} [data-colour-dropper]') === null`),
+        true,
+        'a control was offered for a capability the browser does not have',
+      );
+    });
+  });
+
   test('one change covers every selected card, and undoes as one', async () => {
     const first = await addCard();
     const second = await addCard({ x: 500 });
