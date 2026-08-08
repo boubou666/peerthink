@@ -4,12 +4,15 @@ import { barPosition } from '../core/bar-position.js';
 
 import {
   CARD_ALIGNS,
+  CARD_FILLS,
   CARD_FONTS,
+  CARD_INKS,
   CARD_SIZES,
   TRANSPARENT,
   cardStyle,
-  isCustomColour,
 } from '../core/card-style.js';
+
+import { ColourPicker, resolveColour } from './ColourPicker.jsx';
 
 /**
  * Formatting for the selected cards, floating above them.
@@ -33,23 +36,40 @@ const SIZE_LABELS = { sm: 'S', md: 'M', lg: 'L', xl: 'XL' };
 const FONT_LABELS = { sans: 'Sans', serif: 'Serif', mono: 'Mono' };
 
 /**
- * What a picker shows for a colour it cannot represent.
+ * What each named colour looks like, so a picker can point at one.
  *
- * `<input type="color">` speaks hex and nothing else, so a card still carrying
- * a named colour — every card made before the picker existed — has to be shown
- * as *something*. These are the same values canvas.css gives those names, and
- * they are only ever displayed: choosing a colour writes what the picker
- * returns, and until then the card keeps the name it has.
+ * A card carrying `fill: 'blue'` is asking canvas.css what blue is, and a
+ * picker cannot ask — it needs a colour to draw. These are the values that
+ * stylesheet gives those names, restated because a swatch has to be painted
+ * before anything is on screen to measure. Per field, because the two
+ * vocabularies disagree: a blue card is pale paper, blue text is ink.
+ *
+ * They are what the palette *shows*. Choosing one writes the name, so the card
+ * goes on asking the stylesheet and follows a retune; only a colour mixed by
+ * hand is written as hex.
  */
 const NAMED_AS_HEX = {
-  yellow: '#ffe98a', blue: '#b4d5ff', green: '#b8e6bd', pink: '#ffc4d6', white: '#ffffff',
-  ink: '#1c1b19', muted: '#78766f', red: '#b3261e',
+  fill: { yellow: '#ffe98a', blue: '#b4d5ff', green: '#b8e6bd', pink: '#ffc4d6', white: '#ffffff' },
+  ink: { ink: '#1c1b19', muted: '#78766f', red: '#b3261e', blue: '#1a4fb4', white: '#ffffff' },
 };
 
-const swatchFor = (value, fallback) => {
-  if (isCustomColour(value)) return value.length > 7 ? value.slice(0, 7) : value;
-  return NAMED_AS_HEX[value] ?? fallback;
-};
+/**
+ * The palette a field offers, in the vocabulary's own order.
+ *
+ * Derived from the vocabulary rather than listed again, so a colour added to
+ * `card-style.js` appears here as soon as the stylesheet says what it is —
+ * and, until it does, is left out rather than drawn as undefined. `none` is
+ * the standing example: it is a real fill with no colour to show, and the bar
+ * offers it as a toggle instead.
+ */
+const PALETTES = Object.fromEntries(
+  Object.entries({ fill: CARD_FILLS, ink: CARD_INKS }).map(([field, names]) => [
+    field,
+    names
+      .filter((name) => NAMED_AS_HEX[field][name])
+      .map((name) => ({ name, hex: NAMED_AS_HEX[field][name] })),
+  ]),
+);
 
 export function FormatBar({ app, stage: stageEl }) {
   const { store, selection, viewport } = app;
@@ -119,29 +139,20 @@ export function FormatBar({ app, stage: stageEl }) {
   /**
    * A colour picker for a field, showing the shared value.
    *
-   * `onInput` rather than `onChange`: a native picker fires input while the
-   * user drags through the spectrum, so the cards follow the cursor and the
-   * choice is made by looking at the board rather than at the swatch. Each one
-   * is an op, so a long drag lands a run of them in the undo stack — which is
-   * the honest record of what happened, and cheaper than trying to guess when
-   * somebody has settled.
+   * A disagreeing selection has nothing true to show, so `fallback` is what
+   * appears — the default rather than one card's colour dressed up as
+   * everyone's.
    */
-  const picker = (field, label, fallback) => {
-    const value = shared(field);
-    return (
-      <input
-        type="color"
-        className="fmt-picker"
-        data-field={field}
-        aria-label={label}
-        title={label}
-        // A disagreeing selection has nothing true to show, so it shows the
-        // default rather than one card's colour dressed up as everyone's.
-        value={value === null ? fallback : swatchFor(value, fallback)}
-        onInput={(event) => applyToAll({ [field]: event.target.value })}
-      />
-    );
-  };
+  const picker = (field, label, fallback) => (
+    <ColourPicker
+      field={field}
+      label={label}
+      value={shared(field)}
+      presets={PALETTES[field]}
+      fallback={fallback}
+      onPick={(value) => applyToAll({ [field]: value })}
+    />
+  );
 
   return (
     <div
@@ -158,10 +169,11 @@ export function FormatBar({ app, stage: stageEl }) {
       <div className="fmt-group" role="group" aria-label="Fill">
         {picker('fill', 'Background colour', '#ffe98a')}
         {/*
-          Transparent is the one colour `<input type="color">` cannot express —
-          it has no alpha and no empty state — so it stays a button. A toggle
-          rather than a swatch: pressing it again puts back the colour the
-          picker is showing, which is what "no fill" being off has to mean.
+          Transparent is not a colour, so it is not in the panel: a spectrum
+          has no corner for "no paint at all", and an alpha slider would be a
+          second, vaguer way of saying it. A toggle rather than a swatch —
+          pressing it again puts back the colour the picker is showing, which
+          is what "no fill" being off has to mean.
         */}
         <button
           type="button"
@@ -172,7 +184,9 @@ export function FormatBar({ app, stage: stageEl }) {
           aria-label="No background"
           title="No background"
           onClick={() => applyToAll({
-            fill: shared('fill') === TRANSPARENT ? swatchFor(shared('fill'), '#ffe98a') : TRANSPARENT,
+            fill: shared('fill') === TRANSPARENT
+              ? resolveColour(shared('fill'), PALETTES.fill, '#ffe98a')
+              : TRANSPARENT,
           })}
         />
       </div>

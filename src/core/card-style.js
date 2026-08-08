@@ -16,10 +16,11 @@
 /**
  * Named backgrounds, kept for the boards that already use them.
  *
- * The pickers write hex now, but `fill: 'blue'` is what earlier cards carry
- * and what the stylesheet still answers for — a token means "whatever the
- * stylesheet says blue is", which is the one kind of colour that follows a
- * retune. `none` is transparent: the card keeps its text and loses its paper.
+ * A card off the picker's palette is still written as a name: a token means
+ * "whatever the stylesheet says blue is", which is the one kind of colour that
+ * follows a retune and can differ between themes. A colour mixed by hand has
+ * no name to write and is stored as hex, which is what `isCustomColour` below
+ * is for. `none` is transparent: the card keeps its text and loses its paper.
  */
 export const CARD_FILLS = ['yellow', 'blue', 'green', 'pink', 'white', 'none'];
 
