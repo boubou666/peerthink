@@ -11,7 +11,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Store } from '../../src/core/store.js';
+import { REMOTE, Store } from '../../src/core/store.js';
 import { createSheets } from '../../src/core/sheets.js';
 import { createIdGenerator } from '../../src/core/ids.js';
 import { createManualScheduler } from '../../src/core/scheduler.js';
@@ -235,16 +235,27 @@ describe('ops and the sheet they were made on', () => {
     await settle();
     assert.deepEqual(sent.filter((m) => m.event === EVENT), [], 'an op went out before it could be addressed');
 
-    // What hydrate() does: the board arrives, and its own first sheet — with
-    // an id every client agrees on — becomes the one on screen.
+    /**
+     * All of what `hydrate()` does, in its order: the board arrives and its
+     * own first sheet — with an id every client agrees on — becomes the one on
+     * screen, and then the edits made while it was in flight are replayed onto
+     * it. As REMOTE, because they were already handed to the channel when they
+     * happened and replaying them as local would send each one twice.
+     *
+     * The replay is why the person who made those edits keeps them: the load
+     * replaced the document they were applied to. Modelled here rather than
+     * left out, so this test cannot be read as saying they are lost.
+     */
     sheets.load({ v: 2, sheets: [{ id: 'from-the-board', name: 'Discovery', order: [], objects: [] }] });
+    store.apply([{ t: 'add', obj: card('early') }], false, REMOTE);
     landed();
     await settle();
     scheduler.flushTimers();
 
     const [message] = sent.filter((m) => m.event === EVENT);
     assert.equal(message.payload.sheet, 'from-the-board', 'it went out naming a sheet nobody else has');
-    assert.equal(store.has('early'), false, 'the load did not replace the sheet it was made on');
+    assert.equal(message.payload.ops.length, 1, 'the op was sent twice, or not at all');
+    assert.equal(store.has('early'), true, 'the edit made during the load was lost by the one who made it');
   });
 
   test('arriving, it lands on that sheet rather than the one on screen', async () => {
