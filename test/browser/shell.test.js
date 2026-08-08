@@ -307,6 +307,46 @@ describe('shell', () => {
       assert.deepEqual(await titles(), ['Untitled board']);
     });
 
+    /**
+     * `aria-modal` says a dialog is modal; it does nothing to the tab order.
+     * Without a trap the next Tab walks into the page behind — and where the
+     * question is asked from inside another dialog, the first thing out there
+     * is that dialog's close button.
+     */
+    test('tabbing cannot leave the question', async () => {
+      await newBoard();
+      await page.goto(LIST_PATH);
+      await clickOn('[data-action="rename"]');
+      await page.waitFor(`Boolean(document.querySelector('[data-ask]'))`, { label: 'the question' });
+
+      const inside = () => page.eval(
+        `Boolean(document.querySelector('[data-ask] form')?.contains(document.activeElement))`,
+      );
+      const focused = () => page.eval(
+        `document.activeElement?.dataset?.action ?? document.activeElement?.tagName ?? null`,
+      );
+
+      assert.equal(await inside(), true, 'the dialog opened without taking focus');
+
+      // Forward, further than there are stops, so it has to wrap rather than
+      // merely not having reached the edge yet.
+      const seen = [];
+      for (let i = 0; i < 6; i++) {
+        await page.key('Tab', { vk: 9 });
+        seen.push(await focused());
+        assert.equal(await inside(), true, `Tab ${i + 1} left the dialog, landing on ${seen.at(-1)}`);
+      }
+      assert.ok(seen.includes('ask-confirm'), `never reached the confirming button: ${seen}`);
+
+      // And backwards, which wraps off the other end.
+      for (let i = 0; i < 6; i++) {
+        await page.key('Tab', { vk: 9, modifiers: 8 });
+        assert.equal(await inside(), true, `Shift+Tab ${i + 1} left the dialog`);
+      }
+
+      await dismissAsk(page);
+    });
+
     test('a board that cannot be saved is reported, not opened', async () => {
       // navigating anyway would open a route with no stored record, which
       // createApp treats as a first visit — handing back a seeded board
