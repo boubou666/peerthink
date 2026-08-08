@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { randomUUID } from 'node:crypto';
 
+import { PAGE_SIZE } from '../../src/platform/storage.js';
 import { LIST_PATH, openApp, supabaseOrigin } from '../helpers/browser.js';
 
 /**
@@ -78,6 +79,33 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
     return page.eval('window.app.boardId');
   };
 
+  const cards = () => page.eval(`document.querySelectorAll('.board-card').length`);
+  const hasMore = () => page.eval(`Boolean(document.querySelector('[data-action="load-more"]'))`);
+
+  /**
+   * Fetch the next page.
+   *
+   * Scrolled to first, which the header buttons never need: `Load more` sits
+   * under a full page of cards and so starts well below an 800px viewport,
+   * where a synthetic click at its bounding-box centre lands on nothing at all
+   * and the test reads an unchanged list as a broken feature.
+   *
+   * Waited on by the count rather than by `settle()`, because the button sets
+   * `busy` a render *after* the click — so a settle check can pass on the
+   * state from before the click and report the page as finished.
+   */
+  const loadMore = async () => {
+    const before = await cards();
+    await page.eval(`document.querySelector('[data-action="load-more"]')
+      .scrollIntoView({ block: 'center' })`);
+    await click('[data-action="load-more"]');
+    await page.waitFor(`document.querySelectorAll('.board-card').length > ${before}`, {
+      label: 'the next page to be appended',
+      context: `document.querySelectorAll('.board-card').length`,
+    });
+    await settle();
+  };
+
   test('a new board starts an empty workspace and is listed on the way back', async () => {
     assert.deepEqual(await titles(), [], 'a fresh account already had boards');
 
@@ -129,6 +157,78 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
       ['from the server'],
     );
     assert.equal(await page.eval('window.app.restoredFromStorage'), true);
+  });
+
+  /**
+   * A workspace bigger than one page.
+   *
+   * The repositories are covered a page at a time in test/node; what only a
+   * browser can answer is whether the list actually stops at one, offers the
+   * rest, and stops offering once there is no more — and that the second page
+   * lands *under* the first rather than replacing it.
+   *
+   * The boards are made through the shell's own repository rather than by
+   * clicking `New board` fifty times: `window.app.repository` is the same
+   * singleton the list reads, so this seeds the account the page is signed in
+   * as, which is the whole point.
+   */
+  test('a workspace longer than a page arrives a page at a time', async () => {
+    await newBoard();
+
+    const extra = PAGE_SIZE + 5;
+    const made = await page.eval(`(async () => {
+      const repo = window.app.repository;
+      const doc = { v: 1, order: [], objects: [] };
+      const saved = await Promise.all(Array.from({ length: ${extra} }, (_, i) =>
+        repo.save('pg' + i + '${randomUUID().slice(0, 8)}', doc, { title: 'Page board ' + i })));
+      return saved.filter(Boolean).length;
+    })()`);
+    assert.equal(made, extra, 'the fixture could not write the boards');
+
+    await page.goto(LIST_PATH, { ready: SETTLED });
+    await settle();
+
+    assert.equal(await cards(), PAGE_SIZE, 'the first page was not a page');
+    assert.equal(await hasMore(), true, 'there are more boards and no way to reach them');
+
+    await loadMore();
+
+    // The one before it plus everything just written — appended, not replaced.
+    assert.equal(await cards(), extra + 1);
+    assert.equal(await hasMore(), false, 'the last page still offered another');
+  });
+
+  /**
+   * A first look seeds rather than announcing, and pagination stretches that
+   * first look across more than one request. Page one seeding silently while
+   * page two arrived covered in badges is exactly the noise seeding exists to
+   * prevent.
+   */
+  test('nothing on a first look is badged, however many pages it takes', async () => {
+    await newBoard();
+    await page.eval(`(async () => {
+      const repo = window.app.repository;
+      const doc = { v: 1, order: [], objects: [] };
+      await Promise.all(Array.from({ length: ${PAGE_SIZE + 3} }, (_, i) =>
+        repo.save('sd' + i + '${randomUUID().slice(0, 8)}', doc, { title: 'Seeded ' + i })));
+    })()`);
+
+    // A cleared record with the boards left in place: the same situation as
+    // this account being opened on a second device for the first time.
+    await page.eval(`Object.keys(localStorage)
+      .filter((k) => k.startsWith('peerthink:seen:'))
+      .forEach((k) => localStorage.removeItem(k))`);
+    await page.goto(LIST_PATH, { ready: SETTLED });
+    await settle();
+
+    assert.equal(await page.eval(`document.querySelectorAll('[data-new]').length`), 0);
+
+    await loadMore();
+    assert.equal(
+      await page.eval(`document.querySelectorAll('[data-new]').length`),
+      0,
+      'the second page of a first look announced itself',
+    );
   });
 
   test('renaming on the board page is what the list shows afterwards', async () => {

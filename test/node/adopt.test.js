@@ -78,7 +78,7 @@ describe('adopting a browser\'s boards', () => {
   test('the browser keeps its copies', async () => {
     await adoptBoards({ local, remote: fakeAccount(), storage });
 
-    assert.deepEqual((await local.list()).map((b) => b.id).sort(), ['a', 'b']);
+    assert.deepEqual((await local.list()).boards.map((b) => b.id).sort(), ['a', 'b']);
   });
 
   test('it happens once, however many times it is asked', async () => {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { organizations } from '../shell/organizations.js';
 import { joinUrl, sharing } from '../shell/sharing.js';
 
 const ROLES = [
@@ -15,9 +16,20 @@ const ROLES = [
  * gate. So an editor who opens this is told what is true — they are on the
  * board, and it is not theirs to share.
  */
-export function ShareDialog({ boardId, title, onClose, onLeave }) {
+export function ShareDialog({ boardId, title, orgId = null, onClose, onLeave }) {
   const [invite, setInvite] = useState(null);
   const [people, setPeople] = useState(null);
+  /**
+   * The organization holding this board, once its name is known.
+   *
+   * `board_people()` lists the people named on the *board*, and a board in an
+   * organization is reachable by everyone in it without any of them appearing
+   * there. Enumerating them here would be wrong as well as unhelpful: the
+   * roster is the organization owner's to see, and the board's owner is not
+   * necessarily that person. So this says which organization holds it and
+   * leaves the list of who that is where it belongs.
+   */
+  const [holder, setHolder] = useState(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(null);
@@ -50,6 +62,27 @@ export function ShareDialog({ boardId, title, onClose, onLeave }) {
       live = false;
     };
   }, [refresh]);
+
+  /**
+   * A failure here is left silent, unlike every other read in this dialog. The
+   * line it feeds is an aside about where the board lives; not being able to
+   * name the organization is not a reason to put an error over the controls
+   * that do work, and the notice simply does not appear.
+   */
+  useEffect(() => {
+    if (!orgId) return setHolder(null);
+
+    let live = true;
+    organizations.list().then(
+      (mine) => {
+        if (live) setHolder(mine.find((org) => org.id === orgId) ?? null);
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [orgId]);
 
   const run = async (fn) => {
     setBusy(true);
@@ -187,6 +220,15 @@ export function ShareDialog({ boardId, title, onClose, onLeave }) {
             </div>
 
             <h3 className="share-people-title">People with access</h3>
+            {/* Above the list, because it is a caveat on it: these people are
+                named on this board, and everyone in the organization can open
+                it without being named anywhere. */}
+            {holder && (
+              <p className="empty" data-org-note>
+                This board is in <strong>{holder.name}</strong>. Everyone in it can already open
+                this board, and is not listed here.
+              </p>
+            )}
             <ul className="share-people">
               {people.map((person) => (
                 <li key={person.id} data-person={person.id}>

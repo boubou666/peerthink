@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate, useParams } from 'react-router';
 
 import { AccountMenu } from '../components/AccountMenu.jsx';
+import { OrganizationDialog } from '../components/OrganizationDialog.jsx';
 import { createIdGenerator } from '../core/ids.js';
 import { DEFAULT_TITLE } from '../platform/storage.js';
 import { auth } from '../shell/auth.js';
+import { organizations } from '../shell/organizations.js';
 import { seenBoardsFor } from '../shell/seen.js';
 import { sharing } from '../shell/sharing.js';
 import { repository } from '../shell/storage.js';
@@ -22,61 +24,136 @@ const EMPTY_BOARD = { v: 1, order: [], objects: [] };
 const COULD_NOT_LIST = 'Could not load your boards. Check your connection and try again.';
 const COULD_NOT_CREATE = 'Could not create a board — storage is full or unavailable.';
 const COULD_NOT_CHANGE = 'That change did not go through. Nothing was altered.';
+const COULD_NOT_MAKE_ORG =
+  'Could not create the organization. Registered accounts can make one — guests cannot.';
+
+/** No organizations at all is what a build with no backend has, and it is not an error. */
+const NO_ORGS = [];
 
 const formatDate = (ms) =>
   new Date(ms).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 
 export function BoardListPage() {
   const navigate = useNavigate();
+  // Absent on `/`, an organization id on `/o/:orgId`. One page rather than two
+  // because it is one list with a different question in front of it — and two
+  // copies of the create/rename/delete plumbing would be two places for the
+  // organization case to be forgotten.
+  const { orgId } = useParams();
+
+  /**
+   * The organization whose boards are on screen, or null for the personal
+   * list. This is what the repository is asked for — the filtering is the
+   * database's, not this page's. `useParams` gives undefined off `/o/:orgId`
+   * and the contract wants null, so it is normalised once, here.
+   */
+  const scope = orgId ?? null;
+
   // null is "not read yet", which is a different thing from "no boards" — the
   // empty state is a claim about the workspace and it should not be made until
-  // the repository has actually answered.
+  // the repository has actually answered. `boards` holds the pages loaded so
+  // far for the scope on screen, and `cursor` is where the next one starts —
+  // null meaning there is no next one.
   const [boards, setBoards] = useState(null);
+  const [cursor, setCursor] = useState(null);
+  const [orgs, setOrgs] = useState(organizations ? null : NO_ORGS);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [showOrg, setShowOrg] = useState(false);
 
-  // A read that failed is not an empty workspace. `boards` keeps whatever it
-  // last had — nothing, on a first load — so the page never claims there are
-  // no boards on the strength of a request that did not arrive.
   /**
    * Boards this browser has not shown for this account.
    *
-   * Reconciled against every list that arrives, so a board that turns up while
+   * Reconciled against every page that arrives, so a board that turns up while
    * the page is open is marked as readily as one that was there on load. The
    * record is per account and built per read rather than held, because the
    * account can change under a page that stays mounted.
    */
   const [unseen, setUnseen] = useState(() => new Set());
 
-  const reconcile = useCallback((found) => {
+  /**
+   * Whether this browser had no record for this account when the list loaded.
+   *
+   * A first look seeds rather than announcing — everything already in the
+   * workspace is the workspace, not news — and pagination stretches that first
+   * look across several requests. Without this, page one would seed silently
+   * and every page after it would arrive covered in badges, which is the exact
+   * noise seeding exists to avoid. A ref because it is read inside a callback
+   * and must not itself cause a render.
+   */
+  const firstLook = useRef(false);
+
+  /**
+   * `append` is the difference between a fresh scope and another page of the
+   * one already on screen. `reconcile` answers only about the ids it was
+   * given, so a second page's answer has to be added to what is showing rather
+   * than replace it — otherwise loading more would clear every badge above.
+   */
+  const reconcile = useCallback((page, { append = false } = {}) => {
     const id = auth.current()?.id;
     // No account is no record to keep. Nothing below here renders without one
     // — RequireAccount sees to that — but a read in flight across a sign-out
     // can still land here, and inventing a key for nobody would file this
     // browser's history under a user that does not exist.
     if (!id) return;
-    setUnseen(seenBoardsFor(id).reconcile(found.map((board) => board.id)));
+    const fresh = seenBoardsFor(id)
+      .reconcile(page.map((board) => board.id), { seed: firstLook.current });
+    setUnseen((shown) => (append ? new Set([...shown, ...fresh]) : fresh));
   }, []);
 
+  const readOrgs = useCallback(
+    () => (organizations ? organizations.list() : Promise.resolve(NO_ORGS)),
+    [],
+  );
+
+  /**
+   * Just the switcher, re-read.
+   *
+   * What you leave or delete changes which organizations exist for you and
+   * nothing about the scope you are being sent to — the effect below already
+   * loads that. Re-reading the boards as well would read them *for the scope
+   * being left*, because this closes over the scope it was made in, and that
+   * answer can land after the navigation and leave the personal list showing
+   * an organization that is gone.
+   */
+  const refreshOrgs = useCallback(
+    () => readOrgs().then(setOrgs, () => setError(COULD_NOT_LIST)),
+    [readOrgs],
+  );
+
+  /**
+   * Page one of the current scope, and the organizations the switcher offers.
+   *
+   * Together, because a mutation can change either — removing someone from an
+   * organization changes both what they are in and what they can see — and a
+   * page holding a fresh half beside a stale half would file boards under the
+   * wrong heading.
+   */
   const refresh = useCallback(
-    () => repository.list().then(
-      (found) => {
-        setBoards(found);
-        reconcile(found);
+    () => Promise.all([repository.list({ scope }), readOrgs()]).then(
+      ([page, mine]) => {
+        setBoards(page.boards);
+        setCursor(page.cursor);
+        setOrgs(mine);
+        reconcile(page.boards);
         setError(null);
       },
       () => setError(COULD_NOT_LIST),
     ),
-    [reconcile],
+    [scope, readOrgs, reconcile],
   );
 
+  /**
+   * The switcher's contents, read once. Not folded into the effect below,
+   * which re-runs on every scope change: which organizations you are in does
+   * not depend on which of them you are looking at, and re-reading it on every
+   * switch would spend a request to learn what it already knew.
+   */
   useEffect(() => {
     let live = true;
-    repository.list().then(
-      (found) => {
-        if (!live) return;
-        setBoards(found);
-        reconcile(found);
+    readOrgs().then(
+      (mine) => {
+        if (live) setOrgs(mine);
       },
       () => {
         if (live) setError(COULD_NOT_LIST);
@@ -85,7 +162,74 @@ export function BoardListPage() {
     return () => {
       live = false;
     };
-  }, [reconcile]);
+  }, [readOrgs]);
+
+  /**
+   * Page one, whenever the scope changes.
+   *
+   * Reset to `null` first rather than left showing the last scope's boards: the
+   * heading changes immediately and the list would be somebody else's for as
+   * long as the request took, which is a worse answer than "Loading…".
+   */
+  useEffect(() => {
+    let live = true;
+    setBoards(null);
+    setCursor(null);
+
+    // Asked before the first page rather than after it, because the first page
+    // is what creates the record: afterwards there is always one, and every
+    // visit would look like a return visit.
+    const account = auth.current()?.id;
+    firstLook.current = account ? !seenBoardsFor(account).hasRecord() : false;
+
+    repository.list({ scope }).then(
+      (page) => {
+        if (!live) return;
+        setBoards(page.boards);
+        setCursor(page.cursor);
+        reconcile(page.boards);
+      },
+      () => {
+        if (live) setError(COULD_NOT_LIST);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [scope, reconcile]);
+
+  /** The caller's role in an organization, or null if they are not in it. */
+  const roleIn = useCallback(
+    (id) => (id ? (orgs ?? NO_ORGS).find((org) => org.id === id)?.role ?? null : null),
+    [orgs],
+  );
+
+  const current = orgId ? (orgs ?? NO_ORGS).find((org) => org.id === orgId) : null;
+
+  /**
+   * The next page, appended.
+   *
+   * `busy` covers this like every other read, which also stops a second click
+   * paging twice from the same cursor and showing the same boards under
+   * themselves.
+   */
+  const loadMore = async () => {
+    if (!cursor) return;
+    setBusy(true);
+    try {
+      const page = await repository.list({ scope, after: cursor });
+      setBoards((shown) => [...(shown ?? []), ...page.boards]);
+      setCursor(page.cursor);
+      reconcile(page.boards, { append: true });
+      setError(null);
+    } catch {
+      // The boards already on screen are still good; only the page that did
+      // not arrive is missing, and the button is still there to try again.
+      setError(COULD_NOT_LIST);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   /**
    * Opening a board is what clears its badge — not listing it. A mark made on
@@ -118,16 +262,35 @@ export function BoardListPage() {
   };
 
   /**
-   * A retry is a read in flight like any other. Without `busy` the button that
-   * started it stays enabled over a list that is still `null`, so a second
-   * click starts a second read and the answers land in whichever order they
-   * come back — and the browser tests, which wait on `data-busy`, would think
-   * the page had settled while it had not.
+   * A re-read on its own, marked as one.
+   *
+   * Every read this page makes has to raise `busy`, and not only so the
+   * buttons go dead: `data-busy` is the one honest signal that what is on
+   * screen is settled, and a read nobody marked is a page that claims to be
+   * finished while its answer is still in flight. A bare `refresh()` after
+   * leaving an organization did exactly that — the switcher went on offering
+   * the organization that had just been left, and only for as long as the
+   * request took, which is the kind of window that is invisible on a laptop
+   * and reproducible on a loaded machine.
+   *
+   * It is also what stops a retry click landing twice: without it the button
+   * that started the read stays enabled over a list that is still `null`, and
+   * the two answers land in whichever order they come back.
    */
-  const retryList = async () => {
+  const reload = async () => {
     setBusy(true);
     try {
       await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** The same, for the switcher alone. */
+  const reloadOrgs = async () => {
+    setBusy(true);
+    try {
+      await refreshOrgs();
     } finally {
       setBusy(false);
     }
@@ -145,7 +308,11 @@ export function BoardListPage() {
     setBusy(true);
     try {
       const id = newId();
-      if (!(await repository.save(id, EMPTY_BOARD, { title: DEFAULT_TITLE }))) {
+      // Born where you are looking. Creating a board inside an organization is
+      // the ordinary way one gets there — `move` is for the board that was
+      // already somewhere else.
+      const placed = { title: DEFAULT_TITLE, ...(orgId ? { orgId } : {}) };
+      if (!(await repository.save(id, EMPTY_BOARD, placed))) {
         setError(COULD_NOT_CREATE);
         return;
       }
@@ -179,13 +346,83 @@ export function BoardListPage() {
     return mutate(() => sharing.leave(id));
   };
 
-  const rename = (id, current) => {
-    const next = window.prompt('Board name', current);
+  const rename = (id, currentTitle) => {
+    const next = window.prompt('Board name', currentTitle);
     if (next === null) return;
     const trimmed = next.trim();
-    if (!trimmed || trimmed === current) return;
+    if (!trimmed || trimmed === currentTitle) return;
     return mutate(() => repository.rename(id, trimmed));
   };
+
+  /** Where a board lives. `''` is the personal space, which has no id. */
+  const move = (id, value) => mutate(() => repository.move(id, value || null));
+
+  const createOrg = async () => {
+    const name = window.prompt('Organization name');
+    if (name === null) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+
+    setBusy(true);
+    try {
+      const made = await organizations.create(newId(), trimmed);
+      if (!made) {
+        // The likeliest refusal by far, and the one worth naming: creating an
+        // organization wants a real account, and most people here are guests.
+        setError(COULD_NOT_MAKE_ORG);
+        return;
+      }
+      setError(null);
+      // Re-read before navigating, not after. The effect above runs on mount
+      // and this page stays mounted across a scope change, so `orgs` would
+      // still be the list from before this organization existed — and the
+      // scope we are about to open would render as one that is not yours.
+      // Only the switcher: the boards for the scope we are about to open are
+      // loaded by the effect that watches it, and re-reading them here would
+      // be a read of the scope we are leaving.
+      await refreshOrgs();
+      navigate(`/o/${made.id}`);
+    } catch {
+      setError(COULD_NOT_MAKE_ORG);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /**
+   * What the card offers for getting rid of a board, which is not the same
+   * question as who may edit it.
+   *
+   * Owning it, or owning the organization holding it, is what Delete takes.
+   * Everyone else on an organization's board gets neither: their access came
+   * from the organization and it is the organization they would leave, so a
+   * Leave button here would be a promise this card cannot keep.
+   */
+  const disposalOf = (board) => {
+    if (board.owned || roleIn(board.orgId) === 'owner') return 'delete';
+    return board.orgId && roleIn(board.orgId) ? 'none' : 'leave';
+  };
+
+  /** The organizations a board can be put into: the ones you may add boards to. */
+  const destinations = (orgs ?? NO_ORGS).filter((org) => org.role !== 'viewer');
+  const canMove = (board) => board.owned || roleIn(board.orgId) === 'owner';
+
+  /**
+   * Where this board could go, including where it already is.
+   *
+   * You own a board in a team you have since been made a viewer of: it can be
+   * taken out, but the team is not somewhere you may put boards, so it is not
+   * in `destinations`. A select whose value matches none of its options falls
+   * back to the first — which here is "Personal", and would have the card
+   * quietly claiming the board is somewhere it is not.
+   */
+  const placesFor = (board) => {
+    if (!board.orgId || destinations.some((org) => org.id === board.orgId)) return destinations;
+    const here = (orgs ?? NO_ORGS).find((org) => org.id === board.orgId);
+    return [...destinations, { id: board.orgId, name: here?.name ?? 'Its organization' }];
+  };
+
+  const heading = orgId ? (current?.name ?? 'Organization') : 'Boards';
 
   return (
     // data-busy marks a read or write in flight. It drives nothing visually on
@@ -194,14 +431,42 @@ export function BoardListPage() {
     // on instead of assuming a click has already landed.
     <div className="shell" {...(busy ? { 'data-busy': '' } : {})}>
       <header className="shell-header">
-        <h1>Boards</h1>
+        <h1 data-scope-name>{heading}</h1>
         <div className="shell-header-actions">
+          {organizations && orgs !== null && (
+            <>
+              <select
+                className="scope-switcher"
+                aria-label="Workspace"
+                data-action="scope"
+                value={orgId ?? ''}
+                disabled={busy}
+                onChange={(e) => navigate(e.target.value ? `/o/${e.target.value}` : '/')}
+              >
+                <option value="">Personal</option>
+                {orgs.map((org) => (
+                  <option key={org.id} value={org.id}>{org.name}</option>
+                ))}
+              </select>
+
+              <button type="button" data-action="new-org" disabled={busy} onClick={createOrg}>
+                New organization
+              </button>
+            </>
+          )}
+
+          {current && (
+            <button type="button" data-action="org-people" onClick={() => setShowOrg(true)}>
+              People
+            </button>
+          )}
+
           <AccountMenu />
           <button
             type="button"
             className="primary"
             data-action="new-board"
-            disabled={busy}
+            disabled={busy || (orgId ? !current || current.role === 'viewer' : false)}
             onClick={create}
           >
             New board
@@ -213,20 +478,39 @@ export function BoardListPage() {
         <p className="error" role="alert" data-error>
           {error}
           {error === COULD_NOT_LIST && (
-            <button type="button" data-action="retry-list" disabled={busy} onClick={retryList}>
+            <button type="button" data-action="retry-list" disabled={busy} onClick={reload}>
               Try again
             </button>
           )}
         </p>
       )}
 
-      {boards === null ? (
+      {boards === null || orgs === null ? (
         // A first read that failed has no list to show, and "no boards yet" is
         // a claim about someone's account that a request which never arrived
         // cannot support. The message above is the whole of what is known.
+        //
+        // The organizations are waited for too, and not only to fill the
+        // switcher: whether this scope is one of yours is a question only that
+        // list answers, and rendering before it lands would tell someone their
+        // own organization is not theirs for as long as the request took.
         error ? null : <p className="empty" data-loading>Loading…</p>
+      ) : orgId && !current ? (
+        // The scope was asked for and is not one of yours. Every reason for
+        // that — never invited, removed since, or a hand-edited URL — gets the
+        // same answer, for the same reason the join page gives one.
+        <p className="empty" data-no-org>
+          That organization is not one of yours.{' '}
+          <button type="button" className="link" data-action="back-personal" onClick={() => navigate('/')}>
+            Back to your boards
+          </button>
+        </p>
       ) : boards.length === 0 ? (
-        <p className="empty" data-empty>No boards yet. Create one to get started.</p>
+        <p className="empty" data-empty>
+          {orgId
+            ? 'No boards here yet. Anything you create is shared with everyone in the organization.'
+            : 'No boards yet. Create one to get started.'}
+        </p>
       ) : (
         <ul className="board-grid">
           {boards.map((board) => (
@@ -257,7 +541,26 @@ export function BoardListPage() {
                   Rename
                 </button>
 
-                {board.owned === false ? (
+                {/* Offered only where there is somewhere to move to and the
+                    standing to do it. A select rather than a button because
+                    the question is "where", and it is the one control on this
+                    card that has more than one answer. */}
+                {destinations.length > 0 && canMove(board) && (
+                  <select
+                    aria-label={`Move ${board.title}`}
+                    data-action="move"
+                    disabled={busy}
+                    value={board.orgId ?? ''}
+                    onChange={(e) => move(board.id, e.target.value)}
+                  >
+                    <option value="">Personal</option>
+                    {placesFor(board).map((org) => (
+                      <option key={org.id} value={org.id}>{org.name}</option>
+                    ))}
+                  </select>
+                )}
+
+                {disposalOf(board) === 'leave' && (
                   <button
                     type="button"
                     data-action="leave"
@@ -266,7 +569,8 @@ export function BoardListPage() {
                   >
                     Leave
                   </button>
-                ) : (
+                )}
+                {disposalOf(board) === 'delete' && (
                   <button
                     type="button"
                     data-action="delete"
@@ -280,6 +584,48 @@ export function BoardListPage() {
             </li>
           ))}
         </ul>
+      )}
+
+      {/*
+        A button rather than a scroll listener. What is on screen is then a
+        consequence of something the reader did, so nothing loads behind their
+        back — and "that is all of them" is said once, by the button being
+        absent, instead of being inferred from a scroll that stopped happening.
+
+        Outside the branch above so it survives the empty case being empty for
+        this page only: a scope whose first page is entirely boards you may not
+        see is not a scope with nothing in it.
+      */}
+      {cursor && boards !== null && (
+        <button
+          type="button"
+          className="link"
+          data-action="load-more"
+          disabled={busy}
+          onClick={loadMore}
+        >
+          Load more
+        </button>
+      )}
+
+      {showOrg && current && (
+        <OrganizationDialog
+          org={current}
+          onClose={() => setShowOrg(false)}
+          onChanged={refresh}
+          // Leaving or deleting the organization you are looking at means you
+          // can no longer look at it; the personal list is the only place left
+          // to be.
+          //
+          // Navigate first, then re-read. The other order re-renders this
+          // scope against a list that no longer contains it, which is a flash
+          // of "that organization is not one of yours" on the way out — true,
+          // but a strange last thing to say to someone who just deleted it.
+          onGone={() => {
+            navigate('/', { replace: true });
+            reloadOrgs();
+          }}
+        />
       )}
     </div>
   );
