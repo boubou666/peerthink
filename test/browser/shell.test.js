@@ -1,7 +1,7 @@
 import { test, describe, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { LIST_PATH, openApp } from '../helpers/browser.js';
+import { LIST_PATH, answerAsk, dismissAsk, openApp } from '../helpers/browser.js';
 
 /**
  * The React shell: routing, the board list, and the hand-off to the canvas.
@@ -120,9 +120,9 @@ describe('shell', () => {
     return page.eval(`document.querySelector('[data-empty]') !== null`);
   };
 
-  /** Native dialogs would block the page, so answer them in JS. */
-  const answerPrompt = (value) => page.eval(`window.prompt = () => ${JSON.stringify(value)};`);
-  const answerConfirm = (value) => page.eval(`window.confirm = () => ${value};`);
+  /** The question is a real dialog now: click first, then answer what appears. */
+  const answerPrompt = (value) => answerAsk(page, value);
+  const answerConfirm = () => answerAsk(page);
 
   /**
    * This suite is about the Web Storage build, and a Vite dev server reads
@@ -269,8 +269,8 @@ describe('shell', () => {
       await newBoard();
       await page.goto(LIST_PATH);
 
-      await answerPrompt('Q3 planning');
       await clickOn('[data-action="rename"]');
+      await answerPrompt('Q3 planning');
       assert.deepEqual(await titles(), ['Q3 planning']);
 
       await page.goto(LIST_PATH);
@@ -281,12 +281,29 @@ describe('shell', () => {
       await newBoard();
       await page.goto(LIST_PATH);
 
-      await page.eval('window.prompt = () => null;');
       await clickOn('[data-action="rename"]');
+      await dismissAsk(page);
       assert.deepEqual(await titles(), ['Untitled board']);
 
-      await answerPrompt('   ');
+      /**
+       * A name of nothing but spaces cannot be submitted at all now — the
+       * dialog disables its own confirming button rather than taking the click
+       * and discarding the answer, which is what the old prompt did.
+       */
       await clickOn('[data-action="rename"]');
+      await page.eval(`(() => {
+        const el = document.querySelector('[data-ask-field]');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(el, '   ');
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      })()`);
+      assert.equal(
+        await page.eval(`document.querySelector('[data-action="ask-confirm"]').disabled`),
+        true,
+        'a blank name could be submitted',
+      );
+
+      await dismissAsk(page);
       assert.deepEqual(await titles(), ['Untitled board']);
     });
 
@@ -311,12 +328,12 @@ describe('shell', () => {
       await newBoard();
       await page.goto(LIST_PATH);
 
-      await answerConfirm(false);
       await clickOn('[data-action="delete"]');
+      await dismissAsk(page);
       assert.deepEqual(await titles(), ['Untitled board'], 'declining keeps it');
 
-      await answerConfirm(true);
       await clickOn('[data-action="delete"]');
+      await answerConfirm();
       assert.deepEqual(await titles(), []);
       assert.equal(await showsEmptyState(), true);
     });
@@ -689,8 +706,8 @@ describe('shell', () => {
         await backToList();
         await reject('remove');
 
-        await answerConfirm(true);
         await clickOn('[data-action="delete"]');
+        await answerConfirm();
         await page.waitFor(`document.querySelector('[data-error]') !== null`, {
           label: 'the failed delete to be reported',
         });
