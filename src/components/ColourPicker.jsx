@@ -265,7 +265,10 @@ export function ColourPicker({ field, label, value, presets, recent = [], fallba
         title={label}
         aria-haspopup="dialog"
         aria-expanded={open}
-        onClick={() => setOpen((was) => !was)}
+        // Through `close`, not a plain toggle: the swatch is a third way of
+        // shutting the panel, and every way of shutting it is a way of
+        // settling on a colour.
+        onClick={() => (open ? close() : setOpen(true))}
       />
 
       {open && (

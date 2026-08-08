@@ -45,7 +45,13 @@ export function createRecentColours({ storage, key = KEY } = {}) {
       // read back out of a store anything on this origin can write to, and it
       // ends up in a CSS custom property — the same reason `card-style.js`
       // refuses what is not plainly a colour.
-      return Array.isArray(list) ? list.map(normaliseHex).filter(Boolean).slice(0, RECENT_LIMIT) : [];
+      if (!Array.isArray(list)) return [];
+
+      // Deduplicated *after* normalising, not before: `#abc` and `#aabbcc` are
+      // one colour written two ways, and a record holding both — an older
+      // version's, or one written by hand — would otherwise put the same
+      // swatch in the row twice.
+      return [...new Set(list.map(normaliseHex).filter(Boolean))].slice(0, RECENT_LIMIT);
     } catch {
       // Unreadable or not JSON: no history rather than a broken picker.
       return [];

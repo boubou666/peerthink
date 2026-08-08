@@ -457,6 +457,23 @@ describe('format bar', () => {
       assert.deepEqual(await recentSwatches('fill'), ['#123456']);
     });
 
+    /**
+     * Every way of shutting the panel is a way of settling on a colour. The
+     * swatch is a toggle, so it closes the panel without going anywhere near
+     * the dismissal listeners the other two ways run through.
+     */
+    test('closing on the swatch remembers it too', async () => {
+      const id = await addCard();
+      await select(id);
+
+      await pick('fill', '#654321');
+      await click('[data-format-bar] [data-field="fill"]');
+      await page.waitFor(`document.querySelector('${panel('fill')}') === null`, { label: 'the panel to close' });
+
+      await openPicker('fill');
+      assert.deepEqual(await recentSwatches('fill'), ['#654321']);
+    });
+
     test('and is offered back, as a colour rather than a name', async () => {
       const first = await addCard();
       await select(first);
@@ -520,12 +537,35 @@ describe('format bar', () => {
   });
 
   describe('the eyedropper', () => {
-    /** Chromium has one; the others do not, which is why it is asked. */
+    /**
+     * Chromium has one; the others do not, which is why it is asked for rather
+     * than assumed. The stub records that it was opened, which is the only
+     * moment the test can see — a dismissal changes nothing, so there is no
+     * state to wait for afterwards.
+     */
     const stubEyeDropper = (answer) => page.eval(`(() => {
+      window.opened = false;
       window.EyeDropper = class {
-        open() { return ${answer === null ? 'Promise.reject(new DOMException("aborted"))' : `Promise.resolve({ sRGBHex: ${JSON.stringify(answer)} })`}; }
+        open() {
+          window.opened = true;
+          return ${answer === null ? 'Promise.reject(new DOMException("aborted"))' : `Promise.resolve({ sRGBHex: ${JSON.stringify(answer)} })`};
+        }
       };
     })()`);
+
+    /**
+     * The eyedropper has been opened and its answer dealt with.
+     *
+     * Two frames after the call, because the rejection is handled in a
+     * microtask and microtasks are drained before the next frame — so anything
+     * this flow was going to do has happened by then. The same reasoning as
+     * `noBar` above: asserting that nothing changed needs a settled page, and
+     * there is no positive condition to wait for.
+     */
+    const settledDropper = async () => {
+      await page.waitFor('window.opened === true', { label: 'the eyedropper to open' });
+      await page.eval('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+    };
 
     test('samples a colour onto the cards', async () => {
       const id = await addCard();
@@ -555,9 +595,14 @@ describe('format bar', () => {
 
       await openPicker('fill');
       await click(`${panel('fill')} [data-colour-dropper]`);
-      await page.sleep(50);
+      await settledDropper();
 
       assert.equal(await page.eval(`app.store.get('${id}').fill`), 'blue');
+      assert.equal(
+        await page.eval(`document.querySelector('${panel('fill')} [data-colour-hex]').value`),
+        '#b4d5ff',
+        'the panel moved off the colour it was showing',
+      );
       assert.deepEqual(page.errors, [], 'a dismissal was reported as an error');
     });
 

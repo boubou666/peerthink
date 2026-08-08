@@ -76,6 +76,16 @@ describe('recent colours', () => {
     assert.deepEqual(recent.list(), ['#b4d5ff']);
   });
 
+  /**
+   * `#abc` and `#aabbcc` are one colour written two ways. `add` could never
+   * write both, but a record from an older version — or one written by hand —
+   * can hold them, and the row would show the same swatch twice.
+   */
+  test('one colour written two ways is one swatch', () => {
+    const { recent } = build({ [KEY]: JSON.stringify(['#abc', '#aabbcc', '#123456']) });
+    assert.deepEqual(recent.list(), ['#aabbcc', '#123456']);
+  });
+
   test('a record that is not a list at all is no record', () => {
     assert.deepEqual(build({ [KEY]: '{"nope":true}' }).recent.list(), []);
     assert.deepEqual(build({ [KEY]: 'not json' }).recent.list(), []);
