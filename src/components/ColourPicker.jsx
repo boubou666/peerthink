@@ -224,11 +224,11 @@ export function ColourPicker({ field, label, value, presets, fallback, onPick })
           role="dialog"
           aria-label={label}
           /*
-           * The canvas listens for keys on `window`, and it is not fussy about
-           * where they came from: `c` adds a card, `e` an envelope, Backspace
-           * deletes the selection and the arrows nudge it. Both letters are
-           * hex digits — typing `#ccee00` would leave a litter of new objects
-           * behind it — so the panel keeps its keys to itself.
+           * The canvas listens for keys on `window` and takes the arrows as a
+           * nudge of the selection. It leaves text fields alone — `input.js`
+           * asks the element what it is — but the spectrum square is a
+           * focusable div and not a field, so arrowing across it would walk
+           * the cards along with the colour. The panel keeps its keys.
            */
           onKeyDown={(event) => event.stopPropagation()}
         >

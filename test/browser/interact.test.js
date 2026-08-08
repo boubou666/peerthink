@@ -1,4 +1,4 @@
-import { test, describe, before, beforeEach, after } from 'node:test';
+import { test, describe, before, beforeEach, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { openApp } from '../helpers/browser.js';
@@ -6,6 +6,9 @@ import { openApp } from '../helpers/browser.js';
 const CTRL = 2; // CDP modifier bitmask
 const ALT = 1;
 const SHIFT = 8;
+
+/** The three letters that are shortcuts, as CDP has to be told about them. */
+const LETTERS = [['c', 'KeyC', 67], ['e', 'KeyE', 69], ['l', 'KeyL', 76]];
 
 describe('interaction', () => {
   let page;
@@ -650,11 +653,17 @@ describe('interaction', () => {
       assert.deepEqual(await page.eval(`app.store.all().map(o => o.type).sort()`), ['card', 'envelope', 'list']);
     });
 
+    /**
+     * Real keystrokes, not `insertText`. The shortcuts hang off `keydown`, and
+     * inserted text fires none — so the same test written with `page.type`
+     * passes whether the guard is there or not, which is the shape of a test
+     * that has never been true of anything.
+     */
     test('shortcuts are inert while typing', async () => {
       const id = await add('card', { x: 200, y: 200, text: '' });
       const r = await page.rect(id);
       await page.dblclick(r.cx, r.cy);
-      await page.type('cel');
+      for (const [key, code, vk] of LETTERS) await page.key(key, { code, vk, text: key });
       assert.equal(await page.eval('app.store.order.length'), 1);
       assert.equal(await page.eval(`app.store.get("${id}").text`), 'cel');
       await blur();
@@ -664,6 +673,88 @@ describe('interaction', () => {
       await add('card', { x: 100, y: 100 });
       await page.key('q', { code: 'KeyQ', vk: 81 });
       assert.equal(await page.eval('app.store.order.length'), 1);
+    });
+  });
+
+  /**
+   * The canvas listens for keys on `window`, which is the only way to hear a
+   * shortcut pressed while nothing in particular has focus. The cost is that
+   * it hears everything else too — including what is typed into the app's own
+   * chrome, which is on the same page and is not the board.
+   *
+   * The board title is the field to test it on: it is the one text input on
+   * the board route, and it is where somebody types the name of a board.
+   */
+  describe('keys typed into a field', () => {
+    const TITLE = '.board-bar-title';
+
+    const focusTitle = () => page.eval(`document.querySelector('${TITLE}').focus()`);
+    const titleValue = () => page.eval(`document.querySelector('${TITLE}').value`);
+
+    // The title is not part of the board, so `beforeEach` does not reset it.
+    // Left alone, one test's keystrokes are the next one's starting value.
+    afterEach(async () => {
+      await page.eval(`(() => {
+        const el = document.querySelector('${TITLE}');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(el, 'Untitled board');
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.blur();
+      })()`);
+    });
+
+    test('space types a space instead of arming the pan cursor', async () => {
+      await focusTitle();
+      await page.key(' ', { code: 'Space', vk: 32, text: ' ' });
+
+      assert.equal(await titleValue(), 'Untitled board ', 'the space never reached the field');
+      assert.equal(
+        await page.eval(`document.getElementById('stage').classList.contains('space')`),
+        false,
+        'the canvas armed its pan cursor from a keystroke in a text field',
+      );
+    });
+
+    test('the object shortcuts stay out of it', async () => {
+      await add('card', { x: 100, y: 100 });
+      await focusTitle();
+      for (const [key, code, vk] of LETTERS) await page.key(key, { code, vk, text: key });
+
+      assert.equal(await page.eval('app.store.order.length'), 1, 'typing in the title built a board');
+      assert.equal(await titleValue(), 'Untitled boardcel');
+    });
+
+    test('backspace deletes a letter, not the selection', async () => {
+      const id = await add('card', { x: 100, y: 100 });
+      await page.eval(`app.selection.set(["${id}"])`);
+      await focusTitle();
+      await page.key('Backspace', { code: 'Backspace', vk: 8 });
+
+      assert.ok(await page.eval(`!!app.store.get("${id}")`), 'the selected card was deleted by a keystroke in the title');
+      assert.equal(await titleValue(), 'Untitled boar');
+    });
+
+    test('the arrows move the caret, not the cards', async () => {
+      const id = await add('card', { x: 100, y: 100 });
+      await page.eval(`app.selection.set(["${id}"])`);
+      await focusTitle();
+      await page.key('ArrowLeft', { code: 'ArrowLeft', vk: 37 });
+
+      const { x, y } = await pos(id);
+      assert.deepEqual({ x, y }, { x: 100, y: 100 }, 'a keystroke in the title nudged the board');
+    });
+
+    /**
+     * The undo the browser gives a text field, not the board's. Two different
+     * histories answer to the same chord, and the one that answers should be
+     * the one holding the thing in front of you.
+     */
+    test('ctrl+Z is the field\'s own', async () => {
+      const id = await add('card', { x: 100, y: 100 });
+      await focusTitle();
+      await page.key('z', { code: 'KeyZ', vk: 90, modifiers: CTRL });
+
+      assert.ok(await page.eval(`!!app.store.get("${id}")`), 'ctrl+Z in the title undid the board');
     });
   });
 });
