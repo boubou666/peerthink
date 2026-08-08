@@ -1,7 +1,7 @@
 import { test, describe, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { LIST_PATH, openApp, supabaseOrigin } from '../helpers/browser.js';
+import { LIST_PATH, answerAsk, openApp, supabaseOrigin } from '../helpers/browser.js';
 
 /**
  * Organizations, in a real browser against a real stack.
@@ -157,8 +157,8 @@ describe('organizations', { skip: origin ? false : 'no local supabase (npx supab
 
   /** Make an organization through the header button, and land on its list. */
   const newOrg = async (name = uniqueName('Acme')) => {
-    await page.eval(`window.prompt = () => ${JSON.stringify(name)}`);
     await click('[data-action="new-org"]');
+    await answerAsk(page, name);
     await page.waitFor(`location.hash.startsWith('#/o/')`, { label: 'the organization to open' });
     await settle();
     return { name, id: await page.eval(`location.hash.replace('#/o/', '')`) };
@@ -329,8 +329,8 @@ describe('organizations', { skip: origin ? false : 'no local supabase (npx supab
       );
 
       // leaving gives the boards back up
-      await guest.eval('window.confirm = () => true');
       await clickIn(guest, '[data-action="leave-org"]');
+      await answerAsk(guest);
       await guest.waitFor(`location.hash === '#/'`, { label: 'the guest to be sent back' });
       await settle(guest);
       assert.deepEqual(await titles(guest), []);
@@ -359,8 +359,8 @@ describe('organizations', { skip: origin ? false : 'no local supabase (npx supab
     await page.waitFor(`!document.querySelector('[data-org-dialog] [data-loading]')`, {
       label: 'the dialog to load',
     });
-    await page.eval('window.confirm = () => true');
     await click('[data-action="delete-org"]');
+    await answerAsk(page);
 
     await page.waitFor(`location.hash === '#/'`, { label: 'the personal list' });
     await settle();
@@ -478,8 +478,8 @@ describe('organizations', { skip: origin ? false : 'no local supabase (npx supab
         label: 'a member who can be made owner',
       });
 
-      await page.eval('window.confirm = () => true');
       await click('[data-action="make-owner"]');
+      await answerAsk(page);
 
       // The dialog discovers it is not theirs, because people() now answers
       // nobody — which is the same thing any member sees.
@@ -523,8 +523,8 @@ describe('organizations', { skip: origin ? false : 'no local supabase (npx supab
     await page.waitFor(`!document.querySelector('[data-org-dialog] [data-loading]')`, {
       label: 'the dialog to load',
     });
-    await page.eval(`window.prompt = () => ${JSON.stringify(renamed)}`);
     await click('[data-action="rename-org"]');
+    await answerAsk(page, renamed);
 
     await page.waitFor(
       `document.querySelector('[data-scope-name]').textContent === ${JSON.stringify(renamed)}`,
@@ -568,8 +568,8 @@ describe('organizations', { skip: origin ? false : 'no local supabase (npx supab
     await click('[data-action="continue-as-guest"]');
     await page.waitFor(SETTLED, { label: 'the guest to be let in' });
 
-    await page.eval(`window.prompt = () => 'Ghosts'`);
     await click('[data-action="new-org"]');
+    await answerAsk(page, 'Ghosts');
     await page.waitFor(`Boolean(document.querySelector('[data-error]'))`, {
       label: 'the refusal to be reported',
     });

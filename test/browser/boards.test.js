@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
 import { PAGE_SIZE } from '../../src/platform/storage.js';
-import { LIST_PATH, openApp, supabaseOrigin } from '../helpers/browser.js';
+import { LIST_PATH, answerAsk, openApp, supabaseOrigin } from '../helpers/browser.js';
 
 /**
  * The shell, with its boards in Postgres.
@@ -251,8 +251,8 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
     await page.goto(LIST_PATH, { ready: SETTLED });
     await settle();
 
-    await page.eval('window.confirm = () => true');
     await click('[data-action="delete"]');
+    await answerAsk(page);
     await settle();
 
     assert.deepEqual(await titles(), []);
@@ -791,8 +791,8 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
           'Leave',
         );
 
-        await other.eval('window.confirm = () => true');
         await clickIn(other, '[data-action="leave"]');
+        await answerAsk(other);
 
         await other.waitFor("document.querySelector('[data-empty]') !== null", {
           label: 'the board to leave the list',

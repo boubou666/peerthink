@@ -25,18 +25,56 @@
   gap: 10px;
 }
 
+/*
+ * What a button looks like when nobody has said otherwise.
+ *
+ * There was no rule for this before: every styled button was reached by a
+ * selector naming where it sits — `.board-bar button[data-action="share"]`,
+ * `.share-header button`, `.board-card-actions button` — so a button put
+ * somewhere new fell through to the browser's own chrome and arrived looking
+ * like it came off a different site. That is what happened to the
+ * organization controls in the header.
+ *
+ * So the default is a real style, and `.primary` and `.link` below are
+ * departures from it rather than the only two ways to be styled at all. Every
+ * bespoke rule in this file is more specific than this one and still wins;
+ * what changes is what happens when there is no bespoke rule, which is the
+ * case that was wrong.
+ *
+ * A bare element selector is deliberate — it has to reach buttons nobody has
+ * thought about yet. Everything the canvas draws is `#toolbar button`,
+ * `.fmt-align`, `.list-add` and friends, all of which outrank this.
+ */
+button {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease;
+}
+button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--ink) 4%, var(--panel));
+}
+button:disabled { opacity: .5; cursor: default; }
+
 button.primary {
   font: inherit;
   font-size: 13px;
   font-weight: 500;
   color: var(--bg);
   background: var(--ink);
-  border: 0;
+  border: 1px solid var(--ink);
   border-radius: 8px;
-  padding: 9px 15px;
+  padding: 8px 14px;
   cursor: pointer;
 }
-button.primary:hover { opacity: .85; }
+button.primary:hover:not(:disabled) { opacity: .85; background: var(--ink); }
 
 .empty {
   color: var(--muted);
@@ -606,3 +644,87 @@ button.link:hover { color: var(--ink); }
 [data-org-note] {
   margin: 0 0 8px;
 }
+
+/* ---------- asking a question ---------- */
+
+/*
+ * Above the share and organization dialogs (z-index 10), because it is opened
+ * from inside them: renaming an organization asks from a dialog that is
+ * already on screen, and a question behind the thing that asked it cannot be
+ * answered.
+ */
+.ask-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+}
+
+.ask {
+  width: min(400px, 100%);
+  padding: 20px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+
+.ask-title {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+
+.ask-message {
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.ask-field {
+  display: block;
+  margin-top: 14px;
+}
+.ask-field span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ask-field input {
+  width: 100%;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 11px;
+}
+.ask-field input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: transparent;
+}
+
+/* The confirming action last, which is where the eye ends up and where every
+   platform but one puts it. */
+.ask-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+/* Deleting something reads red, and only when it is actually a deletion —
+   the flag is set by the caller rather than guessed from the wording. */
+.ask-actions button[data-danger] {
+  color: #fff;
+  background: #d83a52;
+  border-color: #d83a52;
+}
+.ask-actions button[data-danger]:hover:not(:disabled) { opacity: .85; background: #d83a52; }

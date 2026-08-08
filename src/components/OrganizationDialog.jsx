@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { useAsk } from './AskDialog.jsx';
+
 import { auth } from '../shell/auth.js';
 import { organizations } from '../shell/organizations.js';
 import { orgJoinUrl } from '../shell/sharing.js';
@@ -28,6 +30,9 @@ export function OrganizationDialog({ org, onClose, onChanged, onGone }) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState(null);
+
+  // Handing over, renaming and deleting all ask first. See AskDialog.
+  const [askDialog, ask] = useAsk();
 
   const refresh = useCallback(async () => {
     const [link, members] = await Promise.all([
@@ -111,12 +116,15 @@ export function OrganizationDialog({ org, onClose, onChanged, onGone }) {
    * owner, so the empty list this now returns is the dialog correctly
    * discovering it is no longer theirs.
    */
-  const transfer = (person) =>
-    run(async () => {
-      const warning = `Make ${person.email} the owner of “${org.name}”? `
-        + 'You stay in the organization as an editor, and only they can hand it back.';
-      if (!window.confirm(warning)) return;
+  const transfer = async (person) => {
+    const agreed = await ask.confirm({
+      title: `Make ${person.email} the owner?`,
+      message: `You stay in “${org.name}” as an editor, and only they can hand it back.`,
+      confirmLabel: 'Hand it over',
+    });
+    if (!agreed) return;
 
+    await run(async () => {
       if (!(await organizations.transfer(org.id, person.id))) {
         return setError('Could not hand it over. They may have left the organization.');
       }
@@ -124,6 +132,7 @@ export function OrganizationDialog({ org, onClose, onChanged, onGone }) {
       setInvite(null);
       onChanged?.();
     });
+  };
 
   /**
    * Appoint a second owner, or take the appointment back.
@@ -146,18 +155,24 @@ export function OrganizationDialog({ org, onClose, onChanged, onGone }) {
       onChanged?.();
     });
 
-  const rename = () =>
-    run(async () => {
-      const next = window.prompt('Organization name', org.name);
-      if (next === null) return;
-      const trimmed = next.trim();
-      if (!trimmed || trimmed === org.name) return;
+  const rename = async () => {
+    const next = await ask.prompt({
+      title: 'Rename organization',
+      label: 'Name',
+      value: org.name,
+      confirmLabel: 'Rename',
+    });
+    if (next === null) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === org.name) return;
 
+    await run(async () => {
       if (!(await organizations.rename(org.id, trimmed))) {
         return setError('Could not rename it.');
       }
       onChanged?.();
     });
+  };
 
   /**
    * Deleting ends the sharing, not the work: every board inside falls back to
@@ -165,22 +180,35 @@ export function OrganizationDialog({ org, onClose, onChanged, onGone }) {
    * on its own reads like it takes the boards too — which is exactly the fear
    * that would stop someone tidying up.
    */
-  const remove = () =>
-    run(async () => {
-      const warning = `Delete “${org.name}”? Everyone else loses access to its boards. `
-        + 'Each board goes back to whoever created it — nothing is deleted.';
-      if (!window.confirm(warning)) return;
+  const remove = async () => {
+    const agreed = await ask.confirm({
+      title: `Delete “${org.name}”?`,
+      message: 'Everyone else loses access to its boards. Each board goes back to '
+        + 'whoever created it — nothing is deleted.',
+      confirmLabel: 'Delete organization',
+      danger: true,
+    });
+    if (!agreed) return;
 
+    await run(async () => {
       if (!(await organizations.remove(org.id))) return setError('Could not delete it.');
       onGone?.();
     });
+  };
 
-  const leave = () =>
-    run(async () => {
-      if (!window.confirm(`Leave “${org.name}”? You will lose access to its boards.`)) return;
+  const leave = async () => {
+    const agreed = await ask.confirm({
+      title: `Leave “${org.name}”?`,
+      message: 'You will lose access to its boards.',
+      confirmLabel: 'Leave',
+    });
+    if (!agreed) return;
+
+    await run(async () => {
       if (await organizations.leave(org.id)) onGone?.();
       else setError('Could not leave the organization.');
     });
+  };
 
   /**
    * The clipboard is refused in plenty of situations — no permission, no
@@ -228,6 +256,8 @@ export function OrganizationDialog({ org, onClose, onChanged, onGone }) {
   const me = auth.current()?.id ?? null;
 
   return (
+    <>
+    {askDialog}
     <div className="share-backdrop" data-org-dialog onPointerDown={(e) => {
       if (e.target === e.currentTarget) onClose();
     }}>
@@ -420,5 +450,6 @@ export function OrganizationDialog({ org, onClose, onChanged, onGone }) {
         )}
       </div>
     </div>
+    </>
   );
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 
 import { AccountMenu } from '../components/AccountMenu.jsx';
+import { useAsk } from '../components/AskDialog.jsx';
 import { OrganizationDialog } from '../components/OrganizationDialog.jsx';
 import { createIdGenerator } from '../core/ids.js';
 import { DEFAULT_TITLE } from '../platform/storage.js';
@@ -70,6 +71,9 @@ export function BoardListPage() {
    * account can change under a page that stays mounted.
    */
   const [unseen, setUnseen] = useState(() => new Set());
+
+  // Renaming, deleting and leaving all ask something first. See AskDialog.
+  const [askDialog, ask] = useAsk();
 
   /**
    * Whether this browser had no record for this account when the list loaded.
@@ -353,9 +357,14 @@ export function BoardListPage() {
     }
   };
 
-  const remove = (id, title) => {
-    if (!window.confirm(`Delete “${title}”? This cannot be undone.`)) return;
-    return mutate(() => repository.remove(id));
+  const remove = async (id, title) => {
+    const agreed = await ask.confirm({
+      title: `Delete “${title}”?`,
+      message: 'This cannot be undone.',
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (agreed) await mutate(() => repository.remove(id));
   };
 
   /**
@@ -364,24 +373,40 @@ export function BoardListPage() {
    * So the card offers what is actually available: hand the access back, and
    * it leaves your list without leaving anyone else's.
    */
-  const leave = (id, title) => {
-    if (!window.confirm(`Leave “${title}”? You will need a new link to get back in.`)) return;
-    return mutate(() => sharing.leave(id));
+  const leave = async (id, title) => {
+    const agreed = await ask.confirm({
+      title: `Leave “${title}”?`,
+      message: 'You will need a new link to get back in.',
+      confirmLabel: 'Leave',
+    });
+    if (agreed) await mutate(() => sharing.leave(id));
   };
 
-  const rename = (id, currentTitle) => {
-    const next = window.prompt('Board name', currentTitle);
+  const rename = async (id, currentTitle) => {
+    const next = await ask.prompt({
+      title: 'Rename board',
+      label: 'Board name',
+      value: currentTitle,
+      confirmLabel: 'Rename',
+    });
+    // null is the question being dismissed; an unchanged or blank name is it
+    // being answered with nothing to do. Neither is a write.
     if (next === null) return;
     const trimmed = next.trim();
     if (!trimmed || trimmed === currentTitle) return;
-    return mutate(() => repository.rename(id, trimmed));
+    await mutate(() => repository.rename(id, trimmed));
   };
 
   /** Where a board lives. `''` is the personal space, which has no id. */
   const move = (id, value) => mutate(() => repository.move(id, value || null));
 
   const createOrg = async () => {
-    const name = window.prompt('Organization name');
+    const name = await ask.prompt({
+      title: 'New organization',
+      label: 'Name',
+      message: 'Boards you make in it are shared with everyone you invite.',
+      confirmLabel: 'Create',
+    });
     if (name === null) return;
     const trimmed = name.trim();
     if (!trimmed) return;
@@ -630,6 +655,8 @@ export function BoardListPage() {
           Load more
         </button>
       )}
+
+      {askDialog}
 
       {showOrg && current && (
         <OrganizationDialog

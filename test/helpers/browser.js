@@ -23,6 +23,60 @@ export function supabaseOrigin() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Answer the question the last click opened.
+ *
+ * Renaming, deleting and leaving used to go through `window.prompt` and
+ * `window.confirm`, which a test could only reach by replacing them *before*
+ * the click — the stub was the answer, and nothing was ever driven. These are
+ * real elements, so the order is the one a person uses: click the thing, then
+ * answer what appears.
+ *
+ * `value` fills the field of a prompt; omit it for a confirm, which has none.
+ * The value is assigned through the prototype's setter because React keeps its
+ * own record of what it last wrote — a plain assignment leaves that record
+ * agreeing with the new value, so the input event is dispatched and React
+ * decides nothing changed.
+ */
+export async function answerAsk(page, value) {
+  await page.waitFor(`Boolean(document.querySelector('[data-ask]'))`, {
+    label: 'the question to be asked',
+    context: 'document.body.innerText',
+  });
+
+  if (value !== undefined) {
+    await page.eval(`(() => {
+      const el = document.querySelector('[data-ask-field]');
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(el, ${JSON.stringify(value)});
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+  }
+
+  await clickSelector(page, '[data-action="ask-confirm"]');
+  await page.waitFor(`!document.querySelector('[data-ask]')`, { label: 'the question to close' });
+}
+
+/** Turn the question down, the way Cancel or Escape does. */
+export async function dismissAsk(page) {
+  await page.waitFor(`Boolean(document.querySelector('[data-ask]'))`, { label: 'the question' });
+  await clickSelector(page, '[data-action="ask-cancel"]');
+  await page.waitFor(`!document.querySelector('[data-ask]')`, { label: 'the question to close' });
+}
+
+/** Click whatever a selector matches, by its box. Every suite had a copy. */
+export async function clickSelector(page, selector) {
+  const box = await page.eval(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)});
+    if (!el) return null;
+    el.scrollIntoView({ block: 'center' });
+    const r = el.getBoundingClientRect();
+    return { cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+  })()`);
+  if (!box) throw new Error(`no element matched ${selector}`);
+  await page.click(box.cx, box.cy);
+}
+
 const BUTTON_MASK = { none: 0, left: 1, right: 2, middle: 4, back: 8, forward: 16 };
 
 /**
