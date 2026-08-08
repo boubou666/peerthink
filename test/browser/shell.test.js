@@ -312,37 +312,46 @@ describe('shell', () => {
      * Without a trap the next Tab walks into the page behind — and where the
      * question is asked from inside another dialog, the first thing out there
      * is that dialog's close button.
+     *
+     * What is asserted is the wrap itself, at both ends. "Focus is still
+     * somewhere inside" is too weak: a trap that simply refused to move would
+     * satisfy it, and so would one that parked on the last control for ever.
      */
-    test('tabbing cannot leave the question', async () => {
+    test('tabbing wraps at both ends instead of leaving the question', async () => {
       await newBoard();
       await page.goto(LIST_PATH);
       await clickOn('[data-action="rename"]');
       await page.waitFor(`Boolean(document.querySelector('[data-ask]'))`, { label: 'the question' });
 
-      const inside = () => page.eval(
-        `Boolean(document.querySelector('[data-ask] form')?.contains(document.activeElement))`,
+      // Discovered rather than hard-coded: what is tabbable depends on the
+      // kind of question and on whether its confirming button is disabled.
+      const STOPS = `[...document.querySelectorAll(
+        '[data-ask] form button:not([disabled]), [data-ask] form input:not([disabled])')]`;
+      const NAME = `((el) => el?.dataset?.action ?? el?.tagName ?? null)`;
+
+      const stops = await page.eval(`${STOPS}.map(${NAME})`);
+      assert.ok(stops.length >= 2, `expected more than one stop to wrap between, got ${stops}`);
+
+      const focused = () => page.eval(`${NAME}(document.activeElement)`);
+      const focusStop = (i) => page.eval(`${STOPS}.at(${i}).focus()`);
+
+      // Forward off the end comes back to the beginning.
+      await focusStop(-1);
+      assert.equal(await focused(), stops[stops.length - 1], 'could not reach the last stop');
+      await page.key('Tab', { vk: 9 });
+      const afterTab = await focused();
+      assert.equal(afterTab, stops[0], `Tab off the end went to ${afterTab}, not ${stops[0]}`);
+
+      // And backwards off the beginning goes to the end.
+      await focusStop(0);
+      assert.equal(await focused(), stops[0], 'could not reach the first stop');
+      await page.key('Tab', { vk: 9, modifiers: 8 });
+      const afterShiftTab = await focused();
+      assert.equal(
+        afterShiftTab,
+        stops[stops.length - 1],
+        `Shift+Tab off the front went to ${afterShiftTab}, not ${stops[stops.length - 1]}`,
       );
-      const focused = () => page.eval(
-        `document.activeElement?.dataset?.action ?? document.activeElement?.tagName ?? null`,
-      );
-
-      assert.equal(await inside(), true, 'the dialog opened without taking focus');
-
-      // Forward, further than there are stops, so it has to wrap rather than
-      // merely not having reached the edge yet.
-      const seen = [];
-      for (let i = 0; i < 6; i++) {
-        await page.key('Tab', { vk: 9 });
-        seen.push(await focused());
-        assert.equal(await inside(), true, `Tab ${i + 1} left the dialog, landing on ${seen.at(-1)}`);
-      }
-      assert.ok(seen.includes('ask-confirm'), `never reached the confirming button: ${seen}`);
-
-      // And backwards, which wraps off the other end.
-      for (let i = 0; i < 6; i++) {
-        await page.key('Tab', { vk: 9, modifiers: 8 });
-        assert.equal(await inside(), true, `Shift+Tab ${i + 1} left the dialog`);
-      }
 
       await dismissAsk(page);
     });
