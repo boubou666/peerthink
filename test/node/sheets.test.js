@@ -27,7 +27,11 @@ const v1 = (...objects) => ({ v: 1, order: objects.map((o) => o.id), objects });
 const build = (doc = null) => {
   const store = new Store();
   const sheets = createSheets({ store, newId: ids() });
+  // Both halves of what `hydrate` does: the board, and then the word that it
+  // has arrived. Without the second, the set of sheets is still a placeholder
+  // and refuses to be changed.
   sheets.load(doc);
+  sheets.ready();
   return { store, sheets };
 };
 
@@ -150,6 +154,63 @@ describe('writing a document', () => {
       { id: 's2', name: 'Two', order: [], objects: [] },
     ];
     assert.deepEqual(readDocument(writeDocument(sheets), ids()), sheets);
+  });
+});
+
+/**
+ * The window between the canvas appearing and the board arriving.
+ *
+ * The canvas is interactive from the first frame, which is the point of
+ * loading separately. But the sheet on screen until the board lands is a
+ * placeholder that `load` replaces wholesale — so a sheet added to it is wiped
+ * a moment later, and announcing it would announce a sheet this client no
+ * longer has. Drawing is fine: those ops are replayed onto the board, which
+ * works because there is exactly one canvas to replay them onto.
+ */
+describe('before the board has arrived', () => {
+  const waiting = () => {
+    const store = new Store();
+    const sheets = createSheets({ store, newId: ids() });
+    sheets.load(null);
+    return { store, sheets };
+  };
+
+  test('the set of sheets cannot be changed', () => {
+    const { sheets } = waiting();
+    const announced = [];
+    sheets.onChanges((changes) => announced.push(...changes));
+
+    assert.equal(sheets.add({ name: 'Early' }), null);
+    assert.equal(sheets.duplicate(sheets.activeId), null);
+    assert.equal(sheets.rename(sheets.activeId, 'Early'), false);
+    assert.equal(sheets.remove(sheets.activeId), false);
+
+    assert.equal(sheets.size, 1);
+    assert.deepEqual(announced, [], 'a change to a placeholder was announced to everyone else');
+  });
+
+  test('and the canvas can still be drawn on', () => {
+    const { store, sheets } = waiting();
+    store.apply([{ t: 'add', obj: card('early') }]);
+    assert.deepEqual(store.order, ['early']);
+    assert.equal(sheets.settled, false);
+  });
+
+  /** Which is the whole reason a sheet cannot be added to it. */
+  test('the placeholder is replaced by the board, not merged with it', () => {
+    const { sheets } = waiting();
+    sheets.load({ v: 2, sheets: [{ id: 'theirs', name: 'Discovery', order: [], objects: [] }] });
+    sheets.ready();
+
+    assert.deepEqual(sheets.list().map((s) => s.name), ['Discovery']);
+    assert.equal(sheets.settled, true);
+  });
+
+  test('and once it has arrived, sheets work', () => {
+    const { sheets } = waiting();
+    sheets.ready();
+    assert.ok(sheets.add({ name: 'Themes' }));
+    assert.deepEqual(sheets.list().map((s) => s.name), ['Sheet 1', 'Themes']);
   });
 });
 

@@ -42,6 +42,7 @@ const build = ({ heldUntil } = {}) => {
   // routing they now go through rather than around it.
   const sheets = createSheets({ store, newId: createIdGenerator() });
   sheets.load(null);
+  sheets.ready();
 
   const sync = createBoardSync({
     client: { channel: () => channel, removeChannel: async () => {} },
@@ -378,21 +379,49 @@ describe('sheets crossing between clients', () => {
     assert.equal(store.has('on-hers'), true, 'the ops landed before the sheet they were for');
   });
 
-  test('nothing made here goes out before there is a board', async () => {
+  /**
+   * Nothing to send, rather than something withheld. The sheets a client has
+   * before its board arrives are a placeholder that the load replaces, so they
+   * cannot be added to at all — see `sheets.settled`. This is the sync side of
+   * that: no suppression here, because there is nothing to suppress.
+   */
+  test('a sheet cannot be made, or sent, before there is a board', async () => {
     let landed;
-    const { sheets, sent } = build({
+    const store = new Store();
+    const sheets = createSheets({ store, newId: createIdGenerator() });
+    sheets.load(null);
+
+    const sent = [];
+    const channel = {
+      on: () => channel,
+      subscribe: (cb) => { cb('SUBSCRIBED'); return channel; },
+      send: async (message) => { sent.push(message); },
+      presenceState: () => ({}),
+      track: async () => {},
+    };
+
+    createBoardSync({
+      client: { channel: () => channel, removeChannel: async () => {} },
+      boardId: 'board-1',
+      store,
+      sheets,
+      scheduler: createManualScheduler(),
+      clientId: 'me',
       heldUntil: new Promise((resolve) => { landed = resolve; }),
     });
 
-    sheets.add({ name: 'Early' });
+    assert.equal(sheets.add({ name: 'Early' }), null, 'a sheet was made on a placeholder board');
     await settle();
-    assert.deepEqual(
-      sent.filter((m) => m.event === SHEET_EVENT),
-      [],
-      'a sheet went out before the board it belongs to had landed',
-    );
+    assert.deepEqual(sent.filter((m) => m.event === SHEET_EVENT), []);
 
+    // And once the board is here, the same click works and crosses.
+    sheets.ready();
     landed();
     await settle();
+
+    const made = sheets.add({ name: 'Themes' });
+    await settle();
+    const [message] = sent.filter((m) => m.event === SHEET_EVENT);
+    assert.equal(message.payload.changes[0].id, made, 'the sheet never went out once the board had landed');
   });
 });

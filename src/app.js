@@ -338,6 +338,14 @@ export function createApp({
       seed(board);
     }
 
+    /**
+     * The sheets on screen are the board's now, in both branches — loaded, or
+     * seeded because there was nothing to load. Until this, they are a
+     * placeholder that `sheets.load` is about to replace, and the tab strip
+     * offers nothing that would be wiped by it.
+     */
+    sheets.ready();
+
     // There is a document now, so whatever the channel delivered while there
     // was not can be replayed onto it. Before autosave is wired, so the ops
     // held from other editors are treated exactly as ops arriving a moment

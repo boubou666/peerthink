@@ -39,6 +39,7 @@ const build = ({ clientId }) => {
   const store = new Store();
   const sheets = createSheets({ store, newId: createIdGenerator() });
   sheets.load(null);
+  sheets.ready();
 
   const sync = createBoardSync({
     client: { channel: () => channel, removeChannel: async () => {} },

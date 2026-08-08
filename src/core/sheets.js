@@ -178,6 +178,24 @@ export function createSheets({ store, newId }) {
   let entries = [];
   let activeId = null;
 
+  /**
+   * Whether these are the board's sheets, or the placeholder standing in until
+   * it arrives.
+   *
+   * The canvas is interactive from the first frame, which is the point of
+   * loading separately — but until the board lands, the one sheet here is not
+   * one of the board's, and `load` is about to replace every entry. A sheet
+   * added to a placeholder is a sheet added to nothing: it is wiped by the
+   * load, and announcing it to the other clients would be announcing a sheet
+   * this one no longer has.
+   *
+   * So the set of sheets is fixed until `ready()`. What can be done in that
+   * window is what could always be done in it — drawing on the canvas — and
+   * those ops are replayed onto the board when it arrives, which works because
+   * there is exactly one canvas to replay them onto.
+   */
+  let settled = false;
+
   const listeners = new Set();
   const emit = () => { for (const fn of listeners) fn(); };
 
@@ -298,6 +316,22 @@ export function createSheets({ store, newId }) {
       return activeId;
     },
 
+    /** Whether the board has arrived, and so whether its sheets can be changed. */
+    get settled() {
+      return settled;
+    },
+
+    /**
+     * The board has landed — from storage, or by being seeded because there
+     * was none. Called by `hydrate` for both, since what matters is that the
+     * sheets on screen are now the board's and not a placeholder.
+     */
+    ready() {
+      if (settled) return;
+      settled = true;
+      emit();
+    },
+
     /** Name and id only: what a tab strip draws, without the documents. */
     list: () => entries.map(({ id, name }) => ({ id, name })),
 
@@ -328,6 +362,7 @@ export function createSheets({ store, newId }) {
 
     /** A new empty sheet, which becomes the one on screen. */
     add({ name } = {}) {
+      if (!settled) return null;
       const sheet = { id: newId(), name: asName(name, nextName()), state: asState() };
       entries.push(sheet);
       show(sheet.id);
@@ -336,6 +371,7 @@ export function createSheets({ store, newId }) {
     },
 
     rename(id, name) {
+      if (!settled) return false;
       const entry = find(id);
       if (!entry) return false;
       const next = asName(name, entry.name);
@@ -350,7 +386,7 @@ export function createSheets({ store, newId }) {
      * in order to work on the copy is the reason anybody duplicates it.
      */
     duplicate(id) {
-      const entry = find(id);
+      const entry = settled ? find(id) : null;
       if (!entry) return null;
 
       const copy = {
@@ -382,7 +418,7 @@ export function createSheets({ store, newId }) {
      * one on the left when there is no right.
      */
     remove(id) {
-      if (!drop(id)) return false;
+      if (!settled || !drop(id)) return false;
       changed({ t: 'sheet-del', id });
       return true;
     },

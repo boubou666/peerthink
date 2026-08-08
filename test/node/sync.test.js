@@ -54,6 +54,10 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
     // "the one on screen" would agree with a broken sync.
     const sheets = createSheets({ store, newId: createIdGenerator() });
     sheets.load(null);
+    // Both halves of what `hydrate` does — the board, and the word that it has
+    // arrived, without which the set of sheets is a placeholder and refuses to
+    // be changed.
+    sheets.ready();
     const scheduler = createManualScheduler();
     const taps = new Set();
     const sync = createBoardSync({

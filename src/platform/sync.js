@@ -193,11 +193,15 @@ export function createBoardSync({
    * Not queued or throttled, unlike ops: these come from a click rather than
    * from a gesture, so there is never a burst of them to coalesce, and a sheet
    * that exists on one screen and not another for 50ms is a sheet somebody
-   * else's ops can arrive for. Held before hydration for the same reason
-   * everything else is — there is no board yet to change.
+   * else's ops can arrive for.
+   *
+   * Not held before hydration either, and it does not need to be: the set of
+   * sheets cannot change until the board has landed — `sheets` refuses, because
+   * a sheet added to the placeholder would be wiped by the load and announcing
+   * it would announce a sheet this client no longer had.
    */
   const unsubscribeSheets = sheets.onChanges((changes, origin) => {
-    if (stopped || origin !== LOCAL || holding) return;
+    if (stopped || origin !== LOCAL) return;
     Promise.resolve(
       channel.send({ type: 'broadcast', event: SHEET_EVENT, payload: { changes } }),
     ).catch(() => {});
