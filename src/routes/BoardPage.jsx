@@ -12,13 +12,17 @@ import { repository } from '../shell/storage.js';
 const EMPTY_BOARD = { v: 1, order: [], objects: [] };
 
 /**
- * The board's stored name. A board with no record yet — one seeded on a first
- * visit — has no name to read, and the placeholder is the right answer for it.
+ * The board's stored name, and where it lives. A board with no record yet —
+ * one seeded on a first visit — has neither, and the placeholder and a null
+ * organization are the right answers for it.
  *
  * Rejects when the read itself failed, which is a different thing and is
  * handled at the call site rather than flattened into the placeholder here.
  */
-const titleOf = async (boardId) => (await repository.load(boardId))?.title ?? DEFAULT_TITLE;
+const detailsOf = async (boardId) => {
+  const record = await repository.load(boardId);
+  return { title: record?.title ?? DEFAULT_TITLE, orgId: record?.orgId ?? null };
+};
 
 export function BoardPage() {
   const { boardId } = useParams();
@@ -26,6 +30,14 @@ export function BoardPage() {
   const [title, setTitle] = useState(DEFAULT_TITLE);
   const [draft, setDraft] = useState(DEFAULT_TITLE);
   const [showShare, setShowShare] = useState(false);
+  /**
+   * The organization holding this board, if any. Read here rather than in the
+   * dialog because it comes free with the load the title already needs, and
+   * the dialog is the one place it is used: a board in an organization is
+   * reachable by everyone in it, and a list of "people with access" that
+   * leaves them out is a list that is wrong.
+   */
+  const [orgId, setOrgId] = useState(null);
   // setState is a stable identity, which is what lets it be handed straight to
   // BoardCanvas — a new function every render would re-run the effect that
   // mounts the canvas, tearing down and rebuilding the board on every keystroke
@@ -58,15 +70,22 @@ export function BoardPage() {
     setExportError(null);
     setExporting(false);
 
-    titleOf(boardId).then(
+    detailsOf(boardId).then(
       (current) => {
+        if (!live) return;
+        // Not guarded by `claimed`: where the board lives is not something the
+        // title field can be in the middle of editing, and a board whose
+        // organization went unrecorded because someone was typing is one whose
+        // Share dialog then under-reports who can see it.
+        setOrgId(current.orgId);
+
         // Two ways this result is no longer wanted: the route moved on, or the
         // user is editing the name while the read was still in flight. Applying
         // it in either case puts a stale title back on screen — invisible
         // against Web Storage, routine once the repository is a network away.
-        if (!live || claimed.current) return;
-        setTitle(current);
-        setDraft(current);
+        if (claimed.current) return;
+        setTitle(current.title);
+        setDraft(current.title);
       },
       () => {
         // A read that failed knows nothing about the name — but this component
@@ -79,7 +98,9 @@ export function BoardPage() {
         // failure arrives as fast as the request can fail, which is easily
         // mid-keystroke, and resetting the field then would take the name the
         // user was in the middle of typing.
-        if (!live || claimed.current) return;
+        if (!live) return;
+        setOrgId(null);
+        if (claimed.current) return;
         setTitle(DEFAULT_TITLE);
         setDraft(DEFAULT_TITLE);
       },
@@ -225,6 +246,7 @@ export function BoardPage() {
         <ShareDialog
           boardId={boardId}
           title={title}
+          orgId={orgId}
           onClose={() => setShowShare(false)}
           // Leaving a board you are looking at means you can no longer look
           // at it; the list is the only place left to be.

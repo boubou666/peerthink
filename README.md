@@ -48,7 +48,7 @@ Three layers, and dependencies only ever point inward.
 
 ```
 src/main.jsx        bootstrap — the only file that knows it is in a browser
-  └── App.jsx       routes: / (board list) and /b/:boardId
+  └── App.jsx       routes: / and /o/:orgId (board lists) and /b/:boardId
         ├── routes/, components/   the React shell
         │     └── BoardCanvas.jsx  mounts the canvas once, via refs
         └── app.js  composition root — builds the object graph, wires commands
@@ -77,6 +77,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
                   ├── sync.js        the op log, on a private channel
                   ├── cursors.js     other people's pointers
                   ├── sharing.js     invite links and who holds them
+                  ├── organizations.js  teams, and the boards they hold
                   ├── auth.js        accounts, as { id, email, guest }
                   └── supabase.js    the client, and whether there is one
 ```
@@ -391,6 +392,160 @@ everything, because nobody else can reach a browser's own storage. An owner
 cannot leave: there is no membership row to hand back, and a board with no
 owner is one nobody can share or delete.
 
+### Organizations
+
+Sharing hands out one board. An **organization** hands out everything in it,
+now and later: you are invited once, and every board the team makes afterwards
+is already yours to open. That is the whole difference, and it is why this is a
+second grant of access rather than a loop over the first.
+
+The vocabulary is deliberately the board's. An organization has an owner and
+members who are `editor` or `viewer` — the same two words `board_members`
+already uses — and your role in the organization *is* your role on its boards.
+So `board_role()` is still the one question everything asks; it just has two
+places to look now, and the stronger grant wins. Being made an editor of one
+board is not undone by being a viewer of the team, and joining the team does
+not quietly downgrade a board someone handed you directly.
+
+Owning the organization resolves to `editor` on its boards, not `owner`. A
+board has exactly one owner and it is whoever made it — two rows answering
+`owner` for the same board would put `freeze_board_owner` and `board_people`
+in disagreement about who that is. What owning the organization additionally
+buys is written into the policies that grant it: deleting a board somebody else
+made in it, and moving one out.
+
+An organization may have a **second owner**, optionally. One owner is one
+person who can be ill, or on a plane, or gone, and everything that keeps an
+organization running waits on them.
+
+One more, and not a list of them: `co_owner_id` is a column rather than an
+'owner' role in `organization_members`, because the shape is the rule. A role
+would make "how many owners" an open question, and every answer above two is a
+different feature with different questions about who can remove whom.
+
+The line is that the organization's *row* belongs to the first owner and
+running the organization is shared. `org_role()` answers `owner` for both, so
+everything that resolves through it — the invite link, the roster, taking
+somebody off, and every board power inside — belongs to both. What stays with
+`owner_id` is the four acts on the organization itself: rename, delete, hand
+over, and appoint or remove the second owner. So there is always exactly one
+account that cannot be locked out by the other, which is what stops "second
+owner" being a way to lose an organization.
+
+The second owner keeps their membership row, and the appointment deliberately
+never touches it. That is what makes appointing and removing one statement
+each, and it is why taking the appointment back puts their old role straight
+back in force. It also means the two have to end together — a `Remove` that
+left somebody running the organization is the one outcome nobody would expect
+from that button — so a trigger clears the appointment when they stop being a
+member, whether they were removed or walked out. `organization_people()` reports
+them as `co-owner`, which is a word for that list rather than a role anything
+stores: the roles are still owner, editor and viewer.
+
+Handing an organization over is its own operation rather than a loosened
+policy. `organizations_update` still tests `owner_id = auth.uid()` in both
+halves — the `using` limits the write to the owner, and the `with check` stops
+that owner writing an arbitrary uuid into the column and giving the
+organization, its boards and its outstanding invite to a stranger or to nobody
+in one statement. That remains the right answer for the naive path.
+
+Transfer is not that statement. It is three changes that have to land together
+— the column moves, the new owner's membership row goes because an owner does
+not hold one, and the outgoing owner gets one so they do not lose access to the
+work they are handing over — and it has rules a `with check` could not express:
+the recipient must already be a member, because there is no way here to name
+somebody you have not been handed, and must be a real account, for the same
+reason creating an organization needs one. So it is a `SECURITY DEFINER`
+function, which is also where those rules can be read. Handing it to yourself
+is answered true: nothing is wrong and there is nothing to do, and a false
+would have the dialog report a failure for a state the user asked for and has.
+
+Creating an organization is the one thing here a guest cannot do. Every visitor
+is signed in anonymously, and an organization owned by a browser session is one
+nobody can get back into once that session is gone. Being invited *into* one
+needs no account, exactly as following a board link does — which is also why
+`sweep_anonymous_users` had to learn about organization membership, or a guest
+invited on Monday was deleted the following week.
+
+Where a board lives is not something editing it can change. An organization is
+what makes someone an editor of boards they do not own, so without a trigger the
+same grant would let them write the column that says whose board it is — moving
+the team's work into an organization they control, past a policy that only ever
+sees the row being proposed. `freeze_board_org` asks the two questions RLS
+cannot: may you take this board out of where it is (its owner, or the
+organization's), and may you put it where it is going (the same test
+`boards_insert` makes). Both live in the trigger rather than in a `with check`
+because both only matter when `org_id` actually changes, and autosave writes an
+update per settled edit.
+
+Deleting an organization is a decision about the organization. The boards in it
+are several people's work, so `on delete set null` hands each one back to
+whoever created it and everyone else loses sight of it — which is the part the
+deletion was actually about. The confirm says so, because "delete the
+organization" on its own reads like it takes the boards too, and that fear is
+what stops people tidying up.
+
+The personal list is not "boards with no organization". A board can be shared
+with you directly *and* live in a team you are not in, and filtering on
+`org_id is null` would leave it with nowhere to appear at all — so `/` shows
+everything that is not filed under an organization you can actually open. That
+rule is `board_summaries.personal`, and it lives in the database because the
+list is scoped there.
+
+### Listing a page at a time
+
+`list()` had no `where` clause, on purpose: row level security decides what you
+can see, and a filter in the client would be a second, weaker copy of the
+policies. That stayed cheap while "every board you can see" meant your own plus
+a handful shared with you.
+
+Organizations change the arithmetic. One invite to a team with five hundred
+boards makes every load of your *personal* list fetch five hundred rows to
+render three, and `boards_select` runs `board_role()` on each one you do not
+own. So the list is scoped in the database and read a page at a time — and the
+order matters: scoping has to come **first**, because cutting the page in
+Postgres and then filtering it in the browser gives pages of unpredictable size
+and no way to tell "that is all of them" from "this page happened to be
+entirely somebody's team".
+
+The scoping is a view rather than a function, so `list()` goes on saying what it
+wants instead of calling a procedure that decides for it. `security_invoker` is
+the whole reason that is safe: the view runs as the caller, so every policy on
+`boards` applies exactly as before and the view adds no access of its own — it
+adds the `personal` column, and it drops `doc`, which a list never wanted and
+now cannot ask for by mistake. One word in a migration, no behavioural tell when
+it is right, so `test/db/` asserts it directly the same way it asserts
+`prosecdef`.
+
+Paging is keyset, not offset. `.range()` is shorter and wrong: boards are
+ordered by when they were last saved, so somebody saving one while you read
+shifts every later row across the page boundary and page two repeats a board or
+skips one. Asking for "older than the last one I saw" names a position in the
+data rather than a count of rows, and cannot drift. `updated_at` alone is not a
+total order — boards written together tie — so `id` breaks the tie, in the sort,
+in the cursor's comparison and in the index. The cursor carries the timestamp
+exactly as Postgres gave it: `Date.parse` rounds microseconds away, and a cursor
+rounded to milliseconds straddles its own boundary.
+
+The cost is paid by scope switching, which used to be a client-side filter over
+data already in hand and is now a request. That is the trade: a workspace of
+five boards switches a little slower, and a workspace of five hundred loads ten
+times cheaper.
+
+The "New" badge had to change with it. The record used to be pruned to whatever
+was listed, which bounded it for free — against a page that would forget every
+board below the fold and announce the lot next time, so it is capped instead.
+What it still does not do is *add* what it announces: being listed is not being
+looked at, and a reconcile that recorded the boards it badged would clear them
+on the next refresh, before anyone had read them. Only opening a board does
+that. A first look seeds rather than announcing, and pagination stretches a
+first look across several requests — so the pages after the first go on seeding,
+or page one would be silent and page two would arrive covered in badges.
+
+Adoption is the one caller that genuinely needs every board rather than a page,
+and it walks the cursor to the end: a board left behind is a board with no way
+to reach it, which is the situation that file exists to prevent.
+
 ### The database
 
 `test/db/` is a third world, kept out of `npm test` because it needs a Postgres
@@ -474,6 +629,37 @@ account in Web Storage; the first look at a workspace seeds it rather than
 announcing everything, and opening a board is what clears its badge. What is
 not built is anything that reaches a person who is not looking at the app —
 that needs a channel out, and the only one available needs SMTP.
+
+An organization still cannot outlive its first owner on its own. Deleting that
+account cascades the organization away and its boards fall back to whoever made
+them, exactly as deleting the organization would — a second owner does not
+inherit it, because `co_owner_id` is `on delete set null` and `owner_id` is
+`on delete cascade`, and promoting somebody automatically is a decision this
+schema has no business making unasked. Nothing is lost; somebody has to hand it
+on, or be handed it, first.
+
+The gate on creating one reads `auth.users.is_anonymous`, not the `is_anonymous`
+JWT claim — a claim is a copy of that column from whenever the token was minted,
+so a guest who has just registered would be refused until it refreshed. What is
+exercised is the local path: `enable_confirmations = false`, the account menu
+attaches an email to the guest through `updateUser`, GoTrue clears the flag, and
+the browser suite goes on to create an organization with that session. Whether
+the flag clears *before* the address is confirmed, in a deployment that confirms,
+is not something anything here tests — and the confirmation link does not work
+yet regardless, three paragraphs up.
+
+The personal scope has no index behind it. Its predicate is `org_id is null or
+org_role(org_id) is null`, and the second half is a function call no index can
+answer — the boards it matches are overwhelmingly your own, which
+`boards_owner_updated_idx` already covers through the policy's `owner_id =
+auth.uid()`, but that is an argument rather than a measurement. The
+organization scope is indexed properly, tiebreak included.
+
+Nothing re-reads a list while you are looking at it. A board someone else adds
+to a team appears on your next load, not under your cursor — and with paging,
+"your next load" means page one, so a board that arrives while you are three
+pages down is not inserted where it belongs. Live lists would mean a
+subscription per scope on top of the per-board channel that already exists.
 
 Routing is hash-based (`/#/b/:id`) because GitHub Pages has no SPA rewrite.
 Moving to a host that can serve `index.html` for any path makes that a one-line

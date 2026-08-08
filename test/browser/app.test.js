@@ -82,7 +82,7 @@ describe('createApp', () => {
       seeded: second.store.order.length,
       restored: second.restoredFromStorage,
       saved: await second.repository.save('default', { v: 1, order: [], objects: [] }),
-      listed: await second.repository.list(),
+      listed: (await second.repository.list()).boards,
     })`);
 
     assert.equal(result.seeded, 7);
@@ -312,7 +312,7 @@ describe('createApp', () => {
           boardId: second.boardId,
           written: JSON.parse(localStorage.getItem('peerthink:board:second-board')).board.objects.some(o => o.text === 'scoped'),
           leaked: (localStorage.getItem('peerthink:board:default') ?? '').includes('scoped'),
-          listed: (await second.repository.list()).map(b => b.id).includes('second-board'),
+          listed: (await second.repository.list()).boards.map(b => b.id).includes('second-board'),
         };
       }`,
     );

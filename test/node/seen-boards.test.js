@@ -3,7 +3,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createSeenBoards } from '../../src/platform/seen-boards.js';
+import { RECORD_LIMIT, createSeenBoards } from '../../src/platform/seen-boards.js';
 
 const fakeStorage = (initial = {}) => {
   const items = new Map(Object.entries(initial));
@@ -47,22 +47,59 @@ describe('seen boards', () => {
     assert.deepEqual([...seen.reconcile(['a', 'b'])], []);
   });
 
-  test('a board that has gone is forgotten, so the record cannot grow for ever', () => {
+  /**
+   * The record used to be pruned to whatever was listed, which bounded it for
+   * free. The list is a page now, so pruning against it would forget every
+   * board below the fold and every board in the other scope, and announce the
+   * lot the next time they were listed.
+   */
+  test('a board that is simply not on this page is not forgotten', () => {
     const { storage, seen } = build();
     seen.reconcile(['a', 'b', 'c']);
     seen.reconcile(['a']);
 
-    assert.deepEqual(JSON.parse(storage.getItem('peerthink:seen:u1')), ['a']);
+    assert.deepEqual(
+      JSON.parse(storage.getItem('peerthink:seen:u1')).sort(),
+      ['a', 'b', 'c'],
+      'a board absent from one page was dropped from the record',
+    );
+    assert.deepEqual([...seen.reconcile(['a', 'b', 'c'])], [], 'and came back announced');
   });
 
-  test('a board that goes and comes back is new again', () => {
-    // It was left, or revoked and shared again. Either way this browser has
-    // not shown it since, and saying so is better than remembering for ever.
-    const { seen } = build();
-    seen.reconcile(['a', 'b']);
-    seen.reconcile(['a']);
+  test('the record is capped, so it cannot grow for ever', () => {
+    const { storage, seen } = build();
+    // Seeded well past the limit in one go, which is the only way to reach it
+    // without opening that many boards.
+    seen.reconcile(Array.from({ length: RECORD_LIMIT + 50 }, (_, i) => `b${i}`));
 
-    assert.deepEqual([...seen.reconcile(['a', 'b'])], ['b']);
+    const kept = JSON.parse(storage.getItem('peerthink:seen:u1'));
+    assert.equal(kept.length, RECORD_LIMIT);
+    assert.equal(kept[0], 'b0', 'the cap kept the wrong end of the record');
+  });
+
+  test('opening a board puts it at the front, so the cap sheds the stalest', () => {
+    const { storage, seen } = build();
+    seen.reconcile(Array.from({ length: RECORD_LIMIT }, (_, i) => `b${i}`));
+
+    seen.markSeen('fresh');
+    const kept = JSON.parse(storage.getItem('peerthink:seen:u1'));
+    assert.equal(kept.length, RECORD_LIMIT, 'the cap did not hold');
+    assert.equal(kept[0], 'fresh');
+    assert.equal(kept.includes(`b${RECORD_LIMIT - 1}`), false, 'the oldest id survived the cap');
+  });
+
+  /**
+   * A paginated first look is still one first look. Page one seeds and creates
+   * the record; without `seed`, page two would find a record it is not in and
+   * announce every board on it.
+   */
+  test('later pages of a first look are seeded too, not announced', () => {
+    const { seen } = build();
+    assert.deepEqual([...seen.reconcile(['a', 'b'])], [], 'the first page announced something');
+    assert.deepEqual([...seen.reconcile(['c', 'd'], { seed: true })], []);
+
+    // and the record kept them, so they are not new on the way back either
+    assert.deepEqual([...seen.reconcile(['a', 'b', 'c', 'd'])], []);
   });
 
   test('each account keeps its own record', () => {

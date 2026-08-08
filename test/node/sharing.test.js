@@ -92,7 +92,7 @@ describe('sharing', { skip: stack ? false : 'no local supabase (npx supabase sta
     assert.equal(await bob.sharing.redeem(token), id);
 
     assert.ok(await bob.repository.load(id), 'joining did not grant access');
-    assert.equal((await bob.repository.list()).some((b) => b.id === id), true);
+    assert.equal((await bob.repository.list()).boards.some((b) => b.id === id), true);
   });
 
   test('a viewer can read the board and cannot write it', async () => {
@@ -197,7 +197,7 @@ describe('sharing', { skip: stack ? false : 'no local supabase (npx supabase sta
 
       assert.equal(await bob.sharing.leave(id), true);
       assert.equal(await bob.repository.load(id), null);
-      assert.equal((await bob.repository.list()).some((b) => b.id === id), false);
+      assert.equal((await bob.repository.list()).boards.some((b) => b.id === id), false);
 
       // and it is only their own access they handed back
       assert.ok(await alice.repository.load(id), 'leaving a board deleted it');

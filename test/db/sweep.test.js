@@ -102,6 +102,44 @@ describe('sweeping anonymous users', { skip: URL ? false : 'DATABASE_URL is not 
     assert.equal(await survives(member), true, 'they were shared with, not abandoned');
   });
 
+  /**
+   * The case organizations added, and the one the sweep would otherwise get
+   * wrong in the most annoying way: a guest who follows an organization link
+   * joins the *organization*. They own no board and are named on none, so
+   * under the old test they had left nothing behind — and a week after being
+   * invited they were deleted, taking a row out of the owner's member list
+   * that nobody removed.
+   */
+  test('a guest invited into an organization is kept', async () => {
+    const owner = await guest({ anonymous: false });
+    const org = randomUUID().slice(0, 12);
+    await client.query('insert into public.organizations (id, owner_id, name) values ($1, $2, $3)',
+      [org, owner, 'Acme']);
+
+    const invited = await guest();
+    await client.query(
+      'insert into public.organization_members (org_id, user_id, role) values ($1, $2, $3)',
+      [org, invited, 'editor'],
+    );
+
+    assert.equal(await survives(invited), true, 'being invited is the most deliberate thing here');
+  });
+
+  /**
+   * Not reachable through the app — `organizations_insert` requires a real
+   * account — and tested anyway, because this function deletes rows out of
+   * auth.users on a timer and `on delete cascade` would take the organization,
+   * its boards' placement and its outstanding invite with it. What it deletes
+   * should not be safe only for as long as a policy in another file holds.
+   */
+  test('a guest who somehow owns an organization is kept', async () => {
+    const owner = await guest({ lastSeen: '400 days' });
+    await client.query('insert into public.organizations (id, owner_id, name) values ($1, $2, $3)',
+      [randomUUID().slice(0, 12), owner, 'Ghosts']);
+
+    assert.equal(await survives(owner), true, 'sweeping this takes an organization with it');
+  });
+
   test('a guest seen recently is kept, even with nothing to their name', async () => {
     const here = await guest({ lastSeen: '1 hour' });
     assert.equal(await survives(here), true);

@@ -120,17 +120,18 @@ describe('local storage repository', () => {
       clock = 200;
       await repo.save('mid', board(), { title: 'Mid' });
 
-      // `owned` is part of the contract, and true for everything here: nobody
-      // else can reach this browser's storage.
-      assert.deepEqual(await repo.list(), [
-        { id: 'new', title: 'New', updatedAt: 300, owned: true },
-        { id: 'mid', title: 'Mid', updatedAt: 200, owned: true },
-        { id: 'old', title: 'Old', updatedAt: 100, owned: true },
+      // `owned` and `orgId` are part of the contract, and answered the same way
+      // for everything here: nobody else can reach this browser's storage, so
+      // every board in it is yours and none of them is in an organization.
+      assert.deepEqual((await repo.list()).boards, [
+        { id: 'new', title: 'New', updatedAt: 300, owned: true, orgId: null },
+        { id: 'mid', title: 'Mid', updatedAt: 200, owned: true, orgId: null },
+        { id: 'old', title: 'Old', updatedAt: 100, owned: true, orgId: null },
       ]);
     });
 
     test('is empty when nothing is stored', async () => {
-      assert.deepEqual(await repo.list(), []);
+      assert.deepEqual((await repo.list()).boards, []);
     });
 
     test('ignores unrelated keys and unreadable records', async () => {
@@ -139,7 +140,7 @@ describe('local storage repository', () => {
       storage.data.set('peerthink:board:broken', '{not json');
       storage.data.set('peerthink:board:wrongshape', JSON.stringify({ v: 1, board: { nope: true } }));
 
-      assert.deepEqual((await repo.list()).map((b) => b.id), ['good']);
+      assert.deepEqual((await repo.list()).boards.map((b) => b.id), ['good']);
     });
 
     test('trusts the key over an id field that disagrees with it', async () => {
@@ -147,7 +148,7 @@ describe('local storage repository', () => {
       storage.data.set('peerthink:board:real-id', JSON.stringify({
         v: 1, id: 'stale-id', title: 'T', updatedAt: 5, board: board(),
       }));
-      assert.deepEqual((await repo.list()).map((b) => b.id), ['real-id']);
+      assert.deepEqual((await repo.list()).boards.map((b) => b.id), ['real-id']);
     });
 
     test('a record missing its metadata still sorts and still has a label', async () => {
@@ -155,9 +156,9 @@ describe('local storage repository', () => {
       clock = 50;
       await repo.save('dated', board(), { title: 'Dated' });
 
-      assert.deepEqual(await repo.list(), [
-        { id: 'dated', title: 'Dated', updatedAt: 50, owned: true },
-        { id: 'bare', title: DEFAULT_TITLE, updatedAt: 0, owned: true },
+      assert.deepEqual((await repo.list()).boards, [
+        { id: 'dated', title: 'Dated', updatedAt: 50, owned: true, orgId: null },
+        { id: 'bare', title: DEFAULT_TITLE, updatedAt: 0, owned: true, orgId: null },
       ]);
     });
 
@@ -192,7 +193,62 @@ describe('local storage repository', () => {
 
       // A record that will not parse is a bad record, not a broken store: the
       // distinction the two tests above depend on.
-      assert.deepEqual((await repo.list()).map((b) => b.id), ['good']);
+      assert.deepEqual((await repo.list()).boards.map((b) => b.id), ['good']);
+    });
+
+    /**
+     * The same page-at-a-time contract the server-backed repository has.
+     * Nothing here needs it — a browser's storage is small and answers at
+     * once — but a caller written against one implementation has to work
+     * against the other, which is the whole point of there being a contract.
+     */
+    describe('a page at a time', () => {
+      const fill = async (n) => {
+        for (let i = 0; i < n; i++) {
+          clock = 1000 + i;
+          await repo.save(`b${i}`, board(), { title: `B${i}` });
+        }
+      };
+
+      test('a limit is honoured, and the cursor leads to the rest', async () => {
+        await fill(5);
+
+        const first = await repo.list({ limit: 2 });
+        assert.deepEqual(first.boards.map((b) => b.id), ['b4', 'b3']);
+        assert.ok(first.cursor);
+
+        const second = await repo.list({ limit: 2, after: first.cursor });
+        assert.deepEqual(second.boards.map((b) => b.id), ['b2', 'b1']);
+
+        const third = await repo.list({ limit: 2, after: second.cursor });
+        assert.deepEqual(third.boards.map((b) => b.id), ['b0']);
+        assert.equal(third.cursor, null, 'the last page asked for another');
+      });
+
+      /**
+       * Boards saved in the same millisecond tie on `updatedAt`, and a page
+       * boundary inside a tie is how a keyset walk skips one. The id breaks
+       * it, in the sort and in the comparison the cursor makes.
+       */
+      test('boards stamped at the same moment are still partitioned', async () => {
+        for (const id of ['a', 'b', 'c', 'd']) await repo.save(id, board(), { title: id });
+
+        const seen = [];
+        let after = null;
+        do {
+          const page = await repo.list({ limit: 2, after });
+          seen.push(...page.boards.map((b) => b.id));
+          after = page.cursor;
+        } while (after);
+
+        assert.deepEqual(seen.sort(), ['a', 'b', 'c', 'd']);
+      });
+
+      /** There are no organizations in a browser's own storage to scope to. */
+      test('an organization scope matches nothing here', async () => {
+        await fill(2);
+        assert.deepEqual(await repo.list({ scope: 'acme' }), { boards: [], cursor: null });
+      });
     });
   });
 
@@ -342,7 +398,7 @@ describe('local storage repository', () => {
 describe('null repository', () => {
   test('accepts every call and keeps nothing', async () => {
     const repo = createNullRepository();
-    assert.deepEqual(await repo.list(), []);
+    assert.deepEqual((await repo.list()).boards, []);
     assert.equal(await repo.load('alpha'), null);
     assert.equal(await repo.save('alpha', board()), false);
     assert.equal(await repo.rename('alpha', 'x'), false);

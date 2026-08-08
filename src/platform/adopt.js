@@ -34,6 +34,30 @@ const isDone = (storage, key) => {
   }
 };
 
+/**
+ * Every board in a repository, walked a page at a time.
+ *
+ * `list()` answers one page since the board list learned to paginate, and
+ * adoption is the one caller that genuinely needs all of them: a board left
+ * behind is a board with no way to reach it, which is the situation this file
+ * exists to prevent. Taking the first page and calling it the workspace would
+ * quietly abandon everything after it.
+ *
+ * The cursor is opaque and simply handed back. A page that rejects is left to
+ * reject — the caller reads an unreadable list as an unfinished run, and the
+ * marker stays unset so the next sign-in tries again.
+ */
+const everyBoard = async (repository) => {
+  const all = [];
+  let after = null;
+  do {
+    const { boards, cursor } = await repository.list({ after });
+    all.push(...boards);
+    after = cursor;
+  } while (after);
+  return all;
+};
+
 const markDone = (storage, key, now) => {
   try {
     storage.setItem(key, now());
@@ -67,7 +91,7 @@ export async function adoptBoards({
   const result = { adopted: 0, kept: 0, failed: 0, done: false };
   if (isDone(storage, key)) return { ...result, done: true };
 
-  for (const summary of await local.list()) {
+  for (const summary of await everyBoard(local)) {
     try {
       // Asking the account first is what stops a stale browser copy landing on
       // top of a board that has moved on without it. A read that failed is not

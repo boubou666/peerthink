@@ -1,4 +1,4 @@
-import { DEFAULT_TITLE, RECORD_VERSION, isBoard } from './storage.js';
+import { DEFAULT_TITLE, PAGE_SIZE, RECORD_VERSION, isBoard } from './storage.js';
 
 /**
  * The board repository, against Postgres.
@@ -45,10 +45,24 @@ const toSummary = (row) => ({
   id: row.id,
   title: typeof row.title === 'string' ? row.title : DEFAULT_TITLE,
   updatedAt: toMillis(row.updated_at),
+  // Which organization holds this board, or null for a personal one. The board
+  // list needs it to know where a board belongs, and `undefined` would be a
+  // third answer to a two-answer question.
+  orgId: row.org_id ?? null,
 });
 
-export function createSupabaseRepository({ client, auth, table = 'boards' }) {
+export function createSupabaseRepository({
+  client,
+  auth,
+  table = 'boards',
+  // Reads for the list go through a view, writes through the table. The view
+  // is `security_invoker`, so it is the same rows under the same policies —
+  // what it adds is the `personal` column, which is the one question the
+  // client cannot answer for itself, and the absence of `doc`.
+  summaryView = 'board_summaries',
+}) {
   const from = () => client.from(table);
+  const summaries = () => client.from(summaryView);
 
   /**
    * The version of each board this repository has actually read, and the
@@ -67,27 +81,68 @@ export function createSupabaseRepository({ client, auth, table = 'boards' }) {
 
   return {
     /**
-     * Every board the caller can see, newest first — theirs and any shared
-     * with them. One query against the (owner_id, updated_at desc) index,
-     * where the local repository has to parse every stored board to answer.
+     * A page of the caller's boards for one scope, newest first.
+     *
+     * `scope` is an organization id, or null for the personal list — which is
+     * "not filed under an organization I can open" rather than "org_id is
+     * null"; `board_summaries.personal` is where that rule lives, and why the
+     * read goes through the view.
      *
      * Rejects when the query fails; see the note at the top of this file. A
      * caller that wants the old behaviour can `.catch(() => [])`, but it then
      * owns the claim that the account is empty.
      */
-    async list() {
-      const { data, error } = await from()
-        .select('id, title, updated_at, owner_id')
-        .order('updated_at', { ascending: false });
+    async list({ scope = null, after = null, limit = PAGE_SIZE } = {}) {
+      let query = summaries().select('id, title, updated_at, owner_id, org_id');
+      query = scope === null ? query.eq('personal', true) : query.eq('org_id', scope);
+
+      /**
+       * Keyset, not offset. `.range()` would be shorter and wrong: boards are
+       * ordered by when they were last saved, and somebody saving one while
+       * you read shifts every later row across the page boundary — so page two
+       * repeats a board page one already showed, or skips one entirely.
+       * Asking for "older than the last one I saw" cannot drift, because it
+       * names a position in the data rather than a count of rows.
+       *
+       * Interpolated rather than parameterised because PostgREST's `or` is one
+       * opaque string; the values are quoted, and both come from this method's
+       * own previous answer rather than from anything a user typed. The
+       * timestamp is passed on exactly as it arrived — Postgres keeps
+       * microseconds and `Date.parse` does not, so a cursor rounded to millis
+       * would straddle its own boundary.
+       */
+      if (after) {
+        query = query.or(
+          `updated_at.lt."${after.updatedAt}",`
+          + `and(updated_at.eq."${after.updatedAt}",id.lt."${after.id}")`,
+        );
+      }
+
+      const { data, error } = await query
+        .order('updated_at', { ascending: false })
+        // The tiebreak, and it is load-bearing: `updated_at` alone is not a
+        // total order, and a page boundary inside a tie is exactly the skip
+        // the keyset walk exists to avoid.
+        .order('id', { ascending: false })
+        // One more than asked for, purely to learn whether another page
+        // exists. A count query would be a second round trip and could
+        // disagree with the page it describes.
+        .limit(limit + 1);
 
       if (error) throw new Error(`could not list boards: ${error.message}`, { cause: error });
+
+      const rows = data.slice(0, limit);
+      const last = rows.at(-1);
 
       // `owned` is the difference between a board you can delete and one you
       // can only walk away from. The list is where that choice is offered, so
       // it is the list that has to know — and one extra column answers it,
       // where asking board_role() per row would be a query each.
       const me = auth.current()?.id;
-      return data.map((row) => ({ ...toSummary(row), owned: row.owner_id === me }));
+      return {
+        boards: rows.map((row) => ({ ...toSummary(row), owned: row.owner_id === me })),
+        cursor: data.length > limit ? { updatedAt: last.updated_at, id: last.id } : null,
+      };
     },
 
     /**
@@ -104,7 +159,7 @@ export function createSupabaseRepository({ client, auth, table = 'boards' }) {
      */
     async load(id) {
       const { data, error } = await from()
-        .select('id, title, doc, updated_at, version')
+        .select('id, title, doc, updated_at, version, org_id')
         .eq('id', id)
         .maybeSingle();
 
@@ -131,7 +186,14 @@ export function createSupabaseRepository({ client, auth, table = 'boards' }) {
      * third in the rare case below. Every later save — which is to say every
      * autosave — is one statement.
      */
-    async save(id, board, { title } = {}) {
+    /**
+     * `orgId` says where a board being created belongs, and is used on the
+     * insert path alone. It is deliberately not part of `patch`: an update
+     * carrying org_id would be a *move*, which `freeze_board_org` polices and
+     * which autosave has no business proposing on every settled edit. Moving
+     * an existing board is `move()` below, which is the call that says so.
+     */
+    async save(id, board, { title, orgId = null } = {}) {
       if (!isBoard(board)) return false;
 
       // A save with no title must not overwrite one: autosave calls this on
@@ -165,7 +227,9 @@ export function createSupabaseRepository({ client, auth, table = 'boards' }) {
       const ownerId = auth.current()?.id;
       if (!ownerId) return false;
 
-      const inserted = await from().insert({ id, owner_id: ownerId, ...patch }).select('version');
+      const inserted = await from()
+        .insert({ id, owner_id: ownerId, org_id: orgId, ...patch })
+        .select('version');
       if (!inserted.error) {
         // The row is normally returned; a policy that permits the insert and
         // not the read would hand back nothing, and indexing that would throw
@@ -192,6 +256,29 @@ export function createSupabaseRepository({ client, auth, table = 'boards' }) {
      */
     async rename(id, title) {
       const { data, error } = await from().update({ title }).eq('id', id).select('id');
+      return !error && data.length > 0;
+    },
+
+    /**
+     * Put a board into an organization, or take it out with `null`.
+     *
+     * Its own method rather than an option on `save()`, because it is its own
+     * decision: saving is what every editor does every few seconds, and moving
+     * a board is something only its owner or the organization's owner may do.
+     * `freeze_board_org` is what enforces that, and it *raises* rather than
+     * matching no rows — a refused move is an error from PostgREST, not an
+     * empty result — so this reports false on both, like every other write
+     * here.
+     *
+     * No version guard. The column is not the document, so a move is not a
+     * competing edit to it and has no stale snapshot to overwrite.
+     */
+    async move(id, orgId) {
+      const { data, error } = await from()
+        .update({ org_id: orgId })
+        .eq('id', id)
+        .select('id');
+
       return !error && data.length > 0;
     },
 

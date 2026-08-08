@@ -117,7 +117,7 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
       // the whole reason save() patches instead of upserting: autosave passes
       // no title, and must not be able to reset one
       assert.equal(record.title, 'Roadmap');
-      assert.equal((await alice.repository.list()).filter((b) => b.id === id).length, 1);
+      assert.equal((await alice.repository.list()).boards.filter((b) => b.id === id).length, 1);
     });
 
     test('a save with a title sets it', async () => {
@@ -151,9 +151,77 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
       await alice.repository.save(older, board(), { title: 'Older' });
       await alice.repository.save(newer, board(), { title: 'Newer' });
 
-      const mine = (await alice.repository.list()).filter((b) => [older, newer].includes(b.id));
+      const mine = (await alice.repository.list()).boards.filter((b) => [older, newer].includes(b.id));
       assert.deepEqual(mine.map((b) => b.title), ['Newer', 'Older']);
-      assert.deepEqual(Object.keys(mine[0]).sort(), ['id', 'owned', 'title', 'updatedAt']);
+      assert.deepEqual(Object.keys(mine[0]).sort(), ['id', 'orgId', 'owned', 'title', 'updatedAt']);
+    });
+
+    /**
+     * Paging, walked to the end.
+     *
+     * Keyset rather than offset, so what is being checked is that the pages
+     * partition the boards: every one appears, in order, exactly once. An
+     * offset walk passes the "every one appears" half and fails this the
+     * moment anything is saved mid-walk.
+     */
+    describe('a page at a time', () => {
+      const walk = async (repository, options = {}) => {
+        const seen = [];
+        let after = null;
+        let pages = 0;
+        do {
+          const page = await repository.list({ ...options, after });
+          seen.push(...page.boards);
+          after = page.cursor;
+          pages += 1;
+          assert.ok(pages < 20, 'the walk did not terminate');
+        } while (after);
+        return { seen, pages };
+      };
+
+      test('a limit is honoured, and the cursor leads to the rest', async () => {
+        const ids = [];
+        for (let i = 0; i < 5; i++) {
+          const id = newId();
+          ids.push(id);
+          await alice.repository.save(id, board(), { title: `P${i}` });
+        }
+
+        const first = await alice.repository.list({ limit: 2 });
+        assert.equal(first.boards.length, 2);
+        assert.ok(first.cursor, 'there are more boards and no cursor was given');
+
+        const { seen } = await walk(alice.repository, { limit: 2 });
+        const mine = seen.filter((b) => ids.includes(b.id)).map((b) => b.id);
+        assert.deepEqual(mine, [...ids].reverse(), 'the walk lost, repeated or reordered a board');
+        assert.equal(new Set(mine).size, mine.length, 'a board was served twice');
+      });
+
+      /**
+       * `updated_at` alone is not a total order, and boards written in one
+       * batch land close enough together to tie. A page boundary inside a tie
+       * is how a keyset walk skips a row — which is why `id` is in both the
+       * sort and the index.
+       */
+      test('boards saved in the same instant are still partitioned', async () => {
+        const ids = Array.from({ length: 6 }, () => newId());
+        // In parallel, so the timestamps are as close as this can make them.
+        await Promise.all(ids.map((id) => alice.repository.save(id, board(), { title: 'Tie' })));
+
+        const { seen } = await walk(alice.repository, { limit: 2 });
+        const mine = seen.filter((b) => ids.includes(b.id)).map((b) => b.id);
+
+        // Both halves: the Set size alone proves every id turned up, and would
+        // stay 6 if the walk served one of them on two pages — which is one of
+        // the two failures this test exists to catch.
+        assert.equal(mine.length, 6, `expected all six exactly once, got ${mine.length}`);
+        assert.equal(new Set(mine).size, 6, 'a board was served twice');
+      });
+
+      test('the last page says so by answering no cursor', async () => {
+        const { cursor } = await alice.repository.list({ limit: 1000 });
+        assert.equal(cursor, null, 'a full workspace in one page still asked for another');
+      });
     });
 
     /**
@@ -168,11 +236,11 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
       await alice.repository.save(theirs, board());
       await alice.client.from('board_members').insert({ board_id: theirs, user_id: bob.id, role: 'editor' });
 
-      const forBob = await bob.repository.list();
+      const forBob = (await bob.repository.list()).boards;
       assert.deepEqual(forBob.filter((b) => b.id === theirs).map((b) => b.owned), [false]);
       assert.equal(forBob.some((b) => b.id === mine), false);
 
-      const forAlice = await alice.repository.list();
+      const forAlice = (await alice.repository.list()).boards;
       assert.deepEqual(
         forAlice.filter((b) => [mine, theirs].includes(b.id)).map((b) => b.owned),
         [true, true],
@@ -186,7 +254,7 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
       await alice.repository.save(second, board());
       await alice.repository.save(first, board({ objects: [card('c1')], order: ['c1'] }));
 
-      const ids = (await alice.repository.list()).map((b) => b.id);
+      const ids = (await alice.repository.list()).boards.map((b) => b.id);
       assert.ok(ids.indexOf(first) < ids.indexOf(second), 'updated_at was not restamped');
     });
 
@@ -206,13 +274,18 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
         client: alice.client,
         auth: { current: () => ({ id: alice.id }) },
         table: 'boards_that_do_not_exist',
+        // The list reads the view, not the table, so pointing only the table
+        // at nothing would leave `list()` querying the real thing and quietly
+        // succeeding — which is how this test would go on passing while
+        // testing nothing.
+        summaryView: 'summaries_that_do_not_exist',
       });
 
       await assert.rejects(() => broken.list(), /could not list boards/);
 
       // And the working repository still answers, so the rejection is the
       // failure talking rather than this account genuinely having nothing.
-      assert.equal((await alice.repository.list()).some((b) => b.id === id), true);
+      assert.equal((await alice.repository.list()).boards.some((b) => b.id === id), true);
     });
   });
 
@@ -292,7 +365,7 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
 
       assert.equal(await alice.repository.remove(id), true);
       assert.equal(await alice.repository.load(id), null);
-      assert.equal((await alice.repository.list()).some((b) => b.id === id), false);
+      assert.equal((await alice.repository.list()).boards.some((b) => b.id === id), false);
     });
 
     test('removing what is already gone is not a failure', async () => {
@@ -306,7 +379,7 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
       await alice.repository.save(id, board({ objects: [card('c1')], order: ['c1'] }));
 
       assert.equal(await bob.repository.load(id), null);
-      assert.equal((await bob.repository.list()).some((b) => b.id === id), false);
+      assert.equal((await bob.repository.list()).boards.some((b) => b.id === id), false);
     });
 
     /**

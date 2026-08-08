@@ -230,7 +230,12 @@ describe('shell', () => {
         await page.goto(LIST_PATH);
         await settle();
 
-        assert.deepEqual(await titles(), ['Alpha', 'Beta']);
+        // Both are planted at the same `updatedAt`, so this is the tiebreak
+        // rather than the recency: id descending, which is the order the
+        // server-backed list pages in and the reason a keyset walk over a tie
+        // cannot skip a board. It used to come out in whatever order storage
+        // happened to enumerate.
+        assert.deepEqual(await titles(), ['Beta', 'Alpha']);
         assert.deepEqual(await badges(), []);
       });
     });

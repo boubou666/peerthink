@@ -29,6 +29,16 @@
  */
 
 export const RECORD_VERSION = 1;
+
+/**
+ * How many boards a page of the list holds.
+ *
+ * Part of the contract rather than a detail of either implementation, so the
+ * two agree about what a page is and a caller can page through both the same
+ * way. Big enough that most workspaces never see a second page, small enough
+ * that being in a large team costs one screenful instead of the whole team.
+ */
+export const PAGE_SIZE = 50;
 export const DEFAULT_NAMESPACE = 'peerthink';
 export const DEFAULT_BOARD_ID = 'default';
 export const DEFAULT_TITLE = 'Untitled board';
@@ -42,6 +52,9 @@ export const LEGACY_KEY = 'peerthink:board';
  * check constraint in the migration has something to mirror.
  */
 export const isBoard = (board) => Array.isArray(board?.objects) && Array.isArray(board?.order);
+
+/** Shared empty page, so an answer of "nothing here" allocates nothing. */
+const NO_BOARDS = [];
 
 export function createLocalStorageRepository({
   storage,
@@ -115,17 +128,27 @@ export function createLocalStorageRepository({
 
   const repository = {
     /**
-     * Summaries for a board picker, newest first. This parses every stored
-     * board, which is fine at Web Storage scale and is exactly the call a
-     * server-backed repository answers with a single query instead.
+     * A page of summaries, newest first, with a cursor for the next one.
+     *
+     * `scope` is the organization whose boards are wanted, or null for the
+     * personal list. A browser's own storage has no organizations in it, so
+     * anything but null matches nothing — the same reason every board here is
+     * `owned` and none has an `orgId`.
+     *
+     * `after` is a cursor this method previously answered with, and is opaque:
+     * the two implementations page over different clocks — epoch millis here,
+     * a Postgres timestamp there — and a caller that took it apart would be
+     * writing to one of them. Null when there is no page after this one.
      *
      * Deliberately not wrapped in a try: `ids()` and `getItem` throwing both
      * mean the store would not answer, and that has to reach the caller rather
      * than be flattened into an empty list. `parse` — not `read` — is what
      * reads each record here, so a single unparseable one is still skipped.
      */
-    async list() {
-      return ids()
+    async list({ scope = null, after = null, limit = PAGE_SIZE } = {}) {
+      if (scope !== null) return { boards: NO_BOARDS, cursor: null };
+
+      const all = ids()
         .map((id) => [id, parse(storage.getItem(keyFor(id)))])
         .filter(([, record]) => record)
         // the key is the record's real address — an `id` field written by an
@@ -140,8 +163,34 @@ export function createLocalStorageRepository({
           // is yours. The field exists because the contract has it, and a
           // caller should not have to ask which repository it is holding.
           owned: true,
+          // And there is nobody to share an organization with either, for the
+          // same reason. Stated rather than left off, so the board list can
+          // read `orgId` without first asking which repository answered.
+          orgId: null,
         }))
-        .sort((a, b) => b.updatedAt - a.updatedAt);
+        // Ordered by id as well as time, and not only for tidiness: paging
+        // needs a *total* order. Two boards saved in the same millisecond tie,
+        // and a page boundary landing inside a tie is how a keyset walk skips
+        // a board or serves it twice. The server-backed list breaks the tie
+        // the same way, on the same column.
+        .sort((a, b) => b.updatedAt - a.updatedAt || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+
+      // The same comparison the sort just made, which is what makes "the ones
+      // after this cursor" mean the same thing as "further down that list".
+      const rest = after
+        ? all.filter(({ id, updatedAt }) =>
+          updatedAt < after.updatedAt || (updatedAt === after.updatedAt && id < after.id))
+        : all;
+
+      // One more than asked for, purely to find out whether there is another
+      // page — cheaper and more honest than a second count query, and it
+      // cannot disagree with the page it was taken from.
+      const boards = rest.slice(0, limit);
+      const last = boards.at(-1);
+      return {
+        boards,
+        cursor: rest.length > limit ? { updatedAt: last.updatedAt, id: last.id } : null,
+      };
     },
 
     /**
@@ -180,6 +229,20 @@ export function createLocalStorageRepository({
       } catch {
         return false;
       }
+    },
+
+    /**
+     * There is nowhere to move a board to. Organizations are people sharing
+     * boards with each other, and a browser's own storage has nobody in it —
+     * the same reason `owned` is always true above.
+     *
+     * False rather than absent, so a caller holding the contract can call this
+     * without knowing which implementation answered. Nothing offers the move
+     * in a build with no backend, because `shell/organizations.js` is null
+     * there and the control is not rendered at all.
+     */
+    async move() {
+      return false;
     },
 
     /**
@@ -224,11 +287,12 @@ export function createLocalStorageRepository({
  */
 export function createNullRepository() {
   return {
-    list: async () => [],
+    list: async () => ({ boards: NO_BOARDS, cursor: null }),
     load: async () => null,
     save: async () => false,
     rename: async () => false,
     remove: async () => false,
+    move: async () => false,
     migrateLegacy: async () => false,
   };
 }
