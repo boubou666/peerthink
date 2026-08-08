@@ -485,12 +485,18 @@ describe('shell', () => {
           Storage.prototype.setItem = () => { throw new DOMException('quota', 'QuotaExceededError'); };
         })()`);
 
-        await clickOn('[data-action="duplicate"]');
-        await page.waitFor(`document.querySelector('[data-error]') !== null`, {
-          label: 'the failed duplicate to be reported',
-        });
+        // Restored whatever happens: an assertion that fails in here would
+        // otherwise leave every later test writing to storage that throws, and
+        // they would fail for a reason that has nothing to do with them.
+        try {
+          await clickOn('[data-action="duplicate"]');
+          await page.waitFor(`document.querySelector('[data-error]') !== null`, {
+            label: 'the failed duplicate to be reported',
+          });
+        } finally {
+          await page.eval('Storage.prototype.setItem = window.__setItem;');
+        }
 
-        await page.eval('Storage.prototype.setItem = window.__setItem;');
         assert.deepEqual(await titles(), ['Untitled board'], 'a copy appeared despite the write failing');
       });
 

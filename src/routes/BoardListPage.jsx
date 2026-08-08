@@ -225,6 +225,21 @@ export function BoardListPage() {
   const current = orgId ? (orgs ?? NO_ORGS).find((org) => org.id === orgId) : null;
 
   /**
+   * Whether a board can be put into the scope on screen.
+   *
+   * Your personal space always takes one. An organization takes one from
+   * anybody but a viewer — and from nobody at all until it is known to be
+   * yours, which is what `current` being absent means while the switcher is
+   * still loading.
+   *
+   * One expression for both the buttons that make a board, because two would
+   * be two chances to disagree: creating and duplicating land the same row
+   * through the same policy, and a control that is offered where the write
+   * will be refused is a control that lies.
+   */
+  const canAddBoards = orgId ? Boolean(current) && current.role !== 'viewer' : true;
+
+  /**
    * The next page, appended.
    *
    * `busy` covers this like every other read, which also stops a second click
@@ -564,7 +579,7 @@ export function BoardListPage() {
             type="button"
             className="primary"
             data-action="new-board"
-            disabled={busy || (orgId ? !current || current.role === 'viewer' : false)}
+            disabled={busy || !canAddBoards}
             onClick={create}
           >
             New board
@@ -641,11 +656,16 @@ export function BoardListPage() {
 
                 {/* Offered on every board, including one shared with you:
                     making your own copy is the one thing you can do with
-                    somebody else's board without touching theirs. */}
+                    somebody else's board without touching theirs.
+
+                    Disabled where a board cannot be made, which is the rule
+                    the New board button follows — a viewer of a team can read
+                    its boards and add none, and a Duplicate that was refused
+                    by the database would be this card promising otherwise. */}
                 <button
                   type="button"
                   data-action="duplicate"
-                  disabled={busy}
+                  disabled={busy || !canAddBoards}
                   onClick={() => duplicate(board.id, board.title)}
                 >
                   Duplicate
