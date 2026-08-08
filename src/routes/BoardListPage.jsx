@@ -24,6 +24,7 @@ const EMPTY_BOARD = { v: 1, order: [], objects: [] };
  */
 const COULD_NOT_LIST = 'Could not load your boards. Check your connection and try again.';
 const COULD_NOT_CREATE = 'Could not create a board — storage is full or unavailable.';
+const COULD_NOT_DUPLICATE = 'Could not duplicate that board. Nothing was changed.';
 const COULD_NOT_CHANGE = 'That change did not go through. Nothing was altered.';
 const COULD_NOT_MAKE_ORG =
   'Could not create the organization. Registered accounts can make one — guests cannot.';
@@ -400,6 +401,55 @@ export function BoardListPage() {
   /** Where a board lives. `''` is the personal space, which has no id. */
   const move = (id, value) => mutate(() => repository.move(id, value || null));
 
+  /**
+   * A board again, under a new id, belonging to whoever made the copy.
+   *
+   * Read then write, which is the whole of it: the document is copied
+   * verbatim, so a board with sheets arrives with all of them and nothing here
+   * has to know what a sheet is.
+   *
+   * What is deliberately *not* copied is who could see the original. A copy is
+   * a new board owned by the person making it, and its members are nobody —
+   * carrying them across would hand people access to a board they have never
+   * heard of, silently, because somebody pressed Duplicate. It is also why
+   * this is offered on a board shared with you: making your own copy is the
+   * one thing you can do with someone else's board without touching theirs.
+   *
+   * Born where you are looking, as `create` is: the copy appears in the list
+   * that is on screen rather than in whichever scope the original happened to
+   * live in.
+   */
+  const duplicate = async (id, title) => {
+    setBusy(true);
+    try {
+      const record = await repository.load(id);
+      if (!record) {
+        setError(COULD_NOT_DUPLICATE);
+        return;
+      }
+
+      const copy = newId();
+      const placed = { title: `${title} (copy)`, ...(orgId ? { orgId } : {}) };
+      if (!(await repository.save(copy, record.board, placed))) {
+        setError(COULD_NOT_DUPLICATE);
+        return;
+      }
+
+      // Seen, without being opened. `open` is what usually marks a board as
+      // looked at, and a copy you just made arriving in your own list with a
+      // "New" badge on it would be the badge telling you about your own click.
+      const account = auth.current()?.id;
+      if (account) seenBoardsFor(account).markSeen(copy);
+
+      setError(null);
+      await refresh();
+    } catch {
+      setError(COULD_NOT_DUPLICATE);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const createOrg = async () => {
     const name = await ask.prompt({
       title: 'New organization',
@@ -587,6 +637,18 @@ export function BoardListPage() {
                   onClick={() => rename(board.id, board.title)}
                 >
                   Rename
+                </button>
+
+                {/* Offered on every board, including one shared with you:
+                    making your own copy is the one thing you can do with
+                    somebody else's board without touching theirs. */}
+                <button
+                  type="button"
+                  data-action="duplicate"
+                  disabled={busy}
+                  onClick={() => duplicate(board.id, board.title)}
+                >
+                  Duplicate
                 </button>
 
                 {/* Offered only where there is somewhere to move to and the

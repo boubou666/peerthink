@@ -400,6 +400,126 @@ describe('shell', () => {
       assert.deepEqual(await titles(), []);
       assert.equal(await showsEmptyState(), true);
     });
+
+    /**
+     * A board again, under a new id. The document is copied verbatim, which is
+     * what makes a board with sheets arrive with all of them without this page
+     * knowing what a sheet is.
+     */
+    describe('duplicating', () => {
+      /** What the list shows, and what is actually stored under each board. */
+      const stored = () => page.eval(`(() => {
+        const boards = {};
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (!key.startsWith('peerthink:board:')) continue;
+          const record = JSON.parse(localStorage.getItem(key));
+          boards[record.title] = { id: record.id, board: record.board };
+        }
+        return boards;
+      })()`);
+
+      test('makes a copy, named as one, without touching the original', async () => {
+        await newBoard();
+        await page.goto(LIST_PATH);
+        await clickOn('[data-action="rename"]');
+        await answerPrompt('Q3 planning');
+
+        await clickOn('[data-action="duplicate"]');
+        await page.waitFor(
+          `document.querySelectorAll('.board-card').length === 2`,
+          { label: 'the copy to appear in the list' },
+        );
+
+        assert.deepEqual((await titles()).sort(), ['Q3 planning', 'Q3 planning (copy)']);
+
+        const boards = await stored();
+        assert.notEqual(
+          boards['Q3 planning (copy)'].id,
+          boards['Q3 planning'].id,
+          'the copy is the same board',
+        );
+      });
+
+      test('the copy carries the sheets, and the objects on them', async () => {
+        await newBoard();
+        // A second sheet with something on it, so the copy has more to carry
+        // than the one canvas a board used to be.
+        await page.eval(`app.store.load({ v: 1, order: [], objects: [] })`);
+        await page.eval(`app.board.add('card', { x: 10, y: 10, text: 'on the first' })`);
+        await page.eval(`app.commands.addSheet({ name: 'Themes' })`);
+        await page.eval(`app.board.add('card', { x: 20, y: 20, text: 'on the second' })`);
+        await page.waitFor(
+          `(localStorage.getItem('peerthink:board:' + app.boardId) ?? '').includes('on the second')`,
+          { label: 'the board to be saved' },
+        );
+
+        await page.goto(LIST_PATH);
+        await clickOn('[data-action="duplicate"]');
+        await page.waitFor(
+          `document.querySelectorAll('.board-card').length === 2`,
+          { label: 'the copy to appear in the list' },
+        );
+
+        const boards = await stored();
+        const copy = boards['Untitled board (copy)'].board;
+        assert.deepEqual(copy.sheets.map((s) => s.name), ['Sheet 1', 'Themes']);
+        assert.deepEqual(
+          copy.sheets.map((s) => s.objects.map((o) => o.text)),
+          [['on the first'], ['on the second']],
+        );
+      });
+
+      /**
+       * A copy that could not be written is worth saying out loud. Silently
+       * doing nothing is indistinguishable from a broken button, and the list
+       * would otherwise look exactly as it did a moment before.
+       */
+      test('a copy that cannot be written is reported', async () => {
+        await newBoard();
+        await page.goto(LIST_PATH);
+        await settle();
+
+        await page.eval(`(() => {
+          window.__setItem = Storage.prototype.setItem;
+          Storage.prototype.setItem = () => { throw new DOMException('quota', 'QuotaExceededError'); };
+        })()`);
+
+        await clickOn('[data-action="duplicate"]');
+        await page.waitFor(`document.querySelector('[data-error]') !== null`, {
+          label: 'the failed duplicate to be reported',
+        });
+
+        await page.eval('Storage.prototype.setItem = window.__setItem;');
+        assert.deepEqual(await titles(), ['Untitled board'], 'a copy appeared despite the write failing');
+      });
+
+      /**
+       * `open` is what marks a board as looked at, and a copy you have just
+       * made is not news — a "New" badge on it would be the badge telling you
+       * about your own click.
+       */
+      test('the copy does not arrive wearing a New badge', async () => {
+        await newBoard();
+        await page.goto(LIST_PATH);
+        await settle();
+
+        await clickOn('[data-action="duplicate"]');
+        await page.waitFor(
+          `document.querySelectorAll('.board-card').length === 2`,
+          { label: 'the copy to appear in the list' },
+        );
+        await settle();
+
+        assert.deepEqual(
+          await page.eval(`[...document.querySelectorAll('.board-card')]
+            .filter((card) => card.querySelector('[data-new]'))
+            .map((card) => card.dataset.boardId)`),
+          [],
+          'a board this browser made was called new',
+        );
+      });
+    });
   });
 
   describe('board route', () => {
