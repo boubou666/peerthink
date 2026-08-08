@@ -1,4 +1,4 @@
-import { REMOTE, Store } from './store.js';
+import { LOCAL, REMOTE, Store } from './store.js';
 
 /**
  * The sheets of a board: several named canvases, one of them on screen.
@@ -127,6 +127,45 @@ export function writeDocument(sheets) {
   };
 }
 
+/**
+ * A change to the *set* of sheets, as something that can cross a wire.
+ *
+ * The store's ops say what happened on a canvas; these say what happened to
+ * the board. Same shape and same reason: one vocabulary of plain serialisable
+ * records, applied through one path, so what another client receives is what
+ * this one did rather than a second implementation of it.
+ *
+ *   { t:'sheet-add',    id, name, index, order, objects }
+ *   { t:'sheet-rename', id, name }
+ *   { t:'sheet-del',    id }
+ *
+ * `sheet-add` carries the contents because that is what makes duplicating a
+ * sheet one change rather than a change plus every object on it — and it
+ * carries the ids, so the copy is the same copy everywhere. An empty sheet is
+ * the same record with nothing in it.
+ *
+ * There is no `sheet-order`: nothing reorders sheets yet, and a vocabulary
+ * with a word nothing says is a word that will be wrong when something does.
+ */
+export function isSheetChange(change) {
+  if (!change || typeof change !== 'object' || typeof change.id !== 'string') return false;
+  switch (change.t) {
+    case 'sheet-add':
+      return (
+        typeof change.name === 'string'
+        && Number.isInteger(change.index)
+        && Array.isArray(change.order)
+        && Array.isArray(change.objects)
+      );
+    case 'sheet-rename':
+      return typeof change.name === 'string';
+    case 'sheet-del':
+      return true;
+    default:
+      return false;
+  }
+}
+
 export function createSheets({ store, newId }) {
   /**
    * Every sheet, in tab order, as `{ id, name, state }`.
@@ -139,8 +178,66 @@ export function createSheets({ store, newId }) {
   let entries = [];
   let activeId = null;
 
+  /**
+   * Whether these are the board's sheets, or the placeholder standing in until
+   * it arrives.
+   *
+   * The canvas is interactive from the first frame, which is the point of
+   * loading separately — but until the board lands, the one sheet here is not
+   * one of the board's, and `load` is about to replace every entry. A sheet
+   * added to a placeholder is a sheet added to nothing: it is wiped by the
+   * load, and announcing it to the other clients would be announcing a sheet
+   * this one no longer has.
+   *
+   * So the set of sheets is fixed until `ready()`. What can be done in that
+   * window is what could always be done in it — drawing on the canvas — and
+   * those ops are replayed onto the board when it arrives, which works because
+   * there is exactly one canvas to replay them onto.
+   */
+  let settled = false;
+
   const listeners = new Set();
   const emit = () => { for (const fn of listeners) fn(); };
+
+  /**
+   * Every change to the set of sheets, with where it came from — the seam the
+   * sync layer plugs into, exactly as `store.onOps` is for the canvas.
+   *
+   * `on` above says "something changed, draw again", which is what a tab strip
+   * needs. This says what happened, which is what a wire needs.
+   */
+  const changeListeners = new Set();
+  const emitChanges = (changes, origin) => {
+    for (const fn of changeListeners) fn(changes, origin);
+  };
+
+  /** Announce a local change and tell whoever is drawing. */
+  const changed = (change) => {
+    emit();
+    emitChanges([change], LOCAL);
+  };
+
+  /**
+   * Take a sheet out, wherever the request came from.
+   *
+   * The last one stays: a board with no sheets has no canvas, and that has to
+   * hold on every client rather than only on the one that pressed Delete — two
+   * people removing the last two sheets at once would otherwise leave a board
+   * that cannot be drawn on. The neighbour on the right takes over, or the one
+   * on the left when there is no right.
+   */
+  const drop = (id) => {
+    if (entries.length < 2 || !find(id)) return false;
+
+    const index = at(id);
+    const wasActive = id === activeId;
+    entries.splice(index, 1);
+    if (wasActive) {
+      activeId = null;
+      show(entries[Math.min(index, entries.length - 1)].id);
+    }
+    return true;
+  };
 
   /**
    * An edit on the sheet on screen is a change to the board.
@@ -210,8 +307,29 @@ export function createSheets({ store, newId }) {
       return () => listeners.delete(fn);
     },
 
+    onChanges(fn) {
+      changeListeners.add(fn);
+      return () => changeListeners.delete(fn);
+    },
+
     get activeId() {
       return activeId;
+    },
+
+    /** Whether the board has arrived, and so whether its sheets can be changed. */
+    get settled() {
+      return settled;
+    },
+
+    /**
+     * The board has landed — from storage, or by being seeded because there
+     * was none. Called by `hydrate` for both, since what matters is that the
+     * sheets on screen are now the board's and not a placeholder.
+     */
+    ready() {
+      if (settled) return;
+      settled = true;
+      emit();
     },
 
     /** Name and id only: what a tab strip draws, without the documents. */
@@ -244,20 +362,22 @@ export function createSheets({ store, newId }) {
 
     /** A new empty sheet, which becomes the one on screen. */
     add({ name } = {}) {
+      if (!settled) return null;
       const sheet = { id: newId(), name: asName(name, nextName()), state: asState() };
       entries.push(sheet);
       show(sheet.id);
-      emit();
+      changed({ t: 'sheet-add', id: sheet.id, name: sheet.name, index: entries.length - 1, order: [], objects: [] });
       return sheet.id;
     },
 
     rename(id, name) {
+      if (!settled) return false;
       const entry = find(id);
       if (!entry) return false;
       const next = asName(name, entry.name);
       if (next === entry.name) return false;
       entry.name = next;
-      emit();
+      changed({ t: 'sheet-rename', id, name: next });
       return true;
     },
 
@@ -266,7 +386,7 @@ export function createSheets({ store, newId }) {
      * in order to work on the copy is the reason anybody duplicates it.
      */
     duplicate(id) {
-      const entry = find(id);
+      const entry = settled ? find(id) : null;
       if (!entry) return null;
 
       const copy = {
@@ -275,9 +395,19 @@ export function createSheets({ store, newId }) {
         state: asState(copyObjects(stateOf(entry))),
       };
 
-      entries.splice(at(id) + 1, 0, copy);
+      const index = at(id) + 1;
+      entries.splice(index, 0, copy);
+
+      // Read before `show`, which hands the copy's contents to the store and
+      // leaves the entry holding null — the active sheet's state is the
+      // store's, and that is the whole point of it being null.
+      //
+      // The objects travel with the change, ids and all: a copy announced as
+      // "make a sheet, and here is everything on it" would be the same board
+      // twice over, and the two clients would disagree about the ids.
+      const { order, objects } = copy.state;
       show(copy.id);
-      emit();
+      changed({ t: 'sheet-add', id: copy.id, name: copy.name, index, order, objects });
       return copy.id;
     },
 
@@ -288,16 +418,8 @@ export function createSheets({ store, newId }) {
      * one on the left when there is no right.
      */
     remove(id) {
-      if (entries.length < 2 || !find(id)) return false;
-
-      const index = at(id);
-      const wasActive = id === activeId;
-      entries.splice(index, 1);
-      if (wasActive) {
-        activeId = null;
-        show(entries[Math.min(index, entries.length - 1)].id);
-      }
-      emit();
+      if (!settled || !drop(id)) return false;
+      changed({ t: 'sheet-del', id });
       return true;
     },
 
@@ -314,6 +436,54 @@ export function createSheets({ store, newId }) {
      * else has just made, whose creation is on its way; guessing at a document
      * to put the ops in would invent a sheet that nothing else agrees exists.
      */
+    /**
+     * Somebody else added, renamed, duplicated or removed a sheet.
+     *
+     * Every one of these is written to survive arriving twice, or arriving for
+     * something that is not here: a channel can resend, and a client can be
+     * told about a sheet it has already been told about. Ignoring is always the
+     * answer — none of these changes is worth guessing at, and a wrong guess
+     * would put a sheet on one client that no other client agrees exists.
+     *
+     * A sheet arriving does *not* become the sheet on screen. Somebody else
+     * made it, on their screen; moving this person off what they were doing
+     * because a colleague pressed `+` is the kind of thing that makes a
+     * collaborative tool unusable. Their own `add` shows it, because that one
+     * goes through `add`.
+     */
+    applyChanges(changes) {
+      let touched = false;
+
+      for (const change of changes) {
+        if (!isSheetChange(change)) continue;
+
+        if (change.t === 'sheet-add') {
+          if (find(change.id)) continue;
+          const at = Math.min(Math.max(change.index, 0), entries.length);
+          entries.splice(at, 0, {
+            id: change.id,
+            name: asName(change.name, `Sheet ${at + 1}`),
+            state: asState({ order: change.order, objects: change.objects }),
+          });
+          touched = true;
+        } else if (change.t === 'sheet-rename') {
+          const entry = find(change.id);
+          const name = asName(change.name, entry?.name);
+          if (!entry || entry.name === name) continue;
+          entry.name = name;
+          touched = true;
+        } else if (change.t === 'sheet-del') {
+          touched = drop(change.id) || touched;
+        }
+      }
+
+      if (touched) {
+        emit();
+        emitChanges(changes, REMOTE);
+      }
+      return touched;
+    },
+
     applyRemote(sheetId, ops) {
       const entry = find(sheetId);
       if (!entry) return false;

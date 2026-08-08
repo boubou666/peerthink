@@ -222,8 +222,22 @@ describe('shell', () => {
       });
 
       test('the first look at a workspace marks nothing', async () => {
-        // Everything already there is the workspace, not news. This is the
-        // visit where the badge would be loudest and least useful.
+        /**
+         * Everything already there is the workspace, not news. This is the
+         * visit where the badge would be loudest and least useful.
+         *
+         * The reload before the clear is what makes that testable. `settle()`
+         * answers once the shell is up with nothing loading, and the account
+         * gate renders *inside* the shell — so a list can still be on its way
+         * when the previous test finishes, and the record it seeds can land
+         * after the clear below. Then this workspace is not a first look any
+         * more, both planted boards are news, and the run that catches it is
+         * whichever one was slow enough. Navigating first unloads the document
+         * that would have written it.
+         */
+        await page.goto(LIST_PATH);
+        await settle();
+
         await page.eval('localStorage.clear()');
         await plant('alpha', 'Alpha');
         await plant('beta', 'Beta');

@@ -1,4 +1,5 @@
 import { createIdGenerator } from '../core/ids.js';
+import { isSheetChange } from '../core/sheets.js';
 import { LOCAL, isOp } from '../core/store.js';
 
 /**
@@ -29,6 +30,16 @@ import { LOCAL, isOp } from '../core/store.js';
  */
 
 export const EVENT = 'ops';
+
+/**
+ * Changes to the set of sheets, as opposed to changes on one of them.
+ *
+ * A separate event because it is a separate vocabulary — `isOp` answers for
+ * what happens to objects, `isSheetChange` for what happens to sheets — and
+ * because a client that does not know this event simply ignores it, which is
+ * the right thing for one to do with a message about sheets it has not got.
+ */
+export const SHEET_EVENT = 'sheet';
 
 /**
  * Pointers travel as broadcast, not as presence updates.
@@ -176,6 +187,26 @@ export function createBoardSync({
     }
   }, sendEvery);
 
+  /**
+   * A sheet added, renamed or removed here, sent as it happens.
+   *
+   * Not queued or throttled, unlike ops: these come from a click rather than
+   * from a gesture, so there is never a burst of them to coalesce, and a sheet
+   * that exists on one screen and not another for 50ms is a sheet somebody
+   * else's ops can arrive for.
+   *
+   * Not held before hydration either, and it does not need to be: the set of
+   * sheets cannot change until the board has landed — `sheets` refuses, because
+   * a sheet added to the placeholder would be wiped by the load and announcing
+   * it would announce a sheet this client no longer had.
+   */
+  const unsubscribeSheets = sheets.onChanges((changes, origin) => {
+    if (stopped || origin !== LOCAL) return;
+    Promise.resolve(
+      channel.send({ type: 'broadcast', event: SHEET_EVENT, payload: { changes } }),
+    ).catch(() => {});
+  });
+
   const unsubscribeStore = store.onOps((ops, origin) => {
     if (stopped || origin !== LOCAL) return;
 
@@ -248,10 +279,18 @@ export function createBoardSync({
 
     const waiting = held.splice(0, held.length);
     if (stopped) return;
-    // Batch by batch, because each one names the sheet it was made on: a
-    // flattened list would have to guess, and guessing means one editor's work
-    // landing on another editor's canvas.
-    for (const batch of waiting) receive(batch.sheet, batch.ops);
+    /**
+     * Batch by batch, in the order they arrived. Each ops batch names the
+     * sheet it was made on — a flattened list would have to guess, and
+     * guessing means one editor's work landing on another editor's canvas —
+     * and the two kinds are replayed through one queue because their order is
+     * the point: a sheet being added and then drawn on is two messages, and
+     * the ops mean nothing until the sheet they name exists.
+     */
+    for (const batch of waiting) {
+      if (batch.changes) sheets.applyChanges(batch.changes);
+      else receive(batch.sheet, batch.ops);
+    }
   };
 
   if (heldUntil) {
@@ -284,6 +323,35 @@ export function createBoardSync({
     }
 
     receive(message?.payload?.sheet, ops);
+  });
+
+  /**
+   * Somebody added, renamed, duplicated or removed a sheet.
+   *
+   * Its own event rather than more `ops`, because it is a change to the board
+   * rather than to a canvas: the ops vocabulary addresses objects within one
+   * sheet, and stretching it to cover the set of sheets would leave `isOp`
+   * answering for two different kinds of thing.
+   *
+   * Held with the ops rather than beside them, in the one queue, so a sheet
+   * that was added and then drawn on is replayed in that order.
+   */
+  channel.on('broadcast', { event: SHEET_EVENT }, (message) => {
+    const changes = message?.payload?.changes;
+    if (stopped || !Array.isArray(changes)) return;
+
+    // The whole batch, for the reason the ops batch is dropped whole: a sender
+    // emitting one change this client cannot read is a sender whose other
+    // changes mean something it does not understand either.
+    if (!changes.every(isSheetChange)) return;
+    if (abandoned) return;
+
+    if (holding) {
+      held.push({ changes });
+      return;
+    }
+
+    sheets.applyChanges(changes);
   });
 
   channel.on('broadcast', { event: CURSOR_EVENT }, (message) => {
@@ -435,6 +503,7 @@ export function createBoardSync({
       abandoned = true;
       held.length = 0;
       unsubscribeStore();
+      unsubscribeSheets();
       await client.removeChannel(channel);
     },
   };
