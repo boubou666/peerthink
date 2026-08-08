@@ -74,6 +74,15 @@ export function BoardPage() {
    * as much theirs to keep as a finished rename.
    */
   const claimed = useRef(false);
+  /**
+   * Which board the page is on, readable from inside a promise.
+   *
+   * `boardId` in a closure is the board that was on screen when the closure was
+   * made, which is exactly what a result arriving late must not be compared
+   * against. The effect below keeps this current, so anything that resolves
+   * after a board change can tell that it did.
+   */
+  const showing = useRef(boardId);
 
   // The router reuses this component when only :boardId changes, so both the
   // committed title and the field have to follow the parameter. A controlled
@@ -82,6 +91,7 @@ export function BoardPage() {
   useEffect(() => {
     let live = true;
     claimed.current = false;
+    showing.current = boardId;
 
     // The router reuses this component when only :boardId changes, so anything
     // said about the last board has to go with it. A banner left up would be
@@ -165,6 +175,20 @@ export function BoardPage() {
   const exportPng = async () => {
     setExporting(true);
     setNotice(null);
+    /**
+     * Which board this export is of. A large board spends real time in
+     * `toBlob`, which is long enough to press the back arrow and open another
+     * one — and the report belongs to the board that was exported, so if that
+     * is no longer the board on screen there is nobody to give it to. The same
+     * rule the title read follows, and the same rule the effect above applies
+     * to a banner already up.
+     */
+    const of = boardId;
+    const said = (text) => {
+      if (showing.current !== of) return;
+      setNotice({ kind: 'export', text });
+    };
+
     try {
       // The bar renders before the canvas hands its instance back, so this is
       // reachable — briefly — by a fast click on a slow load. It is its own
@@ -172,16 +196,15 @@ export function BoardPage() {
       // for something that has not been attempted yet.
       const board = app.current;
       if (!board) {
-        setNotice({ kind: 'export', text: 'The board is still opening — try again in a moment.' });
+        said('The board is still opening — try again in a moment.');
         return;
       }
 
-      const said = (text) => setNotice({ kind: 'export', text });
       const result = await board.commands.exportPng();
       if (result === 'empty') said('Nothing to export — this board is empty.');
       else if (result !== 'ok') said('Could not export this board. It may be too large.');
     } catch {
-      setNotice({ kind: 'export', text: 'Could not export this board.' });
+      said('Could not export this board.');
     } finally {
       setExporting(false);
     }

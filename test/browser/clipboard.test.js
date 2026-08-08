@@ -97,8 +97,8 @@ describe('clipboard', () => {
       await copyKey();
       await pasteKey();
 
+      await page.waitFor('app.store.order.length === 2', { label: 'the pasted card to land' });
       const all = await objects();
-      assert.equal(all.length, 2, 'the copy arrived');
       const pasted = all.find((obj) => obj.id !== id);
       assert.equal(await page.eval(`app.store.get('${pasted.id}').text`), 'ferry');
       assert.deepEqual(await selected(), [pasted.id], 'and is what is now selected');
@@ -112,7 +112,7 @@ describe('clipboard', () => {
       await pasteKey();
       await pasteKey();
 
-      assert.equal((await objects()).length, 3);
+      await page.waitFor('app.store.order.length === 3', { label: 'both pasted cards to land' });
     });
   });
 
@@ -179,7 +179,7 @@ describe('clipboard', () => {
       await page.sleep(30);
 
       await pasteText(payload);
-      await page.sleep(60);
+      await page.waitFor('app.store.order.length === 1', { label: 'the pasted card to land' });
 
       const [pasted] = await objects();
       // The camera is at the origin at 1:1, so stage and world coordinates are
@@ -200,7 +200,7 @@ describe('clipboard', () => {
       await page.sleep(30);
 
       await pasteText(payload);
-      await page.sleep(60);
+      await page.waitFor('app.store.order.length === 1', { label: 'the pasted card to land' });
 
       const [pasted] = await objects();
       const centre = await page.eval(`(({ x, y }) => ({ x, y }))(app.viewport.center(
@@ -213,10 +213,22 @@ describe('clipboard', () => {
       );
     });
 
+    /**
+     * Followed by a paste that does land, rather than by a delay.
+     *
+     * Asserting that nothing happened has no condition of its own to wait for —
+     * so this waits for something that *would* have happened by then: a second
+     * paste, through the same handler, arriving after it. If the paragraph had
+     * added anything there would be two objects here rather than one.
+     */
     test('text that is not ours does nothing at all', async () => {
+      const ours = await payloadFor({ x: 0, y: 0 });
+
       await pasteText('Just a paragraph somebody copied from a web page.');
-      await page.sleep(60);
-      assert.deepEqual(await objects(), []);
+      await pasteText(ours);
+      await page.waitFor('app.store.order.length > 0', { label: 'the paste that should land' });
+
+      assert.equal((await objects()).length, 1, 'the paragraph put something on the board');
     });
 
     test('a paste into a card being edited is text, not objects', async () => {
@@ -232,10 +244,11 @@ describe('clipboard', () => {
           clipboardData: data, bubbles: true, cancelable: true,
         }));
       })()`);
-      await page.sleep(80);
+      await page.waitFor(`/pasted words/.test(${field}.innerText)`, {
+        label: 'the words to arrive in the field',
+      });
 
       assert.equal((await objects()).length, 1, 'nothing was added to the board');
-      assert.match(await page.eval(`${field}.innerText`), /pasted words/);
       // Guard against pasting our own payload as text and calling it a pass.
       assert.ok(!payload.includes('pasted words'));
     });

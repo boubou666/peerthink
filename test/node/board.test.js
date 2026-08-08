@@ -189,14 +189,21 @@ describe('Board', () => {
       assert.equal(store.get(card.id).x, 0, 'the original has not moved');
     });
 
+    /**
+     * By mutating what was handed in, not what came out. A payload read off a
+     * clipboard is somebody else's object — the caller may hold it, paste it
+     * twice, or paste it into two sheets — so the test has to depend on the
+     * clone rather than on `store.apply`, which clones its own patch and would
+     * pass this whether `paste` copied anything or not.
+     */
     test('nested data is copied, not shared', () => {
-      const [pasted] = board.paste(
-        [copied({ type: 'list', items: [{ id: 'i1', text: 'a' }] })],
-        { x: 0, y: 0 },
-      );
-      const items = [{ id: 'i1', text: 'changed' }];
-      store.apply([{ t: 'set', id: pasted.id, patch: { items } }]);
+      const source = copied({ type: 'list', items: [{ id: 'i1', text: 'a' }] });
+      const [pasted] = board.paste([source], { x: 0, y: 0 });
+
+      source.items[0].text = 'changed after pasting';
+
       assert.equal(pasted.items[0].text, 'a');
+      assert.equal(store.get(pasted.id).items[0].text, 'a');
     });
 
     /**

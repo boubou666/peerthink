@@ -67,6 +67,10 @@ export function createClipboard({
     // Whatever is being typed into keeps its own clipboard — the board title,
     // the hex field, a card being edited. See `isTyping`.
     if (isTyping(event.target)) return;
+    // A `ClipboardEvent` the browser dispatched always carries one; a bare one
+    // dispatched by anything else on the page does not, and reaching into it
+    // would throw inside a document-level listener. `onPaste` asks the same.
+    if (!event.clipboardData) return;
 
     const objects = board.copyable();
     if (!objects.length) return;
@@ -129,27 +133,40 @@ export function createClipboard({
     let offset = 0;
 
     for (const file of files) {
-      const image = await images.read(file);
+      /**
+       * A file that could not be placed is one refusal, not the end of the
+       * paste. `images.read` answers null for the failures it expects — bytes
+       * that are not a picture, a picture too large to bring under the budget —
+       * but it is a decoder and a canvas underneath, and either can raise
+       * something it did not anticipate. Letting that out would leave the
+       * remaining files unplaced, say nothing to the person who pasted them, and
+       * become an unhandled rejection, because nobody is waiting on this.
+       */
+      try {
+        const image = await images.read(file);
 
-      // The app can be torn down while a decode is in flight — a route change
-      // is faster than a photograph. Adding to the store now would repopulate a
-      // board that no longer exists and set an autosave nothing can stop, the
-      // same case `hydrate` guards.
-      if (stopped) return;
+        // The app can be torn down while a decode is in flight — a route change
+        // is faster than a photograph. Adding to the store now would repopulate
+        // a board that no longer exists and set an autosave nothing can stop,
+        // the same case `hydrate` guards.
+        if (stopped) return;
 
-      if (!image) {
+        if (!image) {
+          refused++;
+          continue;
+        }
+
+        const size = fitWithin(image, IMAGE_PLACED_MAX);
+        const obj = board.addCenteredOn(
+          'image',
+          { x: point.x + offset, y: point.y + offset },
+          { src: image.src, w: size.w, h: size.h },
+        );
+        ids.push(obj.id);
+        offset += CASCADE;
+      } catch {
         refused++;
-        continue;
       }
-
-      const size = fitWithin(image, IMAGE_PLACED_MAX);
-      const obj = board.addCenteredOn(
-        'image',
-        { x: point.x + offset, y: point.y + offset },
-        { src: image.src, w: size.w, h: size.h },
-      );
-      ids.push(obj.id);
-      offset += CASCADE;
     }
 
     // `add` selects each one as it goes, so the last would otherwise be the
