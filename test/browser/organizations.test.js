@@ -113,7 +113,25 @@ describe('organizations', { skip: origin ? false : 'no local supabase (npx supab
       return true;
     })()`);
     assert.ok(ok, `no select matched ${selector}`);
-    await target.sleep(60);
+    /**
+     * React having processed the event, which is what the fixed delay here
+     * used to stand in for. What the change then *triggers* is each caller's
+     * own business to wait on.
+     *
+     * "Or the select is gone" is not slack in the condition — it is the other
+     * half of it. Moving a board out of the scope on screen takes its card
+     * with it, so that `<select>` unmounts rather than settling on the value
+     * it was given; waiting only for the value would wait for an element that
+     * no longer exists. Either outcome is React having handled the change,
+     * which is the whole question being asked.
+     */
+    await target.waitFor(
+      `(() => {
+        const el = document.querySelector(${JSON.stringify(selector)});
+        return !el || el.value === ${JSON.stringify(value)};
+      })()`,
+      { label: `${selector} to take ${value} or go away` },
+    );
   };
 
   const settle = (target = page) => target.waitFor(SETTLED, { label: 'the board list to settle' });
@@ -190,7 +208,12 @@ describe('organizations', { skip: origin ? false : 'no local supabase (npx supab
     await page.waitFor(`Boolean(document.querySelector('[data-org-url]'))`, {
       label: 'the link to be minted',
     });
-    if (role !== 'editor') await choose(page, '[data-action="org-link-role"]', role);
+    if (role !== 'editor') {
+      await choose(page, '[data-action="org-link-role"]', role);
+      // Changing the role rewrites the invite row, and the link is read on the
+      // next line — so the round trip has to have landed, not merely started.
+      await settle();
+    }
 
     const url = await page.eval(`document.querySelector('[data-org-url]').value`);
     await click('[data-action="close-org"]');
@@ -352,16 +375,6 @@ describe('organizations', { skip: origin ? false : 'no local supabase (npx supab
   });
 
   /**
-   * Handing an organization over, through the dialog.
-   *
-   * The rules are covered in test/db/ and the round trip in test/node/. What
-   * only a browser answers is the bit that is easy to get wrong on this side:
-   * the screen the outgoing owner is left looking at. Every control in this
-   * dialog was theirs a moment ago and none of them is now, so a dialog that
-   * kept showing the link and the roster would be offering buttons the
-   * database will refuse.
-   */
-  /**
    * A second owner, through the dialog.
    *
    * The split is covered in test/db/ and the adapter in test/node/. What only
@@ -439,6 +452,16 @@ describe('organizations', { skip: origin ? false : 'no local supabase (npx supab
     }
   });
 
+  /**
+   * Handing an organization over, through the dialog.
+   *
+   * The rules are covered in test/db/ and the round trip in test/node/. What
+   * only a browser answers is the bit that is easy to get wrong on this side:
+   * the screen the outgoing owner is left looking at. Every control in this
+   * dialog was theirs a moment ago and none of them is now, so a dialog that
+   * kept showing the link and the roster would be offering buttons the
+   * database will refuse.
+   */
   test('handing it over leaves the outgoing owner looking at a member’s dialog', async () => {
     const { id, name } = await newOrg();
     const join = await inviteLink();

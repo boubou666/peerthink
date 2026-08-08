@@ -231,7 +231,41 @@ begin
     return new;
   end if;
 
-  if not (old.owner_id = (select auth.uid()) or public.org_role(old.org_id) = 'owner') then
+  /**
+   * The organization going away, rather than anybody moving anything.
+   *
+   * `boards.org_id` is `on delete set null`, so deleting an organization
+   * fires this trigger once per board in it — and by then `org_role()` cannot
+   * see the row it would need to authorise against, because the delete is
+   * part of the same command. So the test below has nothing true to work
+   * with: it would refuse every board except the ones the caller happens to
+   * own, and the two ways an organization is deleted both reach boards that
+   * somebody else made. The second way reaches them with no session at all —
+   * `owner_id` on `organizations` is `on delete cascade`, so an account going
+   * takes its organizations with it.
+   *
+   * Whoever deleted the organization was allowed to. The boards falling out
+   * of it are that decision being carried out, not a second one to authorise.
+   *
+   * Stated rather than left to three-valued logic. Without this the cascade
+   * survives only because `null or null` makes the `if` below not fire, which
+   * is not a rule anybody wrote down — and the obvious hardening of that test,
+   * a `coalesce` to false exactly like the one further down, would silently
+   * turn deleting an account into an error.
+   */
+  if new.org_id is null and not exists (
+    select 1 from public.organizations o where o.id = old.org_id
+  ) then
+    return new;
+  end if;
+
+  -- coalesce, so an identity that is not established is refused rather than
+  -- waved through. The cascade above is the one case where that would be the
+  -- wrong answer, and it has already returned.
+  if not coalesce(
+    old.owner_id = (select auth.uid()) or public.org_role(old.org_id) = 'owner',
+    false
+  ) then
     raise exception 'only the board''s owner or the organization''s owner can move a board';
   end if;
 

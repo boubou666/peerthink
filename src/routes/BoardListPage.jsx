@@ -84,6 +84,18 @@ export function BoardListPage() {
   const firstLook = useRef(false);
 
   /**
+   * The scope the list on screen belongs to.
+   *
+   * `loadMore` closes over `scope` from the render that made it, so comparing
+   * that against `scope` inside it compares a value with itself and can never
+   * notice a navigation. A ref is read at the moment the answer lands, which
+   * is the only time the question is worth asking — set in the effect below
+   * rather than during render, because effects run before the browser paints
+   * and so before any click that could start a page request.
+   */
+  const showing = useRef(scope);
+
+  /**
    * `append` is the difference between a fresh scope and another page of the
    * one already on screen. `reconcile` answers only about the ids it was
    * given, so a second page's answer has to be added to what is showing rather
@@ -173,6 +185,7 @@ export function BoardListPage() {
    */
   useEffect(() => {
     let live = true;
+    showing.current = scope;
     setBoards(null);
     setCursor(null);
 
@@ -216,8 +229,16 @@ export function BoardListPage() {
   const loadMore = async () => {
     if (!cursor) return;
     setBusy(true);
+
+    // Which list this page was asked for. Switching scope while it is in
+    // flight would otherwise append a team's boards under the personal ones
+    // and install that team's cursor — and the effect above cannot help,
+    // because its `live` flag only guards its own request.
+    const asked = scope;
     try {
-      const page = await repository.list({ scope, after: cursor });
+      const page = await repository.list({ scope: asked, after: cursor });
+      if (showing.current !== asked) return;
+
       setBoards((shown) => [...(shown ?? []), ...page.boards]);
       setCursor(page.cursor);
       reconcile(page.boards, { append: true });
@@ -225,7 +246,9 @@ export function BoardListPage() {
     } catch {
       // The boards already on screen are still good; only the page that did
       // not arrive is missing, and the button is still there to try again.
-      setError(COULD_NOT_LIST);
+      // Silent if the scope has moved on: it is a failure to extend a list
+      // nobody is looking at any more.
+      if (showing.current === asked) setError(COULD_NOT_LIST);
     } finally {
       setBusy(false);
     }
@@ -612,7 +635,10 @@ export function BoardListPage() {
         <OrganizationDialog
           org={current}
           onClose={() => setShowOrg(false)}
-          onChanged={refresh}
+          // Through `reload`, not `refresh`: every read this page makes has to
+          // raise `busy`, or the list claims to be settled while the answer to
+          // a rename, a removal or an appointment is still in flight.
+          onChanged={reload}
           // Leaving or deleting the organization you are looking at means you
           // can no longer look at it; the personal list is the only place left
           // to be.

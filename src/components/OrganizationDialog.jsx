@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
+import { auth } from '../shell/auth.js';
 import { organizations } from '../shell/organizations.js';
 import { orgJoinUrl } from '../shell/sharing.js';
 
@@ -220,6 +221,12 @@ export function OrganizationDialog({ org, onClose, onChanged, onGone }) {
    */
   const isPrimary = org.primary === true;
 
+  /**
+   * Who is reading this. Only ever compared against the ids in `people`, to
+   * keep the controls that act on somebody else off the reader's own row.
+   */
+  const me = auth.current()?.id ?? null;
+
   return (
     <div className="share-backdrop" data-org-dialog onPointerDown={(e) => {
       if (e.target === e.currentTarget) onClose();
@@ -325,7 +332,11 @@ export function OrganizationDialog({ org, onClose, onChanged, onGone }) {
                       disabled={busy}
                       onClick={() => setCoOwner(null)}
                     >
-                      Step down
+                      {/* Named for what the person pressing it does. Only the
+                          primary owner sees this, and the row belongs to
+                          somebody else — "Step down" would describe an action
+                          its reader is not taking. */}
+                      Remove as co-owner
                     </button>
                   )}
                   {isPrimary && person.role !== 'owner' && person.role !== 'co-owner' && person.email && (
@@ -350,7 +361,14 @@ export function OrganizationDialog({ org, onClose, onChanged, onGone }) {
                       Make owner
                     </button>
                   )}
-                  {person.role !== 'owner' && (
+                  {/* Not on your own row. A second owner is listed as
+                      'co-owner' and would otherwise be offered `Remove`
+                      against themselves — which works, and takes them out of
+                      the organization entirely under a label that reads like
+                      it is about somebody else. Leaving is below, and says so.
+                      The primary owner still sees it on their row, because
+                      taking the second owner off is a thing they may do. */}
+                  {person.role !== 'owner' && person.id !== me && (
                     <button
                       type="button"
                       className="link"
@@ -378,10 +396,25 @@ export function OrganizationDialog({ org, onClose, onChanged, onGone }) {
               /* Said rather than left blank: the controls that are missing were
                  there for the person who appointed them, and their absence is
                  otherwise indistinguishable from a half-loaded dialog. */
-              <p className="empty org-actions" data-second-owner>
-                You are a second owner here. Renaming, deleting and handing this
-                organization on stay with {people.find((p) => p.role === 'owner')?.email ?? 'its owner'}.
-              </p>
+              <div className="org-actions" data-second-owner>
+                <p className="empty">
+                  You are a second owner here. Renaming, deleting and handing this
+                  organization on stay with {people.find((p) => p.role === 'owner')?.email ?? 'its owner'}.
+                </p>
+                {/* The one thing a second owner can do about their own place
+                    here. Without it they have no labelled way out at all: the
+                    member view's Leave button renders only when `owned` is
+                    false, and it never is for them. */}
+                <button
+                  type="button"
+                  className="link"
+                  data-action="leave-org"
+                  disabled={busy}
+                  onClick={leave}
+                >
+                  Leave this organization
+                </button>
+              </div>
             )}
           </>
         )}

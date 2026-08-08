@@ -211,7 +211,11 @@ describe('supabase repository', { skip: stack ? false : 'no local supabase (npx 
         const { seen } = await walk(alice.repository, { limit: 2 });
         const mine = seen.filter((b) => ids.includes(b.id)).map((b) => b.id);
 
-        assert.equal(new Set(mine).size, 6, `expected all six exactly once, got ${mine.length}`);
+        // Both halves: the Set size alone proves every id turned up, and would
+        // stay 6 if the walk served one of them on two pages — which is one of
+        // the two failures this test exists to catch.
+        assert.equal(mine.length, 6, `expected all six exactly once, got ${mine.length}`);
+        assert.equal(new Set(mine).size, 6, 'a board was served twice');
       });
 
       test('the last page says so by answering no cursor', async () => {

@@ -1306,6 +1306,80 @@ describe('row level security', { skip: URL ? false : 'DATABASE_URL is not set' }
       });
     });
 
+    /**
+     * `boards.org_id` is `on delete set null`, and that update fires
+     * `freeze_board_org` on every board it detaches — a trigger whose whole
+     * job is to refuse moves. So the cascade has to get past a rule written
+     * about people moving boards on purpose, for boards it does not own and,
+     * in the second case, with no session at all.
+     *
+     * Neither path is exercised by the deletion tests above: those detach a
+     * board the caller owns or one in an organization they still own, and both
+     * satisfy the trigger's first disjunct without the interesting question
+     * being asked.
+     */
+    describe('detaching boards is not a move', () => {
+      const withBoardsFrom = async (org = 'acme') => {
+        await givenAliceHasAnOrg(org);
+        await joins(org, bob, 'editor');
+        await client.query(
+          'insert into public.boards (id, owner_id, doc, org_id) values ($1, $2, $3, $4)',
+          ['bobs', bob, board(), org],
+        );
+        return org;
+      };
+
+      test('deleting the organization detaches a board somebody else owns', async () => {
+        const org = await withBoardsFrom();
+
+        await as(alice, 'delete from public.organizations where id = $1', [org]);
+
+        const { rows } = await client.query('select org_id from public.boards where id = $1', ['bobs']);
+        assert.equal(rows.length, 1, 'the board went with the organization');
+        assert.equal(rows[0].org_id, null);
+      });
+
+      /**
+       * The owner's account going takes the organization with it — `owner_id`
+       * is `on delete cascade` — and that reaches the boards through a second
+       * cascade, with `auth.uid()` null because nobody is signed in. The
+       * trigger's test is `owner_id = auth.uid() or org_role(...) = 'owner'`,
+       * which under a null identity is `null or null`; plpgsql treats a null
+       * `if not (...)` as false and lets it through, which is the answer we
+       * want. Asserted because it is reached by three-valued logic rather than
+       * by anything written down, and a later `coalesce` around that test —
+       * exactly the fix the second half of this trigger needed — would turn a
+       * working account deletion into one that raises.
+       */
+      test('and so does the owner’s account going, with nobody signed in', async () => {
+        // The address is per-run and the user is cleaned up in a `finally`,
+        // because the whole point of this test is a delete that might not
+        // happen — and a fixed address left behind by a failure makes every
+        // later run fail on the unique index instead of on the thing under
+        // test, which is a much worse thing to read.
+        const gone = randomUUID();
+        try {
+          await client.query('insert into auth.users (id, email) values ($1, $2)',
+            [gone, `gone-${gone}@example.test`]);
+          await client.query('insert into public.organizations (id, owner_id, name) values ($1, $2, $3)',
+            ['doomed', gone, 'Doomed']);
+          await client.query(
+            'insert into public.boards (id, owner_id, doc, org_id) values ($1, $2, $3, $4)',
+            ['orphan', bob, board(), 'doomed'],
+          );
+
+          await client.query('delete from auth.users where id = $1', [gone]);
+
+          const { rows } = await client.query('select org_id from public.boards where id = $1', ['orphan']);
+          assert.equal(rows.length, 1, 'somebody else’s board went with the deleted account');
+          assert.equal(rows[0].org_id, null);
+        } finally {
+          await client.query('delete from public.boards where id = $1', ['orphan']);
+          await client.query('delete from auth.users where id = $1', [gone]);
+        }
+      });
+    });
+
     describe('invites', () => {
       const invite = async (org, role = 'editor') => {
         const { rows } = await client.query(

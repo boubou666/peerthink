@@ -60,9 +60,18 @@ describe('organizations', { skip: stack ? false : 'no local supabase (npx supaba
   const board = () => ({ v: 1, order: [], objects: [] });
 
   let n = 0;
+  /** Every board these tests plant, so `after` can take them away again. */
+  const planted = [];
+
   /** A short id in the shape the constraint wants, unique across parallel runs. */
-  const newId = (prefix) =>
-    `${prefix}${process.pid.toString(36)}${(n++).toString(36)}${Date.now().toString(36)}`.slice(0, 60);
+  const newId = (prefix) => {
+    const id = `${prefix}${process.pid.toString(36)}${(n++).toString(36)}${Date.now().toString(36)}`
+      .slice(0, 60);
+    // Recorded here rather than at each save, because every board id in this
+    // file comes through here and several of the saves are meant to fail.
+    if (prefix === 'b') planted.push(id);
+    return id;
+  };
 
   const anOrg = async (name = 'Acme', by = alice) => {
     const id = newId('o');
@@ -78,9 +87,20 @@ describe('organizations', { skip: stack ? false : 'no local supabase (npx supaba
   });
 
   after(async () => {
-    // Deleting the organization takes its members and its link with it. The
-    // boards inside are handed back to whoever made them rather than deleted,
-    // so they are cleared separately.
+    /**
+     * Boards first, while alice may still hold what owning the organization
+     * buys — deleting the organization hands each board back to whoever made
+     * it rather than deleting it, so they genuinely do have to go separately.
+     *
+     * Both suite accounts are asked for every id: they own all but one of the
+     * boards here between them, and `remove` on somebody else's board is a
+     * delete the policies match nothing for, which is a no-op rather than an
+     * error.
+     */
+    for (const id of planted) {
+      await alice.repository.remove(id);
+      await bob.repository.remove(id);
+    }
     for (const id of made) await alice.organizations.remove(id);
   });
 
