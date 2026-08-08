@@ -297,11 +297,25 @@ describe('format bar', () => {
     await select(id);
     await openPicker('fill');
 
-    await page.eval(`document.querySelector('${panel('fill')} [data-colour-hex]').focus()`);
+    // Selected, so the keys replace the colour that is there rather than
+    // landing wherever focus happens to put the caret.
+    await page.eval(`(() => {
+      const el = document.querySelector('${panel('fill')} [data-colour-hex]');
+      el.focus();
+      el.select();
+    })()`);
     for (const [key, code, vk] of [['c', 'KeyC', 67], ['e', 'KeyE', 69], ['0', 'Digit0', 48]]) {
       await page.key(key, { code, vk, text: key });
     }
     await page.key('Backspace', { code: 'Backspace', vk: 8 });
+
+    // Wait for the field to hold what was typed before asking what the board
+    // did with it. Without this the test can pass for the wrong reason: keys
+    // that never reached the picker also never reach the canvas.
+    await page.waitFor(
+      `document.querySelector('${panel('fill')} [data-colour-hex]').value === 'ce'`,
+      { label: 'the keys to land in the hex field' },
+    );
 
     assert.deepEqual(await page.eval('app.store.order'), [id], 'the board grew while a colour was typed');
   });
