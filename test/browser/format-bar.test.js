@@ -284,10 +284,10 @@ describe('format bar', () => {
   });
 
   /**
-   * The canvas listens for keys on `window` and does not ask where they came
-   * from: `c` adds a card, `e` an envelope, and Backspace deletes the
-   * selection. Both letters are hex digits, and `#ccee00` is a colour somebody
-   * will type.
+   * The canvas listens for keys on `window`, where `c` adds a card, `e` an
+   * envelope and Backspace deletes the selection. Both letters are hex digits
+   * and `#ccee00` is a colour somebody will type, so the panel has to be a
+   * place where they are only ever digits.
    *
    * Real key events, not `insertText`: the whole point is what the keystrokes
    * do on their way past, and inserted text produces none of them.

@@ -1,5 +1,7 @@
 import { bbox, rectFromPoints } from '../core/geometry.js';
 
+import { isTyping } from './typing.js';
+
 export const SNAP_PX = 6;       // snap radius, screen px
 export const DRAG_SLOP = 3;     // screen px before a click becomes a drag
 export const MIN_SIZE = 48;     // world units
@@ -418,12 +420,17 @@ export function createInput({ document, window, elements, store, selection, view
   // ---------- keyboard ----------
 
   function onKeyDown(e) {
+    // A key typed into a field is that field's — see `isTyping`. Before the
+    // space branch rather than after it, because swallowing a space is the one
+    // that stops a board being named "My board".
+    if (isTyping(e.target)) return;
+
     if (e.code === 'Space' && !spaceDown && !editingId) {
       spaceDown = true;
       stage.classList.add('space');
       e.preventDefault();
     }
-    if (editingId || e.target.isContentEditable) return;
+    if (editingId) return;
 
     const mod = e.metaKey || e.ctrlKey;
     const key = e.key.toLowerCase();

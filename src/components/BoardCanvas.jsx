@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { createApp } from '../app.js';
+import { isTyping } from '../platform/typing.js';
 import { repository } from '../shell/storage.js';
 import { createSync } from '../shell/sync.js';
 import { FormatBar } from './FormatBar.jsx';
@@ -65,10 +66,12 @@ export function BoardCanvas({ boardId, onReady, onSaveStatus }) {
      * there.
      *
      * `!` and `)` are those keys on a US layout; the `code` check covers the
-     * layouts where they are not. A field being edited keeps its own keys.
+     * layouts where they are not. Whatever is being typed into keeps its own
+     * keys — `!` is a character before it is a shortcut, and a board title is
+     * allowed to end in one.
      */
     const onKeyDown = (event) => {
-      if (event.target.isContentEditable) return;
+      if (isTyping(event.target)) return;
       if (event.key === '!' || (event.shiftKey && event.code === 'Digit1')) app.commands.fit();
       else if (event.key === ')' || (event.shiftKey && event.code === 'Digit0')) app.commands.resetZoom();
     };

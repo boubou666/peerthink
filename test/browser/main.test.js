@@ -275,15 +275,24 @@ describe('app shell', () => {
       assert.equal(await page.eval('app.viewport.scale'), 1);
     });
 
+    /**
+     * Both kinds of field: an object being edited on the board, and the app's
+     * own chrome. `!` and `)` are characters before they are shortcuts, and a
+     * board is allowed to be called "Q3!".
+     */
     test('they are inert inside a text field', async () => {
-      await page.eval('app.viewport.setScaleAt(0, 0, 3)');
-      await page.eval(`(() => {
-        const field = document.querySelector('#layer [contenteditable]');
-        field.focus();
-        field.dispatchEvent(new KeyboardEvent('keydown', { key: ')', code: 'Digit0', shiftKey: true, bubbles: true }));
-        field.blur();
-      })()`);
-      assert.equal(await page.eval('app.viewport.scale'), 3);
+      const fields = ['#layer [contenteditable]', '.board-bar-title'];
+
+      for (const selector of fields) {
+        await page.eval('app.viewport.setScaleAt(0, 0, 3)');
+        await page.eval(`(() => {
+          const field = document.querySelector(${JSON.stringify(selector)});
+          field.focus();
+          field.dispatchEvent(new KeyboardEvent('keydown', { key: ')', code: 'Digit0', shiftKey: true, bubbles: true }));
+          field.blur();
+        })()`);
+        assert.equal(await page.eval('app.viewport.scale'), 3, `the zoom reset from inside ${selector}`);
+      }
     });
   });
 
