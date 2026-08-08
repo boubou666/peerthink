@@ -1,5 +1,5 @@
 import { createIdGenerator } from '../core/ids.js';
-import { LOCAL, REMOTE, isOp } from '../core/store.js';
+import { LOCAL, isOp } from '../core/store.js';
 
 /**
  * Live collaboration: the op log, on a wire.
@@ -67,7 +67,11 @@ export function electWriter(members) {
 export function createBoardSync({
   client,
   boardId,
+  // Where local ops come from — always the sheet on screen — and where remote
+  // ones go, which is whichever sheet they were made on. Two objects because
+  // they are two questions: `store` is the canvas, `sheets` is the board.
   store,
+  sheets,
   scheduler,
   onStatus,
   onWriter,
@@ -138,9 +142,13 @@ export function createBoardSync({
   const flush = scheduler.throttle(() => {
     const ops = queue.splice(0, queue.length);
     if (!ops.length || stopped) return;
+    // The sheet is read at send time rather than remembered per op. Local ops
+    // can only be made on the canvas that is on screen, and switching sheets
+    // is not something you can do in the middle of the gesture that made them.
+    const payload = { ops, sheet: sheets.activeId };
     // A send that fails is a dropped frame of somebody else's view, not a
     // reason to take this session down: the snapshot is still being written.
-    Promise.resolve(channel.send({ type: 'broadcast', event: EVENT, payload: { ops } })).catch(
+    Promise.resolve(channel.send({ type: 'broadcast', event: EVENT, payload })).catch(
       () => {},
     );
   }, sendEvery);
@@ -158,6 +166,23 @@ export function createBoardSync({
   const channel = client.channel(topic, {
     config: { private: true, broadcast: { self: false } },
   });
+
+  /**
+   * Someone else's ops, on the sheet they were made on.
+   *
+   * `sheet` is absent from a client that predates sheets, and from one whose
+   * board has only ever had the one. Both mean the same thing — the canvas
+   * they are looking at — and the active sheet is this client's best and only
+   * reading of that. A sheet this client has not got is dropped by `sheets`
+   * rather than guessed at.
+   */
+  const receive = (sheet, ops) => {
+    // record: false — someone else's edit does not belong in this user's undo
+    // stack, and REMOTE is what stops it being sent straight back out. Both
+    // are `sheets`' to apply, since it is the one that knows which document
+    // the ops are for.
+    sheets.applyRemote(sheet ?? sheets.activeId, ops);
+  };
 
   /**
    * Ops that arrived before this client had a document to apply them to.
@@ -188,7 +213,11 @@ export function createBoardSync({
   const release = () => {
     holding = false;
     const waiting = held.splice(0, held.length);
-    if (!stopped && waiting.length) store.apply(waiting, false, REMOTE);
+    if (stopped) return;
+    // Batch by batch, because each one names the sheet it was made on: a
+    // flattened list would have to guess, and guessing means one editor's work
+    // landing on another editor's canvas.
+    for (const batch of waiting) receive(batch.sheet, batch.ops);
   };
 
   if (heldUntil) {
@@ -216,13 +245,11 @@ export function createBoardSync({
     // Checked after validation, so nothing is held that would have been
     // dropped on arrival — a replay is not the place to discover that.
     if (holding) {
-      held.push(...ops);
+      held.push({ sheet: message?.payload?.sheet, ops });
       return;
     }
 
-    // record: false — someone else's edit does not belong in this user's undo
-    // stack, and REMOTE is what stops it being sent straight back out.
-    store.apply(ops, false, REMOTE);
+    receive(message?.payload?.sheet, ops);
   });
 
   channel.on('broadcast', { event: CURSOR_EVENT }, (message) => {

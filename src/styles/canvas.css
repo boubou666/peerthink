@@ -637,3 +637,129 @@ body:has(.board-page) { overflow: hidden; }
 }
 .cp-dropper:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .cp-dropper svg { width: 15px; height: 15px; }
+
+/* ---------------------------------------------------------------------------
+ * The sheet tabs
+ *
+ * Along the bottom, where every tool that has sheets puts them — the one
+ * placement nobody has to be taught. Screen space over the stage, like the
+ * toolbar and the format bar, because chrome that scales with the camera is
+ * unreadable at 30% and absurd at 300%.
+ *
+ * Bottom *left*, so the strip grows towards the middle and away from nothing.
+ * The keyboard hint keeps the centre; the strip stops before it and scrolls
+ * rather than growing under it.
+ * ------------------------------------------------------------------------ */
+
+.sheet-tabs {
+  position: fixed;
+  bottom: 12px;
+  left: 14px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: min(46vw, 620px);
+  overflow-x: auto;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  box-shadow: var(--shadow);
+  /* A strip that has to scroll should not also show a scrollbar over a board:
+     it is four pixels of chrome that appears and disappears as sheets are
+     added. The overflow still scrolls by wheel, trackpad and keyboard. */
+  scrollbar-width: none;
+}
+.sheet-tabs::-webkit-scrollbar { display: none; }
+
+/* Relative, because the menu hangs off it. */
+.sheet-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 7px;
+}
+.sheet-tab[data-current] { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+.sheet-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 13px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.sheet-tab[data-current] .sheet-name { color: var(--ink); font-weight: 550; }
+.sheet-tab:not([data-current]):hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+
+.sheet-more {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 6px 6px 2px;
+  cursor: pointer;
+}
+.sheet-more:hover { color: var(--ink); }
+
+.sheet-add {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+.sheet-add:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+
+/*
+ * Opens upwards: there is nothing below a strip that sits on the floor.
+ *
+ * Fixed, and placed from the button's box by the component. The strip scrolls,
+ * and a scroll container clips what its children draw outside it — which for a
+ * menu that opens upwards is all of it.
+ */
+.sheet-menu {
+  position: fixed;
+  z-index: 5;
+  min-width: 148px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.sheet-menu button {
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: 7px;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+.sheet-menu button:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+/* Deleting reads red, here as everywhere else. */
+.sheet-menu button.danger { color: #d83a52; }
+.sheet-menu button.danger:hover { background: color-mix(in srgb, #d83a52 12%, transparent); }
+
+/* The hint keeps the middle; on a narrow window it is already hidden. */
+@media (max-width: 700px) { .sheet-tabs { max-width: calc(100vw - 28px); } }

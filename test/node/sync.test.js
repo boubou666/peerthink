@@ -2,6 +2,8 @@ import { test, describe, before, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { REMOTE, Store } from '../../src/core/store.js';
+import { createSheets } from '../../src/core/sheets.js';
+import { createIdGenerator } from '../../src/core/ids.js';
 import { createManualScheduler } from '../../src/core/scheduler.js';
 import { createSupabaseRepository } from '../../src/platform/supabase-repository.js';
 import { createBoardSync, electWriter, topicFor } from '../../src/platform/sync.js';
@@ -47,12 +49,18 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
    */
   const join = async (user, boardId, extra = {}) => {
     const store = new Store();
+    // The real thing rather than a stand-in: routing an op to the sheet it was
+    // made on is what this layer now does, and a fake that always answered
+    // "the one on screen" would agree with a broken sync.
+    const sheets = createSheets({ store, newId: createIdGenerator() });
+    sheets.load(null);
     const scheduler = createManualScheduler();
     const taps = new Set();
     const sync = createBoardSync({
       client: user.client,
       boardId,
       store,
+      sheets,
       scheduler,
       ...extra,
       onCursor: (cursor) => {
@@ -63,6 +71,7 @@ describe('board sync', { skip: stack ? false : 'no local supabase (npx supabase 
     const status = await sync.ready;
     const participant = {
       store,
+      sheets,
       scheduler,
       sync,
       status,

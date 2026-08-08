@@ -12,6 +12,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Store } from '../../src/core/store.js';
+import { createSheets } from '../../src/core/sheets.js';
+import { createIdGenerator } from '../../src/core/ids.js';
 import { createManualScheduler } from '../../src/core/scheduler.js';
 import { EVENT, createBoardSync } from '../../src/platform/sync.js';
 
@@ -28,28 +30,37 @@ const build = ({ heldUntil } = {}) => {
       callback('SUBSCRIBED');
       return channel;
     },
-    send: async () => {},
+    send: async (message) => { sent.push(message); },
     presenceState: () => ({}),
     track: async () => {},
   };
 
+  const sent = [];
   const store = new Store();
+  // Real sheets, so what is asserted about held ops is asserted about the
+  // routing they now go through rather than around it.
+  const sheets = createSheets({ store, newId: createIdGenerator() });
+  sheets.load(null);
+
   const sync = createBoardSync({
     client: { channel: () => channel, removeChannel: async () => {} },
     boardId: 'board-1',
     store,
+    sheets,
     scheduler: createManualScheduler(),
     clientId: 'me',
     heldUntil,
   });
 
-  const arrive = (ops) => {
+  /** `sheet` left out is what a client with one canvas sends, and what a
+      client from before sheets sent. */
+  const arrive = (ops, sheet) => {
     for (const l of listeners) {
-      if (l.type === 'broadcast' && l.filter?.event === EVENT) l.callback({ payload: { ops } });
+      if (l.type === 'broadcast' && l.filter?.event === EVENT) l.callback({ payload: { ops, ...(sheet ? { sheet } : {}) } });
     }
   };
 
-  return { store, sync, arrive };
+  return { store, sheets, sync, arrive, sent };
 };
 
 /** Let the promise callbacks that release the buffer actually run. */
@@ -163,5 +174,71 @@ describe('ops that arrive before the snapshot', () => {
     await settle();
 
     assert.equal(store.canUndo, false, "someone else's edit entered this user's undo stack");
+  });
+});
+
+/**
+ * Which sheet an op belongs to.
+ *
+ * A board has several canvases now, and two people on it need not be looking
+ * at the same one. An op that arrived without saying where it went would be
+ * applied to whatever the receiver happens to have open — one editor's work
+ * landing on another editor's canvas, which is the failure this addressing
+ * exists to prevent.
+ */
+describe('ops and the sheet they were made on', () => {
+  test('going out, an op names the sheet it was made on', async () => {
+    const { store, sheets, sent } = build();
+    const second = sheets.add();
+
+    store.apply([{ t: 'add', obj: card('c1') }]);
+    await settle();
+
+    const [message] = sent.filter((m) => m.event === EVENT);
+    assert.equal(message.payload.sheet, second, 'the op went out for the wrong sheet');
+    assert.equal(message.payload.ops.length, 1);
+  });
+
+  test('arriving, it lands on that sheet rather than the one on screen', async () => {
+    const { store, sheets, arrive } = build();
+    const [first] = sheets.list();
+    sheets.add();
+
+    arrive([{ t: 'add', obj: card('hers') }], first.id);
+    await settle();
+    assert.equal(store.has('hers'), false, "somebody else's edit landed on the sheet on screen");
+
+    sheets.select(first.id);
+    assert.equal(store.has('hers'), true, 'the edit did not reach the sheet it was made on');
+  });
+
+  /**
+   * A client whose board has one sheet, or one from before there were any,
+   * sends no sheet at all. Both mean the canvas they are looking at.
+   */
+  test('an op that names no sheet lands on the one on screen', async () => {
+    const { store, arrive } = build();
+    arrive([{ t: 'add', obj: card('c1') }]);
+    await settle();
+    assert.equal(store.has('c1'), true);
+  });
+
+  test('a held op keeps the sheet it was for', async () => {
+    let landed;
+    const { store, sheets, arrive } = build({
+      heldUntil: new Promise((resolve) => { landed = resolve; }),
+    });
+
+    const [first] = sheets.list();
+    const second = sheets.add();
+    arrive([{ t: 'add', obj: card('hers') }], first.id);
+
+    landed();
+    await settle();
+
+    assert.equal(store.has('hers'), false, 'a replayed op forgot which sheet it was for');
+    assert.equal(sheets.activeId, second);
+    sheets.select(first.id);
+    assert.equal(store.has('hers'), true);
   });
 });
