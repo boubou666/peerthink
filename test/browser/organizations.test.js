@@ -346,6 +346,58 @@ describe('organizations', { skip: origin ? false : 'no local supabase (npx supab
   });
 
   /**
+   * A viewer can read a team's boards and add none to it.
+   *
+   * Both buttons that would put a board there follow the same rule, because
+   * they land the same row through the same policy: the database refuses a
+   * board written into a team you only view, and a control offered where the
+   * write will be refused is a control that lies. Duplicate is the newer of
+   * the two; New board has had this rule from the start and no test until now.
+   */
+  test('a viewer is offered no way to add a board to the organization', async () => {
+    const { id } = await newOrg();
+    await newBoard();
+    await page.goto(`/#/o/${id}`, { ready: SETTLED });
+
+    const join = await inviteLink('viewer');
+
+    const guest = await openApp({ path: LIST_PATH, origin, readyWhen: SETTLED, isolated: true });
+    try {
+      await guest.goto(join, { ready: SETTLED });
+      await guest.waitFor(`location.hash === '#/o/${id}'`, {
+        label: 'the viewer to land on the organization',
+        context: 'document.body.innerText',
+      });
+      await settle(guest);
+
+      // They can see it, which is what makes the rest of this meaningful.
+      assert.deepEqual(await titles(guest), ['Untitled board']);
+
+      assert.equal(
+        await guest.eval(`document.querySelector('[data-action="new-board"]').disabled`),
+        true,
+        'a viewer was offered a way to make a board in a team they only view',
+      );
+      assert.equal(
+        await guest.eval(`document.querySelector('[data-action="duplicate"]').disabled`),
+        true,
+        'a viewer was offered a duplicate the database would refuse',
+      );
+
+      // And their own space still takes one, which is what the rule is about:
+      // the scope, not the person.
+      await guest.goto(LIST_PATH, { ready: SETTLED });
+      assert.equal(
+        await guest.eval(`document.querySelector('[data-action="new-board"]').disabled`),
+        false,
+        'a viewer of one team could not make a board of their own',
+      );
+    } finally {
+      await guest.close();
+    }
+  });
+
+  /**
    * Deleting is offered behind a confirm that promises the boards survive, so
    * this is the test that keeps that promise honest.
    */

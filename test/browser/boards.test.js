@@ -700,6 +700,51 @@ describe('boards on supabase', { skip: origin ? false : 'no local supabase (npx 
       }
     });
 
+    /**
+     * Making your own copy is the one thing you can do with somebody else's
+     * board without touching theirs — and the copy is *yours*: a new board
+     * owned by whoever pressed Duplicate, with no members.
+     *
+     * Carrying the original's members across would hand people access to a
+     * board they have never heard of, silently, because somebody duplicated
+     * something. This is the test that says so.
+     */
+    test('a copy of a shared board belongs to whoever made it, and to nobody else', async () => {
+      await newBoard();
+      await page.eval(`window.app.board.add('card', { x: 20, y: 20, text: 'shared work' })`);
+      await page.waitFor('Boolean(window.app.autosave)');
+      await page.eval('window.app.autosave.flush()');
+
+      const url = await shareUrl();
+      const other = await joinAsSomeoneElse(url);
+      try {
+        await other.waitFor(ON_CANVAS);
+        await other.goto(LIST_PATH, { ready: SETTLED });
+
+        // They duplicate the board that was shared with them.
+        await other.eval(`document.querySelector('[data-action="duplicate"]').click()`);
+        await other.waitFor(`document.querySelectorAll('.board-card').length === 2`, {
+          label: 'the copy to appear in their list',
+        });
+
+        const titles = await other.eval(
+          `[...document.querySelectorAll('.board-card-title')].map(el => el.firstChild.textContent).sort()`,
+        );
+        assert.deepEqual(titles, ['Untitled board', 'Untitled board (copy)']);
+
+        // The owner's list is untouched: the copy is not theirs, and nothing
+        // about their board changed.
+        await page.goto(LIST_PATH, { ready: SETTLED });
+        assert.deepEqual(
+          await page.eval(`[...document.querySelectorAll('.board-card-title')].map(el => el.firstChild.textContent)`),
+          ['Untitled board'],
+          "a copy somebody else made turned up in the original owner's list",
+        );
+      } finally {
+        await other.close();
+      }
+    });
+
     test('the owner sees who joined, and can put them off again', async () => {
       await newBoard();
       const url = await shareUrl();
