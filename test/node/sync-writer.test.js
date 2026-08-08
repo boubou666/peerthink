@@ -9,6 +9,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Store } from '../../src/core/store.js';
+import { createSheets } from '../../src/core/sheets.js';
+import { createIdGenerator } from '../../src/core/ids.js';
 import { createManualScheduler } from '../../src/core/scheduler.js';
 import { createBoardSync } from '../../src/platform/sync.js';
 
@@ -33,10 +35,18 @@ const build = ({ presence = {} } = {}) => {
   };
 
   const writerCalls = [];
+  // Neither cursors nor the writer election touches sheets, but the sync is
+  // built with the whole document either way — a stand-in here would be a
+  // second answer to what a board is.
+  const store = new Store();
+  const sheets = createSheets({ store, newId: createIdGenerator() });
+  sheets.load(null);
+
   const sync = createBoardSync({
     client: { channel: () => channel, removeChannel: async () => {} },
     boardId: 'board-1',
-    store: new Store(),
+    store,
+    sheets,
     scheduler: createManualScheduler(),
     clientId: 'me',
     onWriter: (isWriter) => writerCalls.push(isWriter),

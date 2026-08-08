@@ -9,6 +9,7 @@ import {
   FIRST_SHEET_ID,
   FIRST_SHEET_NAME,
   createSheets,
+  isSheetChange,
   readDocument,
   writeDocument,
 } from '../../src/core/sheets.js';
@@ -410,5 +411,214 @@ describe('sheets', () => {
     stop();
     sheets.add();
     assert.equal(changes, 5, 'it went on reporting after being stopped');
+  });
+
+  /**
+   * What crosses to the other people on the board.
+   *
+   * `on` says "draw again", which is what a tab strip needs. This is the other
+   * seam — what happened, in words another client can act on — and it is the
+   * same shape the store uses for ops, for the same reason: one vocabulary,
+   * one path, no second implementation of what a change means.
+   */
+  describe('changes on the wire', () => {
+    /** Everything a local change announced, in order. */
+    const recorded = () => {
+      const seen = [];
+      sheets.onChanges((changes, origin) => seen.push(...changes.map((c) => ({ ...c, origin }))));
+      return seen;
+    };
+
+    test('adding announces the sheet, empty and in its place', () => {
+      const seen = recorded();
+      const id = sheets.add({ name: 'Themes' });
+
+      assert.deepEqual(seen, [
+        { t: 'sheet-add', id, name: 'Themes', index: 1, order: [], objects: [], origin: 'local' },
+      ]);
+    });
+
+    /**
+     * The contents travel with it. A copy announced as "make a sheet, then
+     * here is everything on it" would be the board twice over, and the two
+     * clients would disagree about the ids.
+     */
+    test('duplicating announces the copy with its objects', () => {
+      const seen = recorded();
+      const copy = sheets.duplicate(sheets.activeId);
+
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0].t, 'sheet-add');
+      assert.equal(seen[0].id, copy);
+      assert.equal(seen[0].index, 1);
+      assert.equal(seen[0].objects.length, 1);
+      assert.notEqual(seen[0].objects[0].id, 'a', 'the copy was announced sharing an object with its original');
+      assert.deepEqual(seen[0].order, seen[0].objects.map((o) => o.id));
+    });
+
+    test('renaming and removing announce themselves', () => {
+      const second = sheets.add();
+      const seen = recorded();
+
+      sheets.rename(second, 'Themes');
+      sheets.remove(second);
+
+      assert.deepEqual(seen, [
+        { t: 'sheet-rename', id: second, name: 'Themes', origin: 'local' },
+        { t: 'sheet-del', id: second, origin: 'local' },
+      ]);
+    });
+
+    test('a rename that changes nothing announces nothing', () => {
+      const seen = recorded();
+      sheets.rename(sheets.activeId, '   ');
+      sheets.remove(sheets.activeId);
+      assert.deepEqual(seen, [], 'a refused change was put on the wire');
+    });
+
+    test('what arrives is not announced back as local', () => {
+      const seen = recorded();
+      sheets.applyChanges([{ t: 'sheet-add', id: 'hers', name: 'Hers', index: 1, order: [], objects: [] }]);
+
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0].origin, 'remote', 'a remote change would have been sent straight back out');
+    });
+  });
+
+  describe('sheet changes from another client', () => {
+    test('a sheet somebody else made turns up, without taking the screen', () => {
+      const mine = sheets.activeId;
+      sheets.applyChanges([
+        { t: 'sheet-add', id: 'hers', name: 'Hers', index: 1, order: ['x'], objects: [card('x')] },
+      ]);
+
+      assert.deepEqual(sheets.list().map((s) => s.name), [FIRST_SHEET_NAME, 'Hers']);
+      assert.equal(sheets.activeId, mine, 'somebody else adding a sheet moved this person onto it');
+      assert.deepEqual(store.order, ['a'], 'the canvas changed under the person looking at it');
+
+      sheets.select('hers');
+      assert.deepEqual(store.order, ['x'], 'the sheet arrived without what was on it');
+    });
+
+    test('a rename arrives', () => {
+      sheets.applyChanges([{ t: 'sheet-rename', id: sheets.activeId, name: 'Discovery' }]);
+      assert.deepEqual(sheets.list().map((s) => s.name), ['Discovery']);
+    });
+
+    /**
+     * Deleting the sheet somebody is looking at is the one change that moves
+     * them: there is nothing else to show. The neighbour takes over, exactly
+     * as it does when they delete it themselves.
+     */
+    test('deleting the sheet on screen moves this person to its neighbour', () => {
+      const first = sheets.activeId;
+      const second = sheets.add();
+      assert.equal(sheets.activeId, second);
+
+      sheets.applyChanges([{ t: 'sheet-del', id: second }]);
+      assert.equal(sheets.activeId, first);
+      assert.deepEqual(store.order, ['a'], 'the neighbour did not come up');
+    });
+
+    /**
+     * A channel can resend, and a client can be told about a sheet it already
+     * has. None of these is worth guessing at.
+     */
+    test('are ignored when they say something already true, or nothing at all', () => {
+      const add = { t: 'sheet-add', id: 'hers', name: 'Hers', index: 1, order: [], objects: [] };
+      assert.equal(sheets.applyChanges([add]), true);
+      assert.equal(sheets.applyChanges([add]), false, 'a sheet arrived twice');
+      assert.equal(sheets.size, 2);
+
+      assert.equal(sheets.applyChanges([{ t: 'sheet-rename', id: 'nothing', name: 'x' }]), false);
+      assert.equal(sheets.applyChanges([{ t: 'sheet-del', id: 'nothing' }]), false);
+    });
+
+    /** The invariant is the board's, not one client's. */
+    test('cannot delete the last sheet either', () => {
+      assert.equal(sheets.applyChanges([{ t: 'sheet-del', id: sheets.activeId }]), false);
+      assert.equal(sheets.size, 1);
+    });
+
+    /**
+     * The round trip, without a wire: what one client announces, applied by
+     * another that read the same board.
+     *
+     * The wire is covered against real Realtime in `sync.test.js`, which only
+     * CI can run. This is the same claim where it can be checked here — and it
+     * is the claim that broke last time, when two clients derived different
+     * ids for the same thing and every message crossed addressed to nothing.
+     */
+    test('what one client announces is what another applies', () => {
+      const hers = build(v1(card('a')));
+      const his = build(v1(card('a')));
+
+      const announced = [];
+      hers.sheets.onChanges((changes, origin) => {
+        if (origin === 'local') announced.push(...changes);
+      });
+
+      const copy = hers.sheets.duplicate(hers.sheets.activeId);
+      hers.sheets.rename(copy, 'Themes');
+
+      for (const change of announced) his.sheets.applyChanges([change]);
+
+      assert.deepEqual(
+        his.sheets.list(),
+        hers.sheets.list(),
+        'the two clients ended up with different sheets',
+      );
+
+      his.sheets.select(copy);
+      hers.sheets.select(copy);
+      assert.deepEqual(
+        his.store.order,
+        hers.store.order,
+        'the copy arrived with different object ids',
+      );
+      assert.equal(his.store.order.length, 1);
+    });
+
+    test('anything that is not a change this client understands is skipped', () => {
+      assert.equal(sheets.applyChanges([
+        { t: 'sheet-reorder', id: 'a', to: 2 },
+        null,
+        { t: 'sheet-rename', id: sheets.activeId },
+      ]), false);
+      assert.deepEqual(sheets.list().map((s) => s.name), [FIRST_SHEET_NAME]);
+    });
+  });
+});
+
+/**
+ * The wire's own vocabulary check, which is a version boundary rather than a
+ * security one: everyone on the channel is an authorised editor, and a change
+ * this client cannot read is one from a client that means something by it.
+ */
+describe('isSheetChange', () => {
+  const add = { t: 'sheet-add', id: 's', name: 'S', index: 0, order: [], objects: [] };
+
+  test('accepts the three it knows', () => {
+    assert.equal(isSheetChange(add), true);
+    assert.equal(isSheetChange({ t: 'sheet-rename', id: 's', name: 'S' }), true);
+    assert.equal(isSheetChange({ t: 'sheet-del', id: 's' }), true);
+  });
+
+  test('refuses a change with nothing to act on', () => {
+    for (const missing of ['id', 'name', 'index', 'order', 'objects']) {
+      const change = { ...add };
+      delete change[missing];
+      assert.equal(isSheetChange(change), false, `an add with no ${missing} was accepted`);
+    }
+    assert.equal(isSheetChange({ t: 'sheet-add', ...add, index: 1.5 }), false, 'a fractional index');
+    assert.equal(isSheetChange({ t: 'sheet-rename', id: 's' }), false);
+    assert.equal(isSheetChange({ t: 'sheet-del' }), false);
+  });
+
+  test('refuses what it has never heard of', () => {
+    assert.equal(isSheetChange({ t: 'sheet-reorder', id: 's', to: 1 }), false);
+    assert.equal(isSheetChange({ t: 'add', obj: {} }), false, 'an op is not a sheet change');
+    assert.equal(isSheetChange(null), false);
+    assert.equal(isSheetChange('sheet-del'), false);
   });
 });
