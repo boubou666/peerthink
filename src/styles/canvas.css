@@ -389,25 +389,6 @@ body:has(.board-page) { overflow: hidden; }
 .fmt-group { display: flex; align-items: center; gap: 4px; }
 .fmt-sep { width: 1px; height: 18px; background: var(--line); }
 
-/*
- * The colour pickers, and the one colour they cannot express.
- *
- * `<input type="color">` has no alpha and no empty state, so transparent is a
- * button beside it rather than a value inside it.
- */
-.fmt-picker {
-  width: 28px;
-  height: 24px;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: var(--panel);
-  cursor: pointer;
-}
-.fmt-picker::-webkit-color-swatch-wrapper { padding: 0; }
-.fmt-picker::-webkit-color-swatch { border: 0; border-radius: 4px; }
-.fmt-picker::-moz-color-swatch { border: 0; border-radius: 4px; }
-
 /* A diagonal through an empty square: an empty square alone reads as white. */
 .fmt-transparent {
   width: 24px;
@@ -455,3 +436,163 @@ body:has(.board-page) { overflow: hidden; }
 .fmt-bar:nth-child(1) { width: 100%; }
 .fmt-bar:nth-child(2) { width: 60%; }
 .fmt-bar:nth-child(3) { width: 85%; }
+
+/* ---------------------------------------------------------------------------
+ * The colour picker
+ *
+ * The panel the browser used to open for `<input type="color">` was the one
+ * part of the app that looked like somebody else's software — a different
+ * size, shape and typeface on every platform, and outside the page, where
+ * none of this reaches it. So it is drawn here, out of the same tokens as the
+ * bar it hangs from, which is what makes it follow the theme without being
+ * told about the theme.
+ *
+ * The spectrum itself is the exception and is deliberately absolute: a hue
+ * wheel is the same in a dark room as a light one, and tinting it would mean
+ * showing colours the card would not take.
+ * ------------------------------------------------------------------------ */
+
+.cp { position: relative; display: flex; }
+
+/* `--cp-value` is the colour on show, set inline — it is the one thing here
+   that cannot be known in advance. */
+.cp-swatch {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--cp-value);
+  cursor: pointer;
+}
+.cp-swatch:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.cp-swatch[data-open],
+.cp-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/*
+ * Anchored to the swatch's left edge rather than centred on it. The bar is
+ * clamped to the window, so its left edge is always on screen and a panel that
+ * starts there is too; a centred one hangs half its width further left, which
+ * for the leftmost control is off the side.
+ */
+.cp-panel {
+  position: absolute;
+  left: 0;
+  z-index: 1;
+  width: 196px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  box-shadow: var(--shadow);
+}
+.cp-panel[data-placement="below"] { top: calc(100% + 6px); }
+.cp-panel[data-placement="above"] { bottom: calc(100% + 6px); }
+
+/*
+ * Saturation left to right, brightness bottom to top, over the chosen hue —
+ * three background layers rather than an image, so it costs nothing to redraw
+ * as the hue slider moves.
+ */
+.cp-area {
+  position: relative;
+  height: 110px;
+  border-radius: 8px;
+  cursor: crosshair;
+  touch-action: none;
+  background:
+    linear-gradient(to top, #000 0%, rgb(0 0 0 / 0) 100%),
+    linear-gradient(to right, #fff 0%, rgb(255 255 255 / 0) 100%),
+    hsl(var(--cp-hue) 100% 50%);
+}
+.cp-area:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* White ring, dark halo: the only pair that stays visible in every corner of
+   a square that runs from white to black. */
+.cp-thumb {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / .35), 0 1px 3px rgb(0 0 0 / .4);
+  pointer-events: none;
+}
+
+/* A real range input, restyled: hue is one number on a line, which is what the
+   element already means — so the keyboard and the screen reader come free. */
+.cp-hue {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 12px;
+  margin: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  touch-action: none;
+  background: linear-gradient(to right,
+    #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+}
+.cp-hue::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgb(0 0 0 / .35);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / .35);
+  cursor: pointer;
+}
+.cp-hue::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 1px solid rgb(0 0 0 / .35);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / .35);
+  cursor: pointer;
+}
+.cp-hue:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.cp-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.cp-preset {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--cp-value);
+  cursor: pointer;
+}
+/* The same ring the transparency toggle uses, because it is the same claim:
+   this is what the selection currently is. */
+.cp-preset[data-current] { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.cp-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.cp-field input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 5px 7px;
+}
+.cp-field input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: transparent;
+}
