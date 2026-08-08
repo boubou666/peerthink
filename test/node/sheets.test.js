@@ -88,7 +88,7 @@ describe('reading a stored document', () => {
    * An id is what an op addresses a sheet by, so two sheets sharing one would
    * take each other's edits.
    */
-  test('a missing or repeated id is replaced rather than trusted', () => {
+  test('a missing id is replaced rather than trusted', () => {
     const read = readDocument({
       v: 2,
       sheets: [{ name: 'A' }, { id: '', name: 'B' }, { id: 's3', name: 'C' }],
@@ -96,6 +96,26 @@ describe('reading a stored document', () => {
 
     assert.equal(new Set(read.map((s) => s.id)).size, 3);
     assert.equal(read[2].id, 's3', 'an id that was fine was replaced anyway');
+  });
+
+  /**
+   * And a repeated one, which is worse than a missing one: everything here
+   * finds a sheet by the first match, so the second would be unreachable —
+   * impossible to switch to, and taking the first's remote ops — and it would
+   * be written back for next time.
+   */
+  test('a repeated id is replaced too, and the first keeps it', () => {
+    const read = readDocument({
+      v: 2,
+      sheets: [
+        { id: 'same', name: 'A', order: ['a'], objects: [card('a')] },
+        { id: 'same', name: 'B', order: ['b'], objects: [card('b')] },
+      ],
+    }, ids());
+
+    assert.equal(read[0].id, 'same');
+    assert.notEqual(read[1].id, 'same', 'two sheets came back with one id');
+    assert.deepEqual(read[1].order, ['b'], 'the wrong sheet was renamed');
   });
 
   test('an unnamed sheet is numbered by where it sits', () => {

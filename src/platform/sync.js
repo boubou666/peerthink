@@ -90,6 +90,15 @@ export function createBoardSync({
   const queue = [];
   let stopped = false;
 
+  /**
+   * Whether this client has a document yet — see the held-ops block below,
+   * which explains what that is for. Declared up here because both directions
+   * now consult it: inbound ops are held until there is a document to apply
+   * them to, and outbound ones until there is a sheet to address them by.
+   */
+  const held = [];
+  let holding = Boolean(heldUntil);
+
   // True until presence says otherwise — a board nobody else is on is a board
   // this client writes, and so is one where the channel never came up. The
   // version guard in the repository is what covers the case where that is
@@ -138,24 +147,46 @@ export function createBoardSync({
    * A timer rather than a frame, deliberately: `requestAnimationFrame` stops
    * in a tab that is not being drawn, which would leave a switched-away tab
    * sitting on ops it had already applied locally.
+   *
+   * The queue holds *batches*, each naming the sheet its ops were made on. The
+   * sheet is taken when the ops arrive rather than when the batch is sent: the
+   * two are up to `sendEvery` apart, and switching sheets in that window is one
+   * click — the ops would go out addressed to the sheet the person moved to,
+   * and land there on everyone else's screen.
+   *
+   * `sheet: null` is "not settled yet". Before the board has loaded there is a
+   * sheet on screen, but it is the empty one this client started with, and the
+   * load is about to replace it with the board's own. Those ops are the same
+   * ops on what is about to be the same canvas, so they are addressed when they
+   * go out — which, while `holding`, is after the load.
    */
   const flush = scheduler.throttle(() => {
-    const ops = queue.splice(0, queue.length);
-    if (!ops.length || stopped) return;
-    // The sheet is read at send time rather than remembered per op. Local ops
-    // can only be made on the canvas that is on screen, and switching sheets
-    // is not something you can do in the middle of the gesture that made them.
-    const payload = { ops, sheet: sheets.activeId };
-    // A send that fails is a dropped frame of somebody else's view, not a
-    // reason to take this session down: the snapshot is still being written.
-    Promise.resolve(channel.send({ type: 'broadcast', event: EVENT, payload })).catch(
-      () => {},
-    );
+    // Nothing goes out unaddressed. Inbound is held until there is a document
+    // to apply it to; outbound is held until there is one to name.
+    if (stopped || holding) return;
+
+    const batches = queue.splice(0, queue.length);
+    for (const batch of batches) {
+      const payload = { ops: batch.ops, sheet: batch.sheet ?? sheets.activeId };
+      // A send that fails is a dropped frame of somebody else's view, not a
+      // reason to take this session down: the snapshot is still being written.
+      Promise.resolve(channel.send({ type: 'broadcast', event: EVENT, payload })).catch(
+        () => {},
+      );
+    }
   }, sendEvery);
 
   const unsubscribeStore = store.onOps((ops, origin) => {
     if (stopped || origin !== LOCAL) return;
-    queue.push(...ops);
+
+    const sheet = holding ? null : sheets.activeId;
+    const last = queue[queue.length - 1];
+    // Ops made in a row on one sheet stay one message — a drag is a `set` per
+    // pointer move, and a message each is the burst this throttle exists to
+    // avoid.
+    if (last && last.sheet === sheet) last.ops.push(...ops);
+    else queue.push({ sheet, ops: [...ops] });
+
     flush();
   });
 
@@ -201,8 +232,6 @@ export function createBoardSync({
    * the board is not saveable, and holding the ops would only pretend
    * otherwise.
    */
-  const held = [];
-  let holding = Boolean(heldUntil);
   // Terminal. A load that failed does not fail only for the ops already in
   // hand: there is no document for the next one either, and letting later
   // batches through would drip other people's work into a board that cannot be
@@ -212,6 +241,11 @@ export function createBoardSync({
 
   const release = () => {
     holding = false;
+    // What this client made while it was waiting, which could not be addressed
+    // until now — the sheet it was made on is the one the load just put on
+    // screen.
+    flush();
+
     const waiting = held.splice(0, held.length);
     if (stopped) return;
     // Batch by batch, because each one names the sheet it was made on: a

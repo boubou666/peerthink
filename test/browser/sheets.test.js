@@ -73,11 +73,13 @@ describe('sheets', () => {
     assert.deepEqual(await tabs(), ['Sheet 1', 'Sheet 2']);
     assert.equal(await current(), 'Sheet 2');
     assert.deepEqual(await objectIds(), [], 'the new sheet came up with the old one\'s objects');
-    assert.equal(
-      await page.eval(`document.querySelector('[data-id="${first}"]') === null`),
-      true,
-      'the first sheet is still being drawn',
-    );
+
+    // Waited for rather than asserted: the store changes on the click and the
+    // renderer catches up on a frame, so reading the DOM straight afterwards
+    // is a race that passes on a fast machine.
+    await page.waitFor(`document.querySelector('[data-id="${first}"]') === null`, {
+      label: 'the first sheet to stop being drawn',
+    });
 
     await clickTab('Sheet 1');
     assert.deepEqual(await objectIds(), [first], 'the first sheet did not come back');
@@ -115,6 +117,9 @@ describe('sheets', () => {
     await page.eval(`app.selection.set(["${first}"])`);
 
     await clickSelector(page, '[data-sheet-tabs] [data-action="add-sheet"]');
+    await page.waitFor(`document.querySelectorAll('[data-sheet-tabs] .sheet-name').length === 2`, {
+      label: 'the sheet to be added',
+    });
     assert.equal(await page.eval('app.selection.size'), 0);
   });
 
@@ -239,6 +244,10 @@ describe('sheets', () => {
 
   /** Every board that exists was written before sheets did. */
   test('a board from before sheets opens as one sheet', async () => {
+    // Off the board route before planting it, for the reason `beforeEach`
+    // gives: the canvas is still mounted and sitting on a debounced save, and
+    // one that lands after this write replaces the v1 document with a v2 one.
+    await page.goto('/#/');
     await page.eval(`localStorage.setItem('peerthink:board:default', JSON.stringify({
       v: 1,
       id: 'default',

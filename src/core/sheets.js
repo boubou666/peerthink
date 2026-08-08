@@ -81,11 +81,22 @@ export function readDocument(doc, newId) {
     return [{ id: FIRST_SHEET_ID, name: FIRST_SHEET_NAME, ...asDocument(doc) }];
   }
 
+  /**
+   * An id is what an op is addressed to, so one that is missing or already
+   * taken is replaced rather than trusted. Two sheets sharing an id is not a
+   * cosmetic fault: everything here finds a sheet by the first match, so the
+   * second would be unreachable — impossible to switch to, taking the other's
+   * remote ops — and `writeDocument` would store the collision for next time.
+   */
+  const taken = new Set();
+  const idFor = (id) => {
+    const usable = typeof id === 'string' && id && !taken.has(id) ? id : newId();
+    taken.add(usable);
+    return usable;
+  };
+
   return sheets.map((sheet, index) => ({
-    // An id is what ops address a sheet by, so one that is missing or repeated
-    // has to be replaced rather than trusted — two sheets with one id would
-    // take each other's edits.
-    id: typeof sheet?.id === 'string' && sheet.id ? sheet.id : newId(),
+    id: idFor(sheet?.id),
     name: asName(sheet?.name, `Sheet ${index + 1}`),
     ...asDocument(sheet),
   }));

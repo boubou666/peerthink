@@ -42,11 +42,21 @@ export function SheetTabs({ app }) {
       setMenu(null);
     };
 
+    // The position was measured once, when the button was clicked, and the
+    // menu is fixed — so a strip that scrolls under it leaves it pointing at
+    // a tab that has moved. Closing is the honest answer to that; following
+    // would be re-measuring on every frame of a scroll to keep a menu open
+    // that the person has already stopped looking at.
+    const scrolled = () => setMenu(null);
+
     document.addEventListener('pointerdown', dismiss, true);
     window.addEventListener('keydown', onKey, true);
+    strip.current?.addEventListener('scroll', scrolled);
+    const held = strip.current;
     return () => {
       document.removeEventListener('pointerdown', dismiss, true);
       window.removeEventListener('keydown', onKey, true);
+      held?.removeEventListener('scroll', scrolled);
     };
   }, [menu]);
 

@@ -673,9 +673,14 @@ body:has(.board-page) { overflow: hidden; }
 }
 .sheet-tabs::-webkit-scrollbar { display: none; }
 
-/* Relative, because the menu hangs off it. */
+/*
+ * `flex: 0 0 auto` because the strip is a flex row that scrolls: without it
+ * the tabs shrink to fit instead, and a board with a few sheets squeezes every
+ * name down to an ellipsis rather than scrolling the one that does not fit.
+ */
 .sheet-tab {
   position: relative;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   border-radius: 7px;

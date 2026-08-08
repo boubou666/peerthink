@@ -36,6 +36,7 @@ const build = ({ heldUntil } = {}) => {
   };
 
   const sent = [];
+  const scheduler = createManualScheduler();
   const store = new Store();
   // Real sheets, so what is asserted about held ops is asserted about the
   // routing they now go through rather than around it.
@@ -47,7 +48,7 @@ const build = ({ heldUntil } = {}) => {
     boardId: 'board-1',
     store,
     sheets,
-    scheduler: createManualScheduler(),
+    scheduler,
     clientId: 'me',
     heldUntil,
   });
@@ -60,7 +61,7 @@ const build = ({ heldUntil } = {}) => {
     }
   };
 
-  return { store, sheets, sync, arrive, sent };
+  return { store, sheets, sync, arrive, sent, scheduler };
 };
 
 /** Let the promise callbacks that release the buffer actually run. */
@@ -197,6 +198,53 @@ describe('ops and the sheet they were made on', () => {
     const [message] = sent.filter((m) => m.event === EVENT);
     assert.equal(message.payload.sheet, second, 'the op went out for the wrong sheet');
     assert.equal(message.payload.ops.length, 1);
+  });
+
+  /**
+   * The throttle holds ops for up to `sendEvery` after they were made, and
+   * switching sheets in that window is one click. Addressed at send time, a
+   * drag on one sheet would arrive on everyone else's copy of another.
+   */
+  test('the sheet is the one it was made on, not the one showing when it goes out', async () => {
+    const { store, sheets, sent, scheduler } = build();
+    const first = sheets.activeId;
+
+    store.apply([{ t: 'add', obj: card('c1') }]);
+    const second = sheets.add();
+    scheduler.flushTimers();
+    await settle();
+
+    const [message] = sent.filter((m) => m.event === EVENT);
+    assert.equal(message.payload.sheet, first, 'the op was readdressed to the sheet switched to');
+    assert.notEqual(message.payload.sheet, second);
+  });
+
+  /**
+   * Before the board has loaded, "which sheet is this on" has no settled
+   * answer: the sheet on screen is the empty one this client started with, and
+   * the load is about to replace it. Sent then, the ops name a sheet nobody
+   * else has, and every receiver drops them.
+   */
+  test('an op made before the board loaded goes out addressed to the board', async () => {
+    let landed;
+    const { store, sheets, sent, scheduler } = build({
+      heldUntil: new Promise((resolve) => { landed = resolve; }),
+    });
+
+    store.apply([{ t: 'add', obj: card('early') }]);
+    await settle();
+    assert.deepEqual(sent.filter((m) => m.event === EVENT), [], 'an op went out before it could be addressed');
+
+    // What hydrate() does: the board arrives, and its own first sheet — with
+    // an id every client agrees on — becomes the one on screen.
+    sheets.load({ v: 2, sheets: [{ id: 'from-the-board', name: 'Discovery', order: [], objects: [] }] });
+    landed();
+    await settle();
+    scheduler.flushTimers();
+
+    const [message] = sent.filter((m) => m.event === EVENT);
+    assert.equal(message.payload.sheet, 'from-the-board', 'it went out naming a sheet nobody else has');
+    assert.equal(store.has('early'), false, 'the load did not replace the sheet it was made on');
   });
 
   test('arriving, it lands on that sheet rather than the one on screen', async () => {
