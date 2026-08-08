@@ -31,6 +31,25 @@ export const DOCUMENT_VERSION = 2;
 /** What a board's first sheet is called when nobody has named it. */
 export const FIRST_SHEET_NAME = 'Sheet 1';
 
+/**
+ * The id every board's first sheet gets, rather than a fresh one.
+ *
+ * A sheet id is what an op is addressed to, so it has to mean the same thing
+ * on every client — and the first sheet is the one nobody ever agreed on. It
+ * is not created by anybody: it is what a board from before sheets *becomes*
+ * when it is read, and what a board with nothing stored yet starts as. Two
+ * clients doing that independently must arrive at the same id or their ops
+ * pass each other addressed to sheets neither has.
+ *
+ * Fixed rather than derived from the board, because it is scoped to one: ids
+ * only ever have to be unique within a document, and a channel only ever
+ * carries one board.
+ *
+ * Every other sheet is made by somebody, on a client, at a moment — those get
+ * a generated id, and reach other clients along with the sheet itself.
+ */
+export const FIRST_SHEET_ID = 'sheet-1';
+
 /** How long a sheet name may be. Long enough to say what it is; short enough to be a tab. */
 export const NAME_LIMIT = 64;
 
@@ -59,7 +78,7 @@ export function readDocument(doc, newId) {
   const sheets = Array.isArray(doc?.sheets) ? doc.sheets : null;
 
   if (!sheets?.length) {
-    return [{ id: newId(), name: FIRST_SHEET_NAME, ...asDocument(doc) }];
+    return [{ id: FIRST_SHEET_ID, name: FIRST_SHEET_NAME, ...asDocument(doc) }];
   }
 
   return sheets.map((sheet, index) => ({

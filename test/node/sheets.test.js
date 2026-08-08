@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { Store } from '../../src/core/store.js';
 import {
   DOCUMENT_VERSION,
+  FIRST_SHEET_ID,
   FIRST_SHEET_NAME,
   createSheets,
   readDocument,
@@ -25,7 +26,7 @@ const v1 = (...objects) => ({ v: 1, order: objects.map((o) => o.id), objects });
 const build = (doc = null) => {
   const store = new Store();
   const sheets = createSheets({ store, newId: ids() });
-  if (doc) sheets.load(doc);
+  sheets.load(doc);
   return { store, sheets };
 };
 
@@ -36,6 +37,26 @@ describe('reading a stored document', () => {
     assert.equal(read[0].name, FIRST_SHEET_NAME);
     assert.deepEqual(read[0].order, ['a', 'b']);
     assert.equal(read[0].objects.length, 2);
+  });
+
+  /**
+   * The one every client has to agree about.
+   *
+   * An op is addressed to a sheet id. The first sheet is not created by
+   * anybody — it is what a board from before sheets becomes when it is read —
+   * so two clients reading the same board have to arrive at the same id, or
+   * their edits pass each other addressed to sheets neither of them has. This
+   * is the property that broke live collaboration when the id was generated,
+   * and it broke it for every board that existed.
+   */
+  test('the first sheet has the same id wherever it is read', () => {
+    const here = readDocument(v1(card('a')), ids());
+    const there = readDocument(v1(card('a')), ids());
+    const fresh = readDocument(null, ids());
+
+    assert.equal(here[0].id, FIRST_SHEET_ID);
+    assert.equal(there[0].id, FIRST_SHEET_ID, 'two clients read one board as two sheets');
+    assert.equal(fresh[0].id, FIRST_SHEET_ID, 'a board with nothing stored yet started somewhere else');
   });
 
   /**
@@ -289,6 +310,25 @@ describe('sheets', () => {
       sheets.applyRemote(first, [{ t: 'add', obj: card('remote') }]);
       sheets.select(first);
       assert.equal(store.canUndo, true, 'a remote op cleared the sheet\'s undo stack');
+    });
+
+    /**
+     * Two people on one board, which is what the addressing is for.
+     *
+     * Each client reads the board for itself, so "the sheet Alice is on" has
+     * to be the same id as "the sheet Bob is on" without either of them being
+     * told. When it was not, every op crossed the wire addressed to a sheet
+     * the receiver did not have, and live collaboration stopped working on
+     * every board there was.
+     */
+    test('cross a client that read the same board separately', () => {
+      const alice = build(v1(card('a')));
+      const bob = build(v1(card('a')));
+
+      assert.equal(alice.sheets.activeId, bob.sheets.activeId, 'two readings of one board disagree');
+
+      bob.sheets.applyRemote(alice.sheets.activeId, [{ t: 'add', obj: card('hers') }]);
+      assert.deepEqual(bob.store.order, ['a', 'hers'], "Alice's edit did not reach Bob");
     });
 
     /**
