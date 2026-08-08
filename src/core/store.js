@@ -221,11 +221,45 @@ export class Store {
     return { v: 1, order: this.order.slice(), objects: this.all().map((o) => structuredClone(o)) };
   }
 
-  load(data) {
-    this.objects = new Map(data.objects.map((o) => [o.id, structuredClone(o)]));
-    this.order = data.order.filter((id) => this.objects.has(id));
-    this.past.length = 0;
-    this.future.length = 0;
+  /**
+   * Everything this store is, history included.
+   *
+   * `toJSON` is the document — what gets stored, and what another client would
+   * be sent. This is the document *plus* the undo stacks, which are nobody
+   * else's business and are not worth saving, but are worth keeping while a
+   * sheet is put aside: coming back to a sheet and finding that ctrl+Z no
+   * longer knows what you did on it is the kind of forgetting that reads as a
+   * bug. See `core/sheets.js`, which is the only caller.
+   */
+  checkpoint() {
+    return {
+      ...this.toJSON(),
+      past: structuredClone(this.past),
+      future: structuredClone(this.future),
+    };
+  }
+
+  /**
+   * Become that document again, history and all.
+   *
+   * One emit at the end rather than one per part: everything downstream — the
+   * renderer, the toolbar's undo buttons, the format bar — is reading a store
+   * that has half-changed until this returns.
+   */
+  restore(state) {
+    this.objects = new Map(state.objects.map((o) => [o.id, structuredClone(o)]));
+    this.order = state.order.filter((id) => this.objects.has(id));
+    this.past = structuredClone(state.past ?? []);
+    this.future = structuredClone(state.future ?? []);
     this.emit(null);
+  }
+
+  /**
+   * A document arrives from storage or from another client. History is dropped
+   * rather than kept: undo should not walk back past a board loading, into a
+   * document that is no longer the one on screen.
+   */
+  load(data) {
+    this.restore({ ...data, past: [], future: [] });
   }
 }

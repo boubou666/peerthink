@@ -2,6 +2,7 @@ import { LOCAL, REMOTE, Store } from './core/store.js';
 import { Selection } from './core/selection.js';
 import { Viewport } from './core/viewport.js';
 import { Board } from './core/board.js';
+import { createSheets } from './core/sheets.js';
 import { createAutosave } from './core/autosave.js';
 import { createIdGenerator } from './core/ids.js';
 import { UNLOADED, createSaveStatus } from './core/save-status.js';
@@ -65,12 +66,66 @@ export function createApp({
   const viewport = new Viewport();
   const board = new Board({ store, selection, newId });
 
+  /**
+   * The board's sheets, of which `store` is always the one on screen.
+   *
+   * Built loaded with an empty sheet rather than left empty until `hydrate`:
+   * the canvas is interactive from the first frame, so there has to be a sheet
+   * to draw on and a sheet id for an early op to name before anything has come
+   * back from the repository.
+   */
+  const sheets = createSheets({ store, newId });
+  sheets.load(null);
+
   const stageSize = () => [dom.stage.clientWidth, dom.stage.clientHeight];
 
   /** Focus a freshly created object so the user can just start typing. */
   const focusNew = (id) => clock.nextFrame(() => {
     dom.layer.querySelector(`[data-id="${id}"] [contenteditable]`)?.focus();
   });
+
+  /**
+   * Where each sheet was last being looked at.
+   *
+   * In memory and not in the document: a camera is where *this* person is
+   * standing, and storing it would send it to everyone else on the board and
+   * make a save out of scrolling. Coming back to a sheet and finding it where
+   * you left it is worth this much and no more — a reload starts everyone in
+   * the same place, framed on what is there.
+   */
+  const cameras = new Map();
+
+  /**
+   * Do something that may change which sheet is on screen, and put the screen
+   * in order afterwards.
+   *
+   * The selection is emptied because it names objects on the sheet being left,
+   * and a selection of things nobody can see is a delete key pointed at
+   * something off screen. The camera is the arriving sheet's own if it has one
+   * yet, and otherwise frames whatever is on it — a sheet with nothing on it
+   * goes to its origin, because there is nothing to frame and `fit` leaves an
+   * empty board's camera exactly where the last sheet had it.
+   */
+  const showingSheet = (change) => {
+    const from = sheets.activeId;
+    cameras.set(from, { x: viewport.x, y: viewport.y, scale: viewport.scale });
+
+    const result = change();
+    if (sheets.activeId === from) return result;
+
+    selection.clear();
+    const camera = cameras.get(sheets.activeId);
+    if (camera) {
+      viewport.scale = camera.scale;
+      viewport.moveTo(camera.x, camera.y);
+    } else if (store.order.length) {
+      commands.fit();
+    } else {
+      viewport.scale = 1;
+      viewport.moveTo(0, 0);
+    }
+    return result;
+  };
 
   const commands = {
     addAt(type, point) {
@@ -114,6 +169,21 @@ export function createApp({
       const [w, h] = stageSize();
       viewport.setScaleAt(w / 2, h / 2, 1);
     },
+
+    /**
+     * The sheet commands, which are the model's with the screen seen to.
+     *
+     * Every one of them can change what is on screen — adding and duplicating
+     * show what they made, and removing shows a neighbour — so every one goes
+     * through `showingSheet` rather than only the obvious one.
+     */
+    selectSheet: (id) => showingSheet(() => sheets.select(id)),
+    addSheet: (options) => showingSheet(() => sheets.add(options)),
+    duplicateSheet: (id) => showingSheet(() => sheets.duplicate(id)),
+    removeSheet: (id) => showingSheet(() => sheets.remove(id)),
+    // Renaming cannot change which sheet is on screen, and a tab that is being
+    // renamed is one the user is already looking at.
+    renameSheet: (id, name) => sheets.rename(id, name),
   };
 
   const exporter = createPngExporter({ document, window });
@@ -188,6 +258,7 @@ export function createApp({
       sync = createSync({
         boardId,
         store,
+        sheets,
         scheduler: clock,
         heldUntil: hydrated,
         // Both can arrive before `cursors` below has been assigned, on a fast
@@ -241,7 +312,10 @@ export function createApp({
     }
 
     if (saved) {
-      store.load(saved.board);
+      // Through the sheets, which is what turns a stored document — with
+      // sheets or from before there were any — into this board and puts its
+      // first sheet on screen.
+      sheets.load(saved.board);
       /**
        * The user's own edits, back on top of the snapshot that replaced them.
        *
@@ -273,7 +347,9 @@ export function createApp({
     app.restoredFromStorage = Boolean(saved);
 
     autosave = createAutosave({
-      store,
+      // The whole board, not the sheet on screen: saving the store would store
+      // whichever canvas happened to be showing and drop the rest.
+      document: sheets,
       repository: boardRepository,
       boardId,
       scheduler: clock,
@@ -304,6 +380,7 @@ export function createApp({
     title: null,
     restoredFromStorage: false,
     store,
+    sheets,
     selection,
     viewport,
     board,

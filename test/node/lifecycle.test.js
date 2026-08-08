@@ -116,7 +116,7 @@ describe('flush on hide', () => {
 
     const store = new Store();
     const autosave = createAutosave({
-      store,
+      document: store,
       repository: createLocalStorageRepository({ storage }),
       boardId: 'alpha',
       scheduler: createManualScheduler(),

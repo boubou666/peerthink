@@ -5,6 +5,7 @@ import { isTyping } from '../platform/typing.js';
 import { repository } from '../shell/storage.js';
 import { createSync } from '../shell/sync.js';
 import { FormatBar } from './FormatBar.jsx';
+import { SheetTabs } from './SheetTabs.jsx';
 import { Toolbar } from './Toolbar.jsx';
 
 /**
@@ -109,6 +110,7 @@ export function BoardCanvas({ boardId, onReady, onSaveStatus }) {
 
       {app && <Toolbar app={app} />}
       {app && <FormatBar app={app} stage={stage.current} />}
+      {app && <SheetTabs app={app} />}
 
       <div id="hint">
         drag empty space to select · space or middle-drag to pan · ⌘/ctrl+wheel to zoom · double-click to edit

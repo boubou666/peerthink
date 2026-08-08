@@ -35,7 +35,14 @@ import { FAILED, PENDING, SAVED, SAVING } from './save-status.js';
  */
 export const RETRY_DELAYS = [1000, 3000, 10000, 30000];
 
-export function createAutosave({ store, repository, boardId, scheduler, delay = 400, canWrite, onStatus }) {
+/**
+ * `document` is whatever is being saved: anything that answers `toJSON()` with
+ * a board and `on()` with a subscription to its changes. A `Store` satisfies
+ * that and was the only thing that ever did; the app passes its sheets, which
+ * is the whole board rather than the one canvas on screen. Saving the store
+ * would save the sheet you were looking at and quietly drop the others.
+ */
+export function createAutosave({ document, repository, boardId, scheduler, delay = 400, canWrite, onStatus }) {
   // A write that did not land leaves the document dirty. Without this, a save
   // refused because someone else's version is current — or dropped because the
   // network was — is never retried, and the last edits are lost on reload by a
@@ -102,7 +109,7 @@ export function createAutosave({ store, repository, boardId, scheduler, delay = 
 
     let wrote;
     try {
-      wrote = await repository.save(boardId, store.toJSON());
+      wrote = await repository.save(boardId, document.toJSON());
     } catch (error) {
       // Handled here rather than in the debounced wrapper below: `flush` is
       // public and the callers that use it directly — the replay after a load,
@@ -182,7 +189,7 @@ export function createAutosave({ store, repository, boardId, scheduler, delay = 
   const attempt = () => (dirty ? flush().catch(() => false) : Promise.resolve(false));
   const save = scheduler.debounce(attempt, delay);
 
-  const stopListening = store.on(() => {
+  const stopListening = document.on(() => {
     version += 1;
     dirty = true;
     // A failed write stays failed until one succeeds. Calling a fresh edit

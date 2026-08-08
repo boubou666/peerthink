@@ -19,7 +19,7 @@ function harness() {
       return true;
     },
   };
-  const autosave = createAutosave({ store, repository, boardId: 'alpha', scheduler });
+  const autosave = createAutosave({ document: store, repository, boardId: 'alpha', scheduler });
   return { store, scheduler, saved, autosave };
 }
 
@@ -65,7 +65,7 @@ describe('autosave', () => {
     const store = new Store();
     const scheduler = createManualScheduler();
     const repository = { load: async () => null, save: async () => false };
-    createAutosave({ store, repository, boardId: 'alpha', scheduler });
+    createAutosave({ document: store, repository, boardId: 'alpha', scheduler });
 
     store.apply([{ t: 'add', obj: card('a') }]);
     scheduler.flushTimers();
@@ -89,7 +89,7 @@ describe('autosave', () => {
           return true;
         },
       };
-      const autosave = createAutosave({ store, repository, boardId: 'alpha', scheduler, canWrite });
+      const autosave = createAutosave({ document: store, repository, boardId: 'alpha', scheduler, canWrite });
       return { store, scheduler, saved, autosave };
     };
 
@@ -148,7 +148,7 @@ describe('autosave', () => {
     const withRepository = (save) => {
       const store = new Store();
       const scheduler = createManualScheduler();
-      const autosave = createAutosave({ store, repository: { load: async () => null, save }, boardId: 'alpha', scheduler });
+      const autosave = createAutosave({ document: store, repository: { load: async () => null, save }, boardId: 'alpha', scheduler });
       return { store, scheduler, autosave };
     };
 
@@ -192,7 +192,7 @@ describe('autosave', () => {
       const store = new Store();
       const scheduler = createManualScheduler();
       const autosave = createAutosave({
-        store, scheduler, boardId: 'alpha', canWrite: () => false,
+        document: store, scheduler, boardId: 'alpha', canWrite: () => false,
         repository: { load: async () => null, save: async () => true },
       });
 
@@ -212,7 +212,7 @@ describe('autosave', () => {
       const scheduler = createManualScheduler();
       const seen = [];
       const autosave = createAutosave({
-        store,
+        document: store,
         repository: { load: async () => null, save },
         boardId: 'alpha',
         scheduler,
@@ -298,7 +298,7 @@ describe('autosave', () => {
       const scheduler = createManualScheduler();
       const attempts = [];
       const autosave = createAutosave({
-        store,
+        document: store,
         scheduler,
         boardId: 'alpha',
         repository: {
@@ -351,7 +351,7 @@ describe('autosave', () => {
       const spy = { ...scheduler, after: (fn, ms) => { timers.push(ms); return scheduler.after(fn, ms); } };
       const store = new Store();
       createAutosave({
-        store,
+        document: store,
         scheduler: spy,
         boardId: 'alpha',
         repository: { load: async () => null, save: async () => false },
@@ -395,7 +395,7 @@ describe('autosave', () => {
       const started = [];
       const waiting = [];
       const autosave = createAutosave({
-        store,
+        document: store,
         scheduler,
         boardId: 'alpha',
         repository: {
@@ -449,7 +449,7 @@ describe('autosave', () => {
       const results = [false, true];
       const started = [];
       const autosave = createAutosave({
-        store,
+        document: store,
         scheduler,
         boardId: 'alpha',
         repository: {
@@ -486,7 +486,7 @@ describe('autosave', () => {
       const saved = [];
       let release;
       const autosave = createAutosave({
-        store,
+        document: store,
         scheduler,
         boardId: 'alpha',
         repository: {
@@ -527,7 +527,7 @@ describe('autosave', () => {
     const store = new Store();
     const scheduler = createManualScheduler();
     const repository = { load: async () => null, save: async () => { throw new Error('offline'); } };
-    createAutosave({ store, repository, boardId: 'alpha', scheduler });
+    createAutosave({ document: store, repository, boardId: 'alpha', scheduler });
 
     store.apply([{ t: 'add', obj: card('a') }]);
     scheduler.flushTimers();

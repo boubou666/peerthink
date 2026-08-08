@@ -1,5 +1,5 @@
 import { createIdGenerator } from '../core/ids.js';
-import { LOCAL, REMOTE, isOp } from '../core/store.js';
+import { LOCAL, isOp } from '../core/store.js';
 
 /**
  * Live collaboration: the op log, on a wire.
@@ -67,7 +67,11 @@ export function electWriter(members) {
 export function createBoardSync({
   client,
   boardId,
+  // Where local ops come from — always the sheet on screen — and where remote
+  // ones go, which is whichever sheet they were made on. Two objects because
+  // they are two questions: `store` is the canvas, `sheets` is the board.
   store,
+  sheets,
   scheduler,
   onStatus,
   onWriter,
@@ -85,6 +89,15 @@ export function createBoardSync({
   const topic = topicFor(boardId);
   const queue = [];
   let stopped = false;
+
+  /**
+   * Whether this client has a document yet — see the held-ops block below,
+   * which explains what that is for. Declared up here because both directions
+   * now consult it: inbound ops are held until there is a document to apply
+   * them to, and outbound ones until there is a sheet to address them by.
+   */
+  const held = [];
+  let holding = Boolean(heldUntil);
 
   // True until presence says otherwise — a board nobody else is on is a board
   // this client writes, and so is one where the channel never came up. The
@@ -134,20 +147,46 @@ export function createBoardSync({
    * A timer rather than a frame, deliberately: `requestAnimationFrame` stops
    * in a tab that is not being drawn, which would leave a switched-away tab
    * sitting on ops it had already applied locally.
+   *
+   * The queue holds *batches*, each naming the sheet its ops were made on. The
+   * sheet is taken when the ops arrive rather than when the batch is sent: the
+   * two are up to `sendEvery` apart, and switching sheets in that window is one
+   * click — the ops would go out addressed to the sheet the person moved to,
+   * and land there on everyone else's screen.
+   *
+   * `sheet: null` is "not settled yet". Before the board has loaded there is a
+   * sheet on screen, but it is the empty one this client started with, and the
+   * load is about to replace it with the board's own. Those ops are the same
+   * ops on what is about to be the same canvas, so they are addressed when they
+   * go out — which, while `holding`, is after the load.
    */
   const flush = scheduler.throttle(() => {
-    const ops = queue.splice(0, queue.length);
-    if (!ops.length || stopped) return;
-    // A send that fails is a dropped frame of somebody else's view, not a
-    // reason to take this session down: the snapshot is still being written.
-    Promise.resolve(channel.send({ type: 'broadcast', event: EVENT, payload: { ops } })).catch(
-      () => {},
-    );
+    // Nothing goes out unaddressed. Inbound is held until there is a document
+    // to apply it to; outbound is held until there is one to name.
+    if (stopped || holding) return;
+
+    const batches = queue.splice(0, queue.length);
+    for (const batch of batches) {
+      const payload = { ops: batch.ops, sheet: batch.sheet ?? sheets.activeId };
+      // A send that fails is a dropped frame of somebody else's view, not a
+      // reason to take this session down: the snapshot is still being written.
+      Promise.resolve(channel.send({ type: 'broadcast', event: EVENT, payload })).catch(
+        () => {},
+      );
+    }
   }, sendEvery);
 
   const unsubscribeStore = store.onOps((ops, origin) => {
     if (stopped || origin !== LOCAL) return;
-    queue.push(...ops);
+
+    const sheet = holding ? null : sheets.activeId;
+    const last = queue[queue.length - 1];
+    // Ops made in a row on one sheet stay one message — a drag is a `set` per
+    // pointer move, and a message each is the burst this throttle exists to
+    // avoid.
+    if (last && last.sheet === sheet) last.ops.push(...ops);
+    else queue.push({ sheet, ops: [...ops] });
+
     flush();
   });
 
@@ -158,6 +197,23 @@ export function createBoardSync({
   const channel = client.channel(topic, {
     config: { private: true, broadcast: { self: false } },
   });
+
+  /**
+   * Someone else's ops, on the sheet they were made on.
+   *
+   * `sheet` is absent from a client that predates sheets, and from one whose
+   * board has only ever had the one. Both mean the same thing — the canvas
+   * they are looking at — and the active sheet is this client's best and only
+   * reading of that. A sheet this client has not got is dropped by `sheets`
+   * rather than guessed at.
+   */
+  const receive = (sheet, ops) => {
+    // record: false — someone else's edit does not belong in this user's undo
+    // stack, and REMOTE is what stops it being sent straight back out. Both
+    // are `sheets`' to apply, since it is the one that knows which document
+    // the ops are for.
+    sheets.applyRemote(sheet ?? sheets.activeId, ops);
+  };
 
   /**
    * Ops that arrived before this client had a document to apply them to.
@@ -176,8 +232,6 @@ export function createBoardSync({
    * the board is not saveable, and holding the ops would only pretend
    * otherwise.
    */
-  const held = [];
-  let holding = Boolean(heldUntil);
   // Terminal. A load that failed does not fail only for the ops already in
   // hand: there is no document for the next one either, and letting later
   // batches through would drip other people's work into a board that cannot be
@@ -187,8 +241,17 @@ export function createBoardSync({
 
   const release = () => {
     holding = false;
+    // What this client made while it was waiting, which could not be addressed
+    // until now — the sheet it was made on is the one the load just put on
+    // screen.
+    flush();
+
     const waiting = held.splice(0, held.length);
-    if (!stopped && waiting.length) store.apply(waiting, false, REMOTE);
+    if (stopped) return;
+    // Batch by batch, because each one names the sheet it was made on: a
+    // flattened list would have to guess, and guessing means one editor's work
+    // landing on another editor's canvas.
+    for (const batch of waiting) receive(batch.sheet, batch.ops);
   };
 
   if (heldUntil) {
@@ -216,13 +279,11 @@ export function createBoardSync({
     // Checked after validation, so nothing is held that would have been
     // dropped on arrival — a replay is not the place to discover that.
     if (holding) {
-      held.push(...ops);
+      held.push({ sheet: message?.payload?.sheet, ops });
       return;
     }
 
-    // record: false — someone else's edit does not belong in this user's undo
-    // stack, and REMOTE is what stops it being sent straight back out.
-    store.apply(ops, false, REMOTE);
+    receive(message?.payload?.sheet, ops);
   });
 
   channel.on('broadcast', { event: CURSOR_EVENT }, (message) => {
