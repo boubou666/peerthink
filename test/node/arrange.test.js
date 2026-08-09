@@ -39,9 +39,15 @@ describe('lining up', () => {
     assert.deepEqual(alignment(three(), 'top').map((move) => move.dx), [0, 0, 0]);
   });
 
+  /**
+   * Whole units, like every other move on this board — and *rounded* rather
+   * than cut off, which is the difference this case is chosen to show: the box
+   * is 101 across, so its middle is at 50.5 and the second card has half a unit
+   * to travel.
+   */
   test('to whole units, like every other move on this board', () => {
     const odd = [box('a', 0, 0, 101, 50), box('b', 40, 0, 20, 50)];
-    for (const move of alignment(odd, 'center')) assert.equal(move.dx, Math.round(move.dx));
+    assert.deepEqual(alignment(odd, 'center').map((move) => move.dx), [0, 1]);
   });
 
   test('and not at all when there is nothing to line up against', () => {
