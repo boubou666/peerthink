@@ -15,11 +15,14 @@ const EMPTY_BOARD = { v: 1, order: [], objects: [] };
  * What the canvas layer's problem codes mean, in words.
  *
  * The codes come up from `platform/clipboard.js`, which knows that a file could
- * not be turned into an image and has no business knowing how to say so. Every
- * other sentence the user reads is written in the shell, and so is this one.
+ * not be turned into an image and has no business knowing how to say so — and
+ * from the format bar, which knows that the words it measured are not there any
+ * more. Every other sentence the user reads is written in the shell, and so are
+ * these.
  */
 const PROBLEMS = {
   'image-refused': 'Could not paste that image — it may not be a format this browser reads, or it may be too large to store on a board.',
+  'link-lost': 'Could not add that link — the text it was for has changed since you selected it.',
 };
 
 /**

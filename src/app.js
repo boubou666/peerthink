@@ -16,6 +16,7 @@ import { createInput } from './platform/input.js';
 import { createClipboard } from './platform/clipboard.js';
 import { createImageImport } from './platform/images.js';
 import { createLinks } from './platform/links.js';
+import { createTextLinks } from './platform/text-link.js';
 import { createCursors } from './platform/cursors.js';
 import { createFlushOnHide } from './platform/lifecycle.js';
 import { createPngExporter } from './platform/export-png.js';
@@ -220,9 +221,19 @@ export function createApp({
     // view will not touch a field while it is focused. This is what turns a URL
     // just typed into a link.
     relink: (id) => renderer.sync(new Set([id])),
+    // The other way round, on the way in: a link with a label is drawn as its
+    // label, and what is about to be edited has to be the string the store
+    // holds.
+    showSource: (el) => views.showSource(el),
   });
   const images = createImageImport({ document, window });
   const links = createLinks({ document, elements: dom, viewport, scheduler: clock, fetchPreview });
+  /**
+   * Turning selected words into a link — the browser's half of it, which the
+   * format bar drives. Built here like everything else that touches the
+   * document, so the component above holds no opinion about selections.
+   */
+  const textLinks = createTextLinks({ document, window, store });
   const clipboard = createClipboard({ document, elements: dom, selection, viewport, board, images, onProblem });
 
   let autosave = null;
@@ -430,6 +441,7 @@ export function createApp({
     renderer,
     input,
     links,
+    textLinks,
     clipboard,
     images,
     exporter,

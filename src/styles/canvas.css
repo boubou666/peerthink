@@ -597,6 +597,29 @@ body:has(.board-page) { overflow: hidden; }
   border: 2px solid var(--ink);
 }
 .fmt-corner[data-value="round"] .fmt-corner-box { border-radius: 4px; }
+
+/*
+ * "Link", in words.
+ *
+ * Every other control here is a shape because it *shows* what it will do — a
+ * colour, an alignment, a corner. This one does something to the selected text
+ * and has no state to show, and the chain-link glyph that would stand in for it
+ * is a picture of the word for anyone who already knows what it means. So it
+ * says it, in the same underlined blue a link is drawn in on the board.
+ */
+.fmt-link {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: .12em;
+  cursor: pointer;
+}
+.fmt-link:hover { border-color: var(--line); }
 .fmt-bar:nth-child(1) { width: 100%; }
 .fmt-bar:nth-child(2) { width: 60%; }
 .fmt-bar:nth-child(3) { width: 85%; }
