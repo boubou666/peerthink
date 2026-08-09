@@ -341,6 +341,30 @@ describe('connectors', () => {
     });
   });
 
+  /**
+   * Somebody else deleting a card takes its arrows with it, but the two facts
+   * arrive as ops and there is a moment between them — with the arrow selected,
+   * the format bar is asking a connector with one end for somewhere to sit.
+   */
+  test('an arrow whose end goes while it is selected takes nothing down with it', async () => {
+    const [a] = await twoCards();
+    await offered();
+    await clickControl();
+    const [made] = await connectors();
+
+    await page.eval(`app.selection.set(['${made.id}'])`);
+    await page.waitFor(`document.querySelector('[data-action="label"]') !== null`, { label: 'the bar' });
+
+    // The `del` alone, without the cascade `deleteSelected` performs — which is
+    // exactly the shape of the op another client sends.
+    await page.eval(`app.store.apply([{ t: 'del', id: '${a}' }])`);
+    await page.eval('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+
+    assert.deepEqual(page.errors, [], 'the render survived a connector with one end');
+    assert.equal(await page.eval(`document.querySelector('[data-format-bar]') === null`), true);
+    assert.equal(await page.eval(`Boolean(window.app?.store)`), true, 'and the board is still there');
+  });
+
   test('the map leaves them out', async () => {
     await twoCards();
     await offered();

@@ -154,9 +154,9 @@ export function createConnectorLayer({ document, elements, store, selection, vie
       const node = nodeFor(id);
       drawn.add(id);
 
-      const from = store.get(obj.from);
-      const to = store.get(obj.to);
-      const line = from && to ? connectorGeometry(from, to) : null;
+      // An end that has gone answers null, like two that overlap do — see
+      // `connectorGeometry`, which is where that judgement lives.
+      const line = connectorGeometry(store.get(obj.from), store.get(obj.to));
       if (line) {
         points.push(
           { x: line.line.x1, y: line.line.y1, w: 0, h: 0 },

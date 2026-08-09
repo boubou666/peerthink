@@ -82,6 +82,17 @@ describe('the line and the head', () => {
     assert.ok(at.x > 400 && at.x < 800, `between the two of them: ${at.x}`);
   });
 
+  /**
+   * A connector outlives its ends by as long as it takes an op to arrive.
+   * Answering here is what keeps that moment out of every caller — the layer
+   * that draws, the picture that exports, and the bar that has to sit above it.
+   */
+  test('an end that is not there is the same answer as no room', () => {
+    assert.equal(connectorGeometry(undefined, BOX), null);
+    assert.equal(connectorGeometry(BOX, null), null);
+    assert.equal(connectorBox(BOX, undefined), null);
+  });
+
   test('and the box it covers is the line and the head together', () => {
     const box = connectorBox(BOX, FAR, { gap: 5, head: 15, spread: 9 });
     assert.deepEqual(box, { x: 105, y: 41, w: 190, h: 18 });

@@ -523,11 +523,9 @@ export function createPngExporter({ document, window }) {
    * nothing sensible to draw for it.
    */
   const drawConnector = (ctx, obj, palette, boxes) => {
-    const from = boxes.get(obj.from);
-    const to = boxes.get(obj.to);
-    if (!from || !to) return;
-
-    const drawn = connectorGeometry(from, to);
+    // An end that was left out of the picture answers null, exactly as one that
+    // has been deleted does.
+    const drawn = connectorGeometry(boxes.get(obj.from), boxes.get(obj.to));
     if (!drawn) return;
 
     ctx.strokeStyle = palette.connectorStroke;
