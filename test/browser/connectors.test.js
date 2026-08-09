@@ -200,6 +200,40 @@ describe('connectors', () => {
     assert.notEqual(made[0].from, made[1].from, 'pointing at the copies');
   });
 
+  /**
+   * A line is a relation between two cards and belongs behind them. It is also
+   * the one part of the layer the renderer does not own: it rewrites the order
+   * of the children it draws on every sync, so anything parked at the front of
+   * that list is pushed to the back of it — and painted over the board.
+   */
+  test('the line is drawn behind the objects, and stays there', async () => {
+    await twoCards();
+    await offered();
+    await clickControl();
+    await page.waitFor(`document.querySelector('.connectors [data-id]') !== null`, { label: 'the arrow' });
+
+    const line = await drawn();
+    // A third card, dropped on the middle of the line — and made after the
+    // arrow, so the renderer has re-ordered the layer since it was built.
+    await page.eval(`(() => {
+      const at = app.viewport.toWorld(${Math.round(line.cx)} - document.getElementById('stage').getBoundingClientRect().left, ${Math.round(line.cy)});
+      app.board.add('card', { x: Math.round(at.x) - 60, y: Math.round(at.y) - 40, w: 120, h: 80 });
+    })()`);
+    /**
+     * Deselected before asking. A selected object is lifted by `z-index: 1`,
+     * which would put it over the line whatever the layer did — and that is a
+     * different rule being tested by accident.
+     */
+    await page.eval('app.selection.clear()');
+
+    const over = await page.eval(`(() => {
+      const el = document.elementFromPoint(${Math.round(line.cx)}, ${Math.round(line.cy)});
+      return { type: el?.closest?.('[data-id]')?.dataset?.type ?? null, cls: el?.getAttribute?.('class') ?? null };
+    })()`);
+
+    assert.equal(over.type, 'card', `the card is on top of the line, not under it: ${JSON.stringify(over)}`);
+  });
+
   test('the map leaves them out', async () => {
     await twoCards();
     await offered();

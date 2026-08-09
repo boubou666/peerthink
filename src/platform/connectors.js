@@ -35,8 +35,19 @@ export function createConnectorLayer({ document, elements, store, selection }) {
 
   const svg = document.createElementNS(SVG, 'svg');
   svg.setAttribute('class', 'connectors');
-  // Behind every object, and the first child is the back of the layer.
-  layer.insertBefore(svg, layer.firstChild);
+
+  /**
+   * Appended, and put behind everything by the stylesheet rather than by where
+   * it sits among the children.
+   *
+   * The renderer keeps the layer's child order equal to the z-order of the
+   * objects *it* draws, and it does that by inserting each one before the
+   * previous one's next sibling — so anything parked at the front is pushed to
+   * the back of the list on the next sync, and a connector that was meant to be
+   * under the cards ends up painted over them. Depth that another component
+   * reorders is not depth; `z-index` on the element says it once.
+   */
+  layer.appendChild(svg);
 
   /** id → the group and the three shapes in it. */
   const nodes = new Map();

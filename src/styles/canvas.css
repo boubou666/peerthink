@@ -1056,6 +1056,14 @@ body:has(.board-page) { overflow: hidden; }
      one Chrome lays out, hit-tests and does not paint. */
   left: 0;
   top: 0;
+  /*
+   * Behind every object, said here rather than by being the first child: the
+   * renderer rewrites the order of the layer's children on every sync to match
+   * the z-order of the objects it draws, and an element it does not know about
+   * cannot hold a place in that list. `#layer` is transformed, so it is a
+   * stacking context of its own and this cannot fall out of the back of it.
+   */
+  z-index: -1;
   pointer-events: none;
 }
 

@@ -234,7 +234,7 @@ describe('a board with connectors on it', () => {
 
   test('pasting points the copies at each other', () => {
     const [a, b] = two();
-    board.connect(a.id, b.id);
+    const original = board.connect(a.id, b.id);
     selection.set([a.id, b.id]);
 
     const payload = board.copyable();
@@ -243,7 +243,11 @@ describe('a board with connectors on it', () => {
 
     const ids = placed.filter(isPlaced).map((o) => o.id);
     assert.deepEqual([copied.from, copied.to], ids);
-    assert.ok(!ids.includes(a.id) && copied.id !== undefined, 'and nothing kept an old id');
+
+    // Every id in the payload is replaced, the arrow's own included: two
+    // objects sharing an id is a document where an op means two things.
+    assert.notEqual(copied.id, original.id, 'the copy is its own object');
+    assert.ok(!ids.includes(a.id) && !ids.includes(b.id), 'and so are the cards it joins');
   });
 
   test('a payload of connectors alone pastes nothing', () => {
