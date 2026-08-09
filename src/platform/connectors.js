@@ -25,7 +25,7 @@
  * inside it world coordinates, and the question does not arise.
  */
 
-import { connectorGeometry, isConnector, labelPoint } from '../core/connectors.js';
+import { borderPoint, connectorGeometry, isConnector, labelPoint } from '../core/connectors.js';
 import { bbox } from '../core/geometry.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
@@ -64,6 +64,10 @@ export function createConnectorLayer({ document, elements, store, selection, fou
 
   /** id → the group, the three shapes in it, and the label over it. */
   const nodes = new Map();
+
+  /** What the last draw covered, so the preview can be framed with it. */
+  let drawnPoints = [];
+  let previewPoints = [];
 
   const shape = (name, className) => {
     const el = document.createElementNS(SVG, name);
@@ -135,6 +139,24 @@ export function createConnectorLayer({ document, elements, store, selection, fou
   };
 
   /**
+   * The arrow being dragged, before it exists.
+   *
+   * Drawn here rather than in the overlay with the marquee and the guides,
+   * because it is the *thing being made* rather than a mark about the gesture:
+   * it is in world coordinates, it is the shape the real one will be, and it
+   * has to be inside the box this element sizes to itself or it would be
+   * clipped out of its own preview.
+   */
+  const preview = document.createElementNS(SVG, 'g');
+  preview.setAttribute('class', 'connector-preview');
+  preview.style.display = 'none';
+
+  const previewLine = shape('line', 'connector-line');
+  const previewHead = shape('polygon', 'connector-head');
+  preview.append(previewLine, previewHead);
+  svg.appendChild(preview);
+
+  /**
    * Draw every connector the sheet holds, from wherever its ends are now.
    *
    * All of them on every change rather than only the ones that moved. A
@@ -192,9 +214,18 @@ export function createConnectorLayer({ document, elements, store, selection, fou
       nodes.delete(id);
     }
 
-    frame(bbox(points));
+    drawnPoints = points;
+    reframe();
     applySelection();
   }
+
+  const reframe = () => frame(bbox([...drawnPoints, ...previewPoints]));
+
+  const asPoints = (drawn) => [
+    { x: drawn.line.x1, y: drawn.line.y1, w: 0, h: 0 },
+    { x: drawn.line.x2, y: drawn.line.y2, w: 0, h: 0 },
+    ...drawn.head.map(([x, y]) => ({ x, y, w: 0, h: 0 })),
+  ];
 
   /**
    * Put the element where its lines are, at the size they need.
@@ -226,6 +257,56 @@ export function createConnectorLayer({ document, elements, store, selection, fou
     svg.setAttribute('viewBox', `${x} ${y} ${w} ${h}`);
   }
 
+  /**
+   * Show the arrow a drag is about to make.
+   *
+   * Over an object it would join, the preview is the connector itself — the
+   * same geometry, head and all, so what is released is what was seen. Over
+   * open board it is a line to the pointer, which is a question rather than an
+   * answer and is drawn dashed to say so.
+   */
+  function showPreview(from, to, point) {
+    const drawn = to ? connectorGeometry(from, to) : null;
+
+    if (drawn) {
+      previewLine.setAttribute('x1', drawn.line.x1);
+      previewLine.setAttribute('y1', drawn.line.y1);
+      previewLine.setAttribute('x2', drawn.line.x2);
+      previewLine.setAttribute('y2', drawn.line.y2);
+      previewHead.setAttribute('points', drawn.head.map(([x, y]) => `${x},${y}`).join(' '));
+      previewPoints = asPoints(drawn);
+    } else {
+      const start = borderPoint(from, point);
+      // The pointer is on the object it started from, and there is no line
+      // between a thing and itself.
+      if (!start) return hidePreview();
+
+      previewLine.setAttribute('x1', start.x);
+      previewLine.setAttribute('y1', start.y);
+      previewLine.setAttribute('x2', point.x);
+      previewLine.setAttribute('y2', point.y);
+      previewHead.setAttribute('points', '');
+      previewPoints = [
+        { x: start.x, y: start.y, w: 0, h: 0 },
+        { x: point.x, y: point.y, w: 0, h: 0 },
+      ];
+    }
+
+    // An attribute rather than a class, and removed rather than emptied: the
+    // stylesheet draws a question dashed and an answer solid.
+    if (drawn) preview.dataset.landing = '';
+    else delete preview.dataset.landing;
+
+    preview.style.display = '';
+    reframe();
+  }
+
+  function hidePreview() {
+    preview.style.display = 'none';
+    previewPoints = [];
+    reframe();
+  }
+
   function applySelection() {
     for (const [id, node] of nodes) {
       const on = selection.has(id);
@@ -242,6 +323,8 @@ export function createConnectorLayer({ document, elements, store, selection, fou
 
   return {
     sync,
+    showPreview,
+    hidePreview,
     applySelection,
     elementFor: (id) => nodes.get(id)?.group,
     destroy() {

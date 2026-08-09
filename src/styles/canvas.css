@@ -1328,3 +1328,52 @@ body:has(.board-page) { overflow: hidden; }
 .fmt-arrange[data-value="vertical"]::before { content: none; }
 .fmt-arrange[data-value="horizontal"] .fmt-bar { width: 3px; height: 12px; }
 .fmt-arrange[data-value="vertical"] .fmt-bar { width: 12px; height: 3px; }
+
+/* ---------------------------------------------------------------------------
+ * Dragging an arrow out of an object
+ *
+ * Four handles on the edges, shown on **hover** rather than on selection, so
+ * they and the resize handles are never under the pointer at the same moment —
+ * the corners belong to resizing and these do not. Hidden while a gesture is
+ * under way, because the card being dragged around is hovered by definition,
+ * and while text is being edited, where the pointer belongs to the caret.
+ * ------------------------------------------------------------------------ */
+
+.connect-handles { display: none; }
+.obj:hover .connect-handles { display: block; }
+#stage.gesturing .connect-handles,
+.obj.editing .connect-handles { display: none; }
+
+.connect-handle {
+  position: absolute;
+  width: calc(10px / var(--z));
+  height: calc(10px / var(--z));
+  background: var(--panel);
+  border: calc(1.5px / var(--z)) solid var(--accent);
+  border-radius: 50%;
+  cursor: crosshair;
+  /* Outside the object's own edge, so it never covers what is written there. */
+  --out: calc(-14px / var(--z));
+  --half: calc(-5px / var(--z));
+}
+.connect-handle:hover { background: var(--accent); }
+
+.connect-handle[data-connect="n"] { top: var(--out); left: 50%; margin-left: var(--half); }
+.connect-handle[data-connect="s"] { bottom: var(--out); left: 50%; margin-left: var(--half); }
+.connect-handle[data-connect="w"] { left: var(--out); top: 50%; margin-top: var(--half); }
+.connect-handle[data-connect="e"] { right: var(--out); top: 50%; margin-top: var(--half); }
+
+/* What the arrow would land on. */
+.obj.connect-target { box-shadow: var(--shadow), 0 0 0 calc(2px / var(--z)) var(--accent); }
+
+/*
+ * The arrow being dragged. A question while it points at open board — dashed,
+ * and with no head, because it is not going anywhere yet — and the answer
+ * itself once it is over something it can join.
+ */
+.connector-preview .connector-line {
+  stroke: var(--accent);
+  stroke-dasharray: 6 5;
+}
+.connector-preview[data-landing] .connector-line { stroke-dasharray: none; }
+.connector-preview .connector-head { fill: var(--accent); }

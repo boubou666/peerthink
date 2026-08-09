@@ -1,4 +1,4 @@
-import { isConnector } from '../core/connectors.js';
+import { isConnector, isPlaced } from '../core/connectors.js';
 import { bbox, rectFromPoints } from '../core/geometry.js';
 import { hrefFor } from '../core/links.js';
 
@@ -36,6 +36,12 @@ export function createInput({
   board,
   commands,
   /**
+   * The layer that draws the arrows, for the one thing a gesture needs from it:
+   * the arrow being dragged, before it exists. Optional, so an app built
+   * without one simply has no such gesture.
+   */
+  connectors = null,
+  /**
    * Draw an object again, now that nobody is typing in it.
    *
    * A link becomes a link on blur rather than as it is typed: the view refuses
@@ -70,6 +76,25 @@ export function createInput({
     listeners.push(() => target.removeEventListener(type, fn, options));
   };
 
+  /**
+   * A gesture is under way, or it is over.
+   *
+   * The stage carries a class for it, because a pointer that is *doing*
+   * something should not also be offering to start something else: the handles
+   * an arrow is dragged from appear on hover, and hover is true of the card
+   * being dragged around under the pointer.
+   */
+  const begin = (next) => {
+    gesture = next;
+    stage.classList.add('gesturing');
+  };
+
+  const finish = () => {
+    gesture = null;
+    stage.classList.remove('gesturing');
+    stage.classList.remove('panning');
+  };
+
   // ---------- coordinates ----------
 
   const stagePoint = (e) => {
@@ -96,6 +121,19 @@ export function createInput({
 
     // inside the object being edited, let the caret do its job
     if (id && id === editingId && e.target.isContentEditable) return;
+
+    /**
+     * A handle on an object's edge: the start of an arrow to somewhere else.
+     *
+     * Before the branches below, because this press is not about the object it
+     * is on — it must not select it, raise it, or start dragging it around.
+     */
+    const arrowFrom = e.target.closest?.('[data-connect]');
+    if (arrowFrom && objEl && isPlaced(store.get(id))) {
+      e.preventDefault();
+      startConnect(id);
+      return;
+    }
 
     /**
      * A connector: selectable, and nothing else.
@@ -194,9 +232,8 @@ export function createInput({
   function onPointerUp(e) {
     if (!gesture) return;
     const active = gesture;
-    gesture = null;
+    finish();
     active.end(e);
-    stage.classList.remove('panning');
   }
 
   // ---------- pan & zoom ----------
@@ -205,7 +242,7 @@ export function createInput({
     const from = { x: e.clientX, y: e.clientY };
     const origin = { x: viewport.x, y: viewport.y };
     stage.classList.add('panning');
-    gesture = {
+    begin({
       move(ev) {
         viewport.moveTo(
           origin.x - (ev.clientX - from.x) / viewport.scale,
@@ -213,7 +250,7 @@ export function createInput({
         );
       },
       end() {},
-    };
+    });
   }
 
   function onWheel(e) {
@@ -244,7 +281,7 @@ export function createInput({
     const targets = board.snapTargets(new Set(ids));
     let moved = false;
 
-    gesture = {
+    begin({
       move(ev) {
         if (!moved && Math.hypot(ev.clientX - from.x, ev.clientY - from.y) < DRAG_SLOP) return;
         moved = true;
@@ -288,7 +325,56 @@ export function createInput({
         }
         store.pushHistory(forward, inverse);
       },
+    });
+  }
+
+  /**
+   * Drag an arrow from one object to another.
+   *
+   * What is under the pointer is asked of the document rather than of the
+   * board's own geometry: `elementFromPoint` answers with what a person can
+   * *see* there, which is the card on top rather than the envelope behind it —
+   * and that is the one they are pointing at.
+   *
+   * Nothing is written until the release, and nothing at all if it lands
+   * anywhere but on another object. A connector to nowhere is not a thing this
+   * app can hold, and inventing an object to end it on would be a second
+   * feature answering for this one.
+   */
+  function startConnect(fromId) {
+    let target = null;
+
+    const objectUnder = (ev) => {
+      const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest?.('[data-id]');
+      const id = el?.dataset.id;
+      return id && id !== fromId && isPlaced(store.get(id)) ? id : null;
     };
+
+    const mark = (id) => {
+      for (const el of layer.querySelectorAll('.connect-target')) el.classList.remove('connect-target');
+      if (id) layer.querySelector(`[data-id="${id}"]`)?.classList.add('connect-target');
+    };
+
+    const stop = () => {
+      mark(null);
+      connectors?.hidePreview();
+    };
+
+    begin({
+      move(ev) {
+        const from = store.get(fromId);
+        if (!from) return;
+
+        target = objectUnder(ev);
+        mark(target);
+        connectors?.showPreview(from, target ? store.get(target) : null, worldPoint(ev));
+      },
+      end() {
+        stop();
+        if (target) board.connect(fromId, target);
+      },
+      cancel: stop,
+    });
   }
 
   function drawGuides(guides) {
@@ -312,7 +398,7 @@ export function createInput({
     const [hx, hy] = RESIZE_DIRS[dir];
     let moved = false;
 
-    gesture = {
+    begin({
       move(ev) {
         moved = true;
         const p = worldPoint(ev);
@@ -339,7 +425,7 @@ export function createInput({
           [{ t: 'set', id, patch: start }],
         );
       },
-    };
+    });
   }
 
   // ---------- marquee ----------
@@ -352,7 +438,7 @@ export function createInput({
     el.id = 'marquee';
     overlay.appendChild(el);
 
-    gesture = {
+    begin({
       move(ev) {
         const p = stagePoint(ev);
         const screen = rectFromPoints(anchor, p);
@@ -373,7 +459,7 @@ export function createInput({
       end() {
         el.remove();
       },
-    };
+    });
   }
 
   // ---------- text editing ----------
@@ -635,6 +721,14 @@ export function createInput({
       e.preventDefault();
       board.deleteSelected();
     } else if (e.key === 'Escape') {
+      // A gesture that can be called off is called off first: Escape means
+      // "not this", and while an arrow is being dragged the thing it is not is
+      // the arrow rather than the selection.
+      if (gesture?.cancel) {
+        gesture.cancel();
+        finish();
+        return;
+      }
       selection.clear();
     } else if (e.key.startsWith('Arrow')) {
       if (!selection.size) return;
