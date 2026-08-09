@@ -11,8 +11,12 @@ describe('arranging', () => {
   before(async () => { page = await openApp(); });
 
   after(async () => {
-    assert.deepEqual(page.errors, [], 'the page logged errors');
+    // Closed before the assertion, so a page that logged an error is still
+    // torn down: a failure here would otherwise leak the session, and its
+    // coverage, into the rest of the run.
+    const { errors } = page;
     await page.close();
+    assert.deepEqual(errors, [], 'the page logged errors');
   });
 
   beforeEach(async () => {

@@ -71,10 +71,15 @@ const ARRANGE_LABELS = {
   vertical: 'Space evenly down',
 };
 
-/** Which way each control's bars are drawn: `x` across the button, `y` down it. */
+/**
+ * Which way an *alignment* control's bars are drawn: `x` across the button, `y`
+ * down it. The two spacing controls are a different shape — three bars and the
+ * air between them, with no line to land on — and carry no axis, so none of
+ * those rules reach them.
+ */
 const ARRANGE_AXIS = {
-  left: 'x', center: 'x', right: 'x', horizontal: 'x',
-  top: 'y', middle: 'y', bottom: 'y', vertical: 'y',
+  left: 'x', center: 'x', right: 'x',
+  top: 'y', middle: 'y', bottom: 'y',
 };
 
 export function FormatBar({ app, stage: stageEl, onProblem }) {
@@ -497,7 +502,6 @@ export function FormatBar({ app, stage: stageEl, onProblem }) {
                 type="button"
                 className="fmt-arrange"
                 data-value={axis}
-                data-axis={ARRANGE_AXIS[axis]}
                 aria-label={ARRANGE_LABELS[axis]}
                 title={ARRANGE_LABELS[axis]}
                 // Three objects before a gap can be made equal to another gap.
