@@ -263,16 +263,26 @@ describe('connectors', () => {
     /**
      * Press a handle, move through the points given, and release at the last.
      *
-     * The moves are not waited on: CDP dispatches them in order and the release
-     * is processed after them. What is waited for is the end of the gesture,
-     * which the preview going says — and which is true whether an arrow was
-     * made or not.
+     * Waited on twice, at the two moments that mean something. After the first
+     * move, for the arrow to be *being drawn*: the preview is hidden before a
+     * press as well as after one, so a test that only waited for it to be gone
+     * would pass whether or not the gesture ever started — and every assertion
+     * about what a drag did would be about a drag that did not happen. Then
+     * after the release, for it to be gone again, which is true whether an
+     * arrow was made or not.
+     *
+     * The moves in between are not waited on: CDP dispatches them in order and
+     * the release is processed after them.
      */
-    const dragFrom = async (at, ...through) => {
+    const dragFrom = async (at, [first, ...rest]) => {
       await page.mouse('mousePressed', at.x, at.y);
-      for (const point of through) await page.mouse('mouseMoved', point.x, point.y, { buttons: 1 });
 
-      const last = through[through.length - 1] ?? at;
+      await page.mouse('mouseMoved', first.x, first.y, { buttons: 1 });
+      await page.waitFor(`${PREVIEW} !== 'none'`, { label: 'the arrow being drawn' });
+
+      for (const point of rest) await page.mouse('mouseMoved', point.x, point.y, { buttons: 1 });
+
+      const last = rest[rest.length - 1] ?? first;
       await page.mouse('mouseReleased', last.x, last.y);
       await page.waitFor(`${PREVIEW} === 'none'`, { label: 'the gesture to end' });
     };
@@ -307,7 +317,7 @@ describe('connectors', () => {
 
       const target = await page.rect(b);
       await hoverOn(a);
-      await dragFrom(await handleOf(a), { x: target.cx, y: target.cy });
+      await dragFrom(await handleOf(a), [{ x: target.cx, y: target.cy }]);
 
       const made = await connectors();
       assert.equal(made.length, 1);
@@ -325,7 +335,7 @@ describe('connectors', () => {
 
       const target = await page.rect(b);
       await hoverOn(a);
-      await dragFrom(await handleOf(a), { x: target.cx, y: target.cy });
+      await dragFrom(await handleOf(a), [{ x: target.cx, y: target.cy }]);
 
       assert.equal(await page.eval(`app.store.get('${a}').x`), before, 'it did not move');
       assert.deepEqual(await page.eval('app.selection.list()'), [], 'and it was not selected');
@@ -336,7 +346,7 @@ describe('connectors', () => {
       await page.eval('app.selection.clear()');
 
       await hoverOn(a);
-      await dragFrom(await handleOf(a), { x: 700, y: 600 });
+      await dragFrom(await handleOf(a), [{ x: 700, y: 600 }]);
 
       assert.deepEqual(await connectors(), []);
       assert.equal(await page.eval(PREVIEW), 'none', 'and the line it was drawing is gone');
@@ -348,7 +358,10 @@ describe('connectors', () => {
 
       const box = await page.rect(a);
       await hoverOn(a);
-      await dragFrom(await handleOf(a), { x: box.cx, y: box.cy });
+      // Out over open board and back, so the arrow is genuinely being drawn
+      // before it is dropped where it started — a press and release without
+      // the journey would prove nothing about the landing.
+      await dragFrom(await handleOf(a), [{ x: box.cx + 240, y: box.cy }, { x: box.cx, y: box.cy }]);
 
       assert.deepEqual(await connectors(), []);
     });
@@ -401,7 +414,7 @@ describe('connectors', () => {
       // And the connector handle still connects.
       await hoverOn(a);
       const target = await page.rect(b);
-      await dragFrom(await handleOf(a), { x: target.cx, y: target.cy });
+      await dragFrom(await handleOf(a), [{ x: target.cx, y: target.cy }]);
       assert.equal((await connectors()).length, 1);
     });
 
@@ -413,7 +426,7 @@ describe('connectors', () => {
 
       for (let go = 0; go < 2; go++) {
         await hoverOn(a);
-        await dragFrom(await handleOf(a), { x: target.cx, y: target.cy });
+        await dragFrom(await handleOf(a), [{ x: target.cx, y: target.cy }]);
       }
 
       assert.equal((await connectors()).length, 1);
