@@ -358,10 +358,15 @@ describe('connectors', () => {
     // The `del` alone, without the cascade `deleteSelected` performs — which is
     // exactly the shape of the op another client sends.
     await page.eval(`app.store.apply([{ t: 'del', id: '${a}' }])`);
-    await page.eval('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))');
+
+    // A real condition rather than a couple of frames: the bar has nowhere to
+    // sit above an arrow with one end, so it goes.
+    await page.waitFor(`document.querySelector('[data-format-bar]') === null`, {
+      label: 'the bar to close',
+      context: 'document.querySelector("[data-format-bar]")?.innerText ?? "no bar"',
+    });
 
     assert.deepEqual(page.errors, [], 'the render survived a connector with one end');
-    assert.equal(await page.eval(`document.querySelector('[data-format-bar]') === null`), true);
     assert.equal(await page.eval(`Boolean(window.app?.store)`), true, 'and the board is still there');
   });
 
