@@ -191,10 +191,18 @@ export function createMinimap({
     goTo(event);
   }
 
+  /**
+   * Only while a press *this map started* is still down.
+   *
+   * `buttons` alone says a button is down somewhere, which is also true of a
+   * card being dragged across the board — and nothing captures that pointer, so
+   * those moves arrive here the moment it passes over the panel. Whoever is
+   * dragging a card past the corner did not ask to be taken somewhere else.
+   * `held` is set by our own `pointerdown` and by nothing else, so it is the
+   * question worth asking; `buttons` then covers the release we did not see.
+   */
   const onPointerMove = (event) => {
-    // Only while the press is still down. A capture is not held after the
-    // release, so `buttons` is what says this is a drag rather than a hover.
-    if (event.buttons & 1) goTo(event);
+    if (held && event.buttons & 1) goTo(event);
   };
 
   /**

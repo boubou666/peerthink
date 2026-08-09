@@ -70,14 +70,14 @@ describe('the map', () => {
   const addCard = (props) =>
     page.eval(`app.board.add('card', ${JSON.stringify(props)}).id`);
 
-  /** Everything the map is painted, in one number: enough to say it changed. */
-  const SIGNATURE = `(() => {
-    const el = document.querySelector('${CANVAS}');
-    const data = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
-    let sum = 0;
-    for (let i = 0; i < data.length; i++) sum = (sum + data[i] * (i % 7 + 1)) % 2147483647;
-    return sum;
-  })()`;
+  /**
+   * Everything the map is painted, as an encoded copy of it.
+   *
+   * The whole image rather than a checksum of it: two different maps that hash
+   * alike is a test that passes for a reason nobody chose, and a PNG of a
+   * hundred-odd square pixels is small enough to simply compare.
+   */
+  const SIGNATURE = `document.querySelector('${CANVAS}').toDataURL()`;
 
   const signature = () => page.eval(SIGNATURE);
 
@@ -200,6 +200,31 @@ describe('the map', () => {
   });
 
   /**
+   * A press that started on the board is the board's for its whole length.
+   * Nothing captures that pointer, so its moves arrive here as soon as it
+   * crosses the panel — and whoever is dragging a card past the corner did not
+   * ask to be taken somewhere else.
+   */
+  test('a drag that started on the board is not hijacked by crossing it', async () => {
+    const id = await addCard({ x: 0, y: 0, w: 300, h: 200 });
+    // Something far away, so the middle of what the map covers is nowhere near
+    // where the camera already is: a hijacked press at the middle of the map
+    // would otherwise ask for the position the camera is in and prove nothing.
+    await addCard({ x: 3000, y: 2000, w: 300, h: 200 });
+    await page.waitFor(`document.querySelector('[data-id="${id}"]') !== null`, { label: 'the card' });
+
+    const card = await page.rect(id);
+    const map = await box();
+    const before = await looking();
+
+    await page.drag({ x: card.cx, y: card.cy }, { x: map.cx, y: map.cy });
+
+    const after = await looking();
+    assert.equal(after.x, before.x, 'the camera did not move across');
+    assert.equal(after.y, before.y, 'nor down');
+  });
+
+  /**
    * The panel is over the stage, and the stage turns a press on empty space
    * into a marquee that clears the selection. A map that deselected whatever
    * you were working on every time you used it would be unusable with a
@@ -222,16 +247,32 @@ describe('the map', () => {
    */
   test('follows the theme when the machine changes it', async () => {
     await addCard({ x: 900, y: 600, w: 300, h: 200 });
-    const before = await signature();
 
     try {
+      // Light first, and asserted: whichever theme the machine running this is
+      // in, the change below has to be a change. Without it, a dark machine
+      // emulates dark, nothing happens, and the test says so for the wrong
+      // reason.
+      await page.session.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-color-scheme', value: 'light' }],
+      });
+      await page.waitFor(
+        `getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() === '#2f6df6'`,
+        { label: 'the light theme to start from' },
+      );
+
+      // Kept in the page so the comparison below is against the image itself
+      // rather than a few kilobytes of data URL sent back and forth.
+      await page.eval(`window.__mapWas = ${SIGNATURE}`);
+      const before = await signature();
+
       await page.session.send('Emulation.setEmulatedMedia', {
         features: [{ name: 'prefers-color-scheme', value: 'dark' }],
       });
 
       // The painting is what is under test, so that is what is waited for —
       // the tokens changing is the browser's part and lands a moment earlier.
-      await page.waitFor(`${SIGNATURE} !== ${before}`, {
+      await page.waitFor(`${SIGNATURE} !== window.__mapWas`, {
         label: 'the map to be painted in the theme now in force',
         context: `getComputedStyle(document.documentElement).getPropertyValue('--accent')`,
       });
