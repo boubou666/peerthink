@@ -1352,8 +1352,14 @@ body:has(.board-page) { overflow: hidden; }
   border: calc(1.5px / var(--z)) solid var(--accent);
   border-radius: 50%;
   cursor: crosshair;
-  /* Outside the object's own edge, so it never covers what is written there. */
-  --out: calc(-14px / var(--z));
+  /*
+   * Far enough out to clear the resize handles, which sit from five pixels
+   * outside the border to four inside it: a selected object that is also
+   * hovered shows both sets, and two targets that touch are one target with a
+   * seam down the middle. This leaves five clear pixels between them at any
+   * zoom, both being counter-scaled.
+   */
+  --out: calc(-20px / var(--z));
   --half: calc(-5px / var(--z));
 }
 .connect-handle:hover { background: var(--accent); }
