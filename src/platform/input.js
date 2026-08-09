@@ -5,6 +5,17 @@ import { hrefFor } from '../core/links.js';
 import { isTyping } from './typing.js';
 
 export const SNAP_PX = 6;       // snap radius, screen px
+/**
+ * How far outside an object the pointer can be and still be offered a
+ * connector from it, in screen pixels.
+ *
+ * The handles are drawn *outside* the border — they have to be, or they would
+ * be standing on the resize handles — so "hovering the object" is the wrong
+ * question to ask. A pointer moving out towards one leaves the object before it
+ * arrives, and a handle that disappears on the way to itself is a handle nobody
+ * can press. This is the whole affordance: the reach, not the hover.
+ */
+export const CONNECT_REACH = 30;
 export const DRAG_SLOP = 3;     // screen px before a click becomes a drag
 export const MIN_SIZE = 48;     // world units
 export const ZOOM_RATE = 0.002; // ≈1.27× per mouse-wheel notch
@@ -94,6 +105,49 @@ export function createInput({
     stage.classList.remove('gesturing');
     stage.classList.remove('panning');
   };
+
+  /**
+   * Which object the pointer is near enough to drag an arrow out of.
+   *
+   * A class rather than `:hover`, because the region is bigger than the object:
+   * it reaches `CONNECT_REACH` screen pixels past every edge, which is what
+   * makes the handles out there reachable at all. The last object in the
+   * z-order wins, so a card on an envelope offers its own handles rather than
+   * the envelope's.
+   */
+  let near = null;
+
+  const offerConnectors = (el) => {
+    if (el === near) return;
+    near?.classList.remove('near');
+    el?.classList.add('near');
+    near = el;
+  };
+
+  function trackReach(e) {
+    /**
+     * `e.target` is not always a node: an event dispatched at the window has
+     * the window as its target, and `Node.contains` throws rather than
+     * answering false for it. A `nodeType` is what says this is something the
+     * document can be asked about — and this runs on every pointer move, so it
+     * throwing is every pointer move throwing.
+     */
+    const on = e.target?.nodeType ? e.target : null;
+    if (gesture || editingId || !on || !stage.contains(on)) return offerConnectors(null);
+
+    const point = worldPoint(e);
+    const reach = CONNECT_REACH / viewport.scale;
+
+    let found = null;
+    for (const obj of store.all()) {
+      if (!isPlaced(obj)) continue;
+      if (point.x < obj.x - reach || point.x > obj.x + obj.w + reach) continue;
+      if (point.y < obj.y - reach || point.y > obj.y + obj.h + reach) continue;
+      found = obj.id;
+    }
+
+    offerConnectors(found ? layer.querySelector(`[data-id="${found}"]`) : null);
+  }
 
   // ---------- coordinates ----------
 
@@ -751,7 +805,10 @@ export function createInput({
   // ---------- wiring ----------
 
   listen(stage, 'pointerdown', onPointerDown);
-  listen(window, 'pointermove', (e) => gesture?.move(e));
+  listen(window, 'pointermove', (e) => {
+    gesture?.move(e);
+    trackReach(e);
+  });
   listen(window, 'pointerup', onPointerUp);
   listen(stage, 'wheel', onWheel, { passive: false });
   listen(stage, 'dblclick', onDoubleClick);
@@ -776,6 +833,7 @@ export function createInput({
     },
     destroy() {
       destroyed = true;
+      offerConnectors(null);
       for (const off of listeners) off();
       listeners.length = 0;
     },

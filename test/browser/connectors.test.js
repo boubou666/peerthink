@@ -287,6 +287,34 @@ describe('connectors', () => {
       await page.waitFor(`${PREVIEW} === 'none'`, { label: 'the gesture to end' });
     };
 
+    /**
+     * The one a jump cannot catch, and the reason this feature was unusable:
+     * the handles are drawn outside the border, so a pointer travelling out to
+     * one leaves the object on the way — and if the offer depended on being
+     * *over* the object, it went away before the pointer arrived. Every other
+     * test here moves the pointer in one hop, which is a path no hand takes.
+     */
+    test('a pointer that travels to a handle still finds it there', async () => {
+      const [a] = await twoCards();
+      await page.eval('app.selection.clear()');
+
+      const box = await page.rect(a);
+      await hover(a, { x: box.cx, y: box.cy });
+      const handle = await handleOf(a);
+
+      // Out across the border, two pixels at a time, the way a hand would.
+      for (let x = Math.round(box.x + box.w) - 6; x <= handle.x; x += 2) {
+        await page.mouse('mouseMoved', x, handle.y);
+      }
+
+      assert.equal(await shown(a), 'block', 'the offer survived the journey');
+      assert.equal(
+        await page.eval(`document.elementFromPoint(${handle.x}, ${handle.y})?.dataset?.connect ?? null`),
+        'e',
+        'and the handle is under the pointer, ready to be pressed',
+      );
+    });
+
     test('the handles are there on hover, and not before it', async () => {
       const [a] = await twoCards();
       await page.eval('app.selection.clear()');

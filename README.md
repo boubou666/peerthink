@@ -463,9 +463,16 @@ not a thing this document can hold, and inventing an object to end it on would
 be a second feature answering for this one. `Escape` gives up on the arrow
 rather than on the selection.
 
-**On hover rather than on selection**, which is what keeps them out of the
-resize handles' way: those appear for a single *selected* object at the eight
-compass points, so the two sets are never under the pointer at the same moment.
+**Offered by reach rather than by hover**, which is not a detail: the handles
+are drawn *outside* the border — they have to be, or they would be standing on
+the resize handles — so a pointer travelling out to one leaves the object before
+it arrives. Asking `:hover` about the object meant the handles vanished on the
+way to themselves, and nobody could press one. The input layer decides what is
+near instead: thirty screen pixels past every edge, topmost object wins.
+
+Near rather than selected is what keeps them out of the resize handles' way:
+those appear for a single *selected* object at the eight compass points, so the
+two sets are never under the pointer at the same moment.
 The four edges are also what an arrow means — it leaves an object through a
 side — and the corners stay resizing's. They are hidden while any gesture is
 under way, since the card being dragged around is hovered by definition, and
