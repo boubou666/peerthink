@@ -19,10 +19,15 @@ import { useAsk } from './AskDialog.jsx';
  * database. Sheets are part of the document and follow the document's rule.
  */
 export function SheetTabs({ app }) {
-  const { sheets, commands } = app;
+  const { sheets, selection, commands } = app;
 
   const [, bump] = useReducer((n) => n + 1, 0);
   useEffect(() => sheets.on(bump), [sheets, bump]);
+  /**
+   * And on the selection, for the one item in a tab's menu that is about what
+   * is selected rather than about the sheet.
+   */
+  useEffect(() => selection.on(bump), [selection, bump]);
 
   const [dialog, ask] = useAsk();
   const [menu, setMenu] = useState(null);
@@ -159,6 +164,31 @@ export function SheetTabs({ app }) {
                   aria-label={`${sheet.name}: actions`}
                   style={{ left: `${menu.left}px`, bottom: `${menu.bottom}px` }}
                 >
+                  {/*
+                    Where the selection can be sent, one entry per other sheet.
+                    This menu belongs to the sheet on screen — it is the only
+                    tab that has one — so the sheets it offers are the ones it
+                    is not, and each says which by name rather than by leaving
+                    the reader to work out what "there" meant.
+
+                    Absent with nothing selected, because then it is an offer
+                    to move nothing.
+                  */}
+                  {selection.size > 0 && list
+                    .filter((other) => other.id !== sheet.id)
+                    .map((other) => (
+                      <button
+                        key={other.id}
+                        type="button"
+                        role="menuitem"
+                        data-action="move-to"
+                        data-target={other.id}
+                        onClick={() => { setMenu(null); commands.moveSelectionTo(other.id); }}
+                      >
+                        Move selection to “{other.name}”
+                      </button>
+                    ))}
+
                   <button type="button" role="menuitem" data-action="rename-sheet" onClick={() => rename(sheet)}>
                     Rename
                   </button>

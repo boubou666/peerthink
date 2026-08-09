@@ -270,21 +270,25 @@ export class Board {
   // ---------- editing ----------
 
   /**
-   * Delete the selection. An envelope's contents are not swept up with it.
+   * Take objects off the sheet, and the connectors that pointed at them with
+   * them — an arrow to something that is not there is not a thing anybody drew.
    *
-   * The connectors that pointed at what is going do go, though — an arrow to
-   * something that is not there is not a thing anybody drew — and in the same
-   * batch, so one undo puts the whole picture back rather than the cards first
-   * and the arrows after.
+   * One batch, so one undo puts the whole picture back rather than the cards
+   * first and the arrows after.
    */
-  deleteSelected() {
-    const ids = this.selection.list();
+  remove(ids) {
     if (!ids.length) return false;
 
     const doomed = new Set(ids);
     for (const obj of connectorsTouching(this.store.all(), ids)) doomed.add(obj.id);
 
     this.store.apply([...doomed].map((id) => ({ t: 'del', id })));
+    return true;
+  }
+
+  /** Delete the selection. An envelope's contents are not swept up with it. */
+  deleteSelected() {
+    if (!this.remove(this.selection.list())) return false;
     this.selection.clear();
     return true;
   }

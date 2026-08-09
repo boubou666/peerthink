@@ -259,6 +259,37 @@ export function createApp({
     },
 
     /**
+     * Send the selection to another sheet, and follow it there.
+     *
+     * A move is a copy and a delete, made in that order on two sheets — which
+     * is not a compromise but the only shape that fits the undo model: a
+     * sheet's history travels with the sheet, so a change that spanned two of
+     * them would have to live in one stack and be invisible from the other.
+     * This way each sheet holds its own half, and undo on either does what it
+     * says: on the one they left, they come back; on the one they arrived at,
+     * they go.
+     *
+     * Following them is what makes that legible rather than surprising — and
+     * it is what "move it there" means when a person says it out loud. They
+     * land where the camera is looking on the sheet they arrive on, selected,
+     * which is what anybody who has just moved something wants to be true.
+     *
+     * The set that moves is the one copying takes: the selection, what its
+     * envelopes hold, and the arrows between them.
+     */
+    moveSelectionTo(sheetId) {
+      if (!sheets.has(sheetId) || sheetId === sheets.activeId) return false;
+
+      const moving = board.copyable();
+      if (!moving.length) return false;
+
+      board.remove(moving.map((obj) => obj.id));
+      sheets.select(sheetId);
+      board.paste(moving, viewport.center(...stageSize()));
+      return true;
+    },
+
+    /**
      * The sheet commands are the model's, unwrapped: what the screen does when
      * the sheet on it changes is the subscription above, which does not care
      * whether the change came from this person or another one.

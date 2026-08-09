@@ -17,6 +17,7 @@ npm start        # serve the built site
 
 | | |
 |---|---|
+| **Sheets** | Several canvases per board — and the selection can be sent from one to another, arrows and all |
 | **Boards** | Many per workspace — listed, renamed, deleted; the board id lives in the URL |
 | **Cards** | Notes with editable text, resizable from eight handles — and formattable: any background and text colour (transparent included), font, size and alignment |
 | **Envelopes** | Grouping containers — dragging one carries everything fully inside it, transitively |
@@ -53,6 +54,7 @@ npm start        # serve the built site
 | Label an arrow | Double-click the line, or select it and press "Add label" — the words are written where they are drawn |
 | Snapping | On by default; hold `Alt` to disable |
 | Find | `⌘/Ctrl+F`; `Enter` and `Shift+Enter` step through the matches, `Escape` closes |
+| Move to a sheet | Select something, open the current tab's menu, and pick the sheet to send it to — you go with it |
 | Undo / redo | `⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z` |
 | Fit / reset zoom | `Shift+1` / `Shift+0` |
 
@@ -550,6 +552,29 @@ What the search turned up is a second set of ids — `Selection` again, since th
 is exactly what it is — kept apart from the selection proper because the two mean
 different things to every key on the keyboard. Nobody searching for a word means
 to delete every card holding it.
+
+### Moving work between sheets
+
+Select something, open the menu on the tab you are on, and pick another sheet:
+the objects go there — with what their envelopes hold and the arrows between
+them, the set copying already takes — and **you go with them**.
+
+**A move is a copy and a delete, made in that order on two sheets**, and that is
+not a compromise. A sheet's history travels with the sheet, which is what makes
+undo mean "undo what happened on the canvas I am looking at"; a change spanning
+two sheets would have to live in one stack and be invisible from the other. This
+way each sheet holds its own half: undo where they arrived takes them away, undo
+where they were puts them back, and neither is a surprise.
+
+Following them is what makes that legible rather than strange, and it is what
+"move it there" means when somebody says it out loud. They land where the camera
+is looking on the sheet they arrive on, selected, which is what anybody who has
+just moved something wants to be true.
+
+It also means the ops need nothing new: every one of them is made while its own
+sheet is on screen, so they are addressed and broadcast exactly as any other
+edit is. The alternative — writing to a document nobody is looking at — would
+have needed a word in the sheet vocabulary and a second path through sync.
 
 ### Lining up and spacing out
 
@@ -1149,6 +1174,12 @@ and cannot be moved along it or off it, which is the next thing this will want:
 two arrows crossing put their labels in the same place. An arrow dragged onto open board is
 dropped rather than making a card to land on, which is the thing most tools do
 next and a decision of its own.
+
+Moving objects between sheets has no drag: you cannot drop a selection onto a
+tab, which is the gesture people try first. The menu was what could be built on
+the affordance already there — the tab strip's own — and a drag from the canvas
+onto a tab is a gesture that has to survive the marquee, the object drag and the
+scroll the strip already does.
 
 Arranging has no shortcuts and no rulers: the eight controls are pointer-only,
 there is no "make these the same size", and nothing is arranged *relative to*
