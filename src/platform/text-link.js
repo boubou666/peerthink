@@ -76,20 +76,31 @@ export function createTextLinks({ document, window, store }) {
     const head = document.createTextNode(MARK);
     const tail = document.createTextNode(MARK);
 
-    const to = range.cloneRange();
-    to.collapse(false);
-    to.insertNode(tail);
+    /**
+     * Taken out whatever happens. These characters are in a live field, and a
+     * field is read back through `innerText` by the next thing typed into it —
+     * so a mark left behind by a throw would be written into the store and
+     * broadcast to everyone else on the board. `remove()` on a node that was
+     * never inserted does nothing, which is the case where the first
+     * `insertNode` is what threw.
+     */
+    let marked;
+    try {
+      const to = range.cloneRange();
+      to.collapse(false);
+      to.insertNode(tail);
 
-    const from = range.cloneRange();
-    from.collapse(true);
-    from.insertNode(head);
+      const from = range.cloneRange();
+      from.collapse(true);
+      from.insertNode(head);
 
-    const marked = field.innerText;
-
-    head.remove();
-    tail.remove();
-    // The marks left split text nodes either side of where they were.
-    field.normalize();
+      marked = field.innerText;
+    } finally {
+      head.remove();
+      tail.remove();
+      // The marks left split text nodes either side of where they were.
+      field.normalize();
+    }
 
     const start = marked.indexOf(MARK);
     const second = marked.indexOf(MARK, start + 1);

@@ -50,7 +50,7 @@ const SIZE_LABELS = { sm: 'S', md: 'M', lg: 'L', xl: 'XL' };
 const FONT_LABELS = { sans: 'Sans', serif: 'Serif', mono: 'Mono' };
 const CORNER_LABELS = { round: 'Rounded corners', square: 'Square corners' };
 
-export function FormatBar({ app, stage: stageEl }) {
+export function FormatBar({ app, stage: stageEl, onProblem }) {
   const { store, selection, viewport } = app;
 
   /**
@@ -158,6 +158,13 @@ export function FormatBar({ app, stage: stageEl }) {
    * keeping what was typed — the usual reason is a typo in the scheme, and
    * throwing the rest of the address away to say so helps nobody. `linkFrom`
    * accepts a bare domain here, which prose deliberately does not.
+   *
+   * The insertion can still come to nothing, once: the words are a pair of
+   * offsets into the string they were measured in, and somebody else on the
+   * board can replace that string while the question is open. Asking again
+   * would be no use — those offsets are gone whatever is typed next — so this
+   * is reported the way every other thing the canvas could not do is, in a
+   * sentence the shell writes.
    */
   const addLink = async () => {
     const chosen = app.textLinks.capture();
@@ -182,7 +189,7 @@ export function FormatBar({ app, stage: stageEl }) {
 
       const href = linkFrom(answer);
       if (href) {
-        chosen.insert(href);
+        if (!chosen.insert(href)) onProblem?.('link-lost');
         return;
       }
       typed = answer;

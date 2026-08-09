@@ -201,8 +201,24 @@ export function linkRuns(text) {
  */
 export const displayText = (text) => linkRuns(text).map((run) => run.text).join('');
 
-/** The characters that put `label` in a document as a link to `href`. */
-const linkSource = (label, href) => `[${label}](${href})`;
+/**
+ * The characters that put `label` in a document as a link to `href`, read back
+ * before they are handed over.
+ *
+ * The address may hold one level of balanced brackets and no more — that is
+ * what keeps `Ruby_(gem)` readable — so an address with an unbalanced one, or a
+ * nested pair, is written down as a *different, shorter* address with the rest
+ * of it left as prose. A link pointing somewhere nobody chose is worse than an
+ * ugly one, so the recogniser is asked, and only an address it cannot read back
+ * has its brackets percent-encoded.
+ */
+const linkSource = (label, href) => {
+  const written = `[${label}](${href})`;
+  const [run, ...rest] = linkRuns(written);
+  if (!rest.length && run?.href === href && run.source === written) return written;
+
+  return `[${label}](${href.replace(/\(/g, '%28').replace(/\)/g, '%29')})`;
+};
 
 /**
  * An address somebody typed into a field that asked for one, as an href.

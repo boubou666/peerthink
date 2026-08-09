@@ -294,7 +294,17 @@ string, which would disagree with the first one the day somebody pressed Enter.
 What comes back is two offsets into exactly the string the store holds, so the
 change itself is arithmetic in `core/`, applied as one recorded `set`: undo,
 autosave and the other people on the board all follow from that and none of them
-had to be arranged.
+had to be arranged. Offsets are only true of the string they were measured in,
+so an answer arriving for a string somebody else has replaced meanwhile is
+dropped rather than applied — and said out loud, because a person who typed an
+address and watched nothing happen is owed the reason.
+
+The address is read back before it is written down. It may hold one level of
+balanced brackets and no more — which is what keeps `Ruby_(gem)` legible — so an
+address with an unbalanced one would be stored as a *shorter* address with the
+rest left as prose. `linkSource` asks the recogniser, and percent-encodes the
+brackets only of an address it cannot read back: a link pointing somewhere
+nobody chose is worse than an ugly one.
 
 The control is on the format bar rather than in a bar of its own — that bar is
 already the thing that appears above what you are working on. It is offered for a

@@ -112,7 +112,9 @@ export function BoardCanvas({ boardId, onReady, onSaveStatus, onProblem }) {
       </div>
 
       {app && <Toolbar app={app} />}
-      {app && <FormatBar app={app} stage={stage.current} />}
+      {/* `onProblem` because one of its controls can come to nothing through
+          somebody else's edit, and saying so is the shell's job. */}
+      {app && <FormatBar app={app} stage={stage.current} onProblem={onProblem} />}
       {app && <SheetTabs app={app} />}
 
       <div id="hint">

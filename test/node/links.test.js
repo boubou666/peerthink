@@ -317,6 +317,27 @@ describe('turning a run of text into a link', () => {
     assert.equal(linkedText('abc', 2, 1, 'https://a.test'), 'abc', 'an end before the start is empty');
   });
 
+  /**
+   * The address is written into a string a recogniser has to read back, and the
+   * recogniser follows one level of balanced brackets. So the round trip is the
+   * thing under test here, not the characters: a link that comes back pointing
+   * at a shorter address is a link to somewhere nobody chose.
+   */
+  test('an address whose brackets cannot be read back has them encoded', () => {
+    const written = linkedText('x', 0, 1, 'https://a.test/p)');
+    assert.equal(written, '[x](https://a.test/p%29)');
+    assert.deepEqual(hrefs(written), ['https://a.test/p%29'], 'and the whole address survives');
+
+    assert.equal(linkedText('x', 0, 1, 'https://a.test/p('), '[x](https://a.test/p%28)');
+    assert.equal(linkedText('x', 0, 1, 'https://a.test/(a(b)c)'), '[x](https://a.test/%28a%28b%29c%29)');
+  });
+
+  test('and one whose brackets can is left readable', () => {
+    const written = linkedText('x', 0, 1, 'https://en.wikipedia.org/wiki/Ruby_(gem)');
+    assert.equal(written, '[x](https://en.wikipedia.org/wiki/Ruby_(gem))');
+    assert.deepEqual(hrefs(written), ['https://en.wikipedia.org/wiki/Ruby_(gem)']);
+  });
+
   test('an empty range is nothing to label', () => {
     assert.equal(linkedText('abc', 1, 1, 'https://a.test'), 'abc');
     assert.equal(linkedText(null, 0, 0, 'https://a.test'), '');

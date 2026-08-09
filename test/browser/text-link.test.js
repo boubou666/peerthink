@@ -376,6 +376,28 @@ describe('a link in the selected text', () => {
       })()`), null);
     });
 
+    test('and the person who typed the address is told it came to nothing', async () => {
+      const id = await addCard('read the roadmap before Friday');
+      await selectWord(id, 'roadmap');
+      await offered();
+      await clickSelector(page, LINK);
+
+      // Somebody else's edit, landing while the question is open — the offsets
+      // the words were measured at are gone.
+      await page.eval(`app.store.apply([{ t: 'set', id: '${id}', patch: { text: 'somebody else wrote this' } }])`);
+      await answerAsk(page, 'https://plan.test/q');
+
+      await page.waitFor(`document.querySelector('[data-board-notice]') !== null`, {
+        label: 'the notice',
+        context: 'document.body.innerText',
+      });
+      assert.match(
+        await page.eval(`document.querySelector('[data-board-notice]').textContent`),
+        /changed since you selected it/,
+      );
+      assert.equal(await text(id), 'somebody else wrote this');
+    });
+
     test('an answer for a string the field no longer holds is dropped', async () => {
       const id = await addCard('read the roadmap before Friday');
       await selectWord(id, 'roadmap');
