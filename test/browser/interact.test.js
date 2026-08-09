@@ -349,6 +349,182 @@ describe('interaction', () => {
     });
   });
 
+  describe('links', () => {
+    /**
+     * Where a link is on screen. The anchor's own box, since that is the thing
+     * being aimed at rather than the object holding it.
+     */
+    const linkBox = (id) => page.eval(`(() => {
+      const a = document.querySelector('[data-id="${id}"] a[data-link]');
+      if (!a) return null;
+      const r = a.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, right: r.right };
+    })()`);
+
+    /** What `window.open` was asked to do, without a tab actually opening. */
+    const watchOpen = () => page.eval(`(() => {
+      window.__opened = [];
+      window.open = (...args) => { window.__opened.push(args); return null; };
+    })()`);
+    const opened = () => page.eval('window.__opened');
+
+    const linked = async (text = 'go https://example.test/a now') => {
+      const id = await add('card', { x: 100, y: 100, w: 300, h: 120, text });
+      await watchOpen();
+      return id;
+    };
+
+    test('a click on a link opens it in a new tab, with noopener', async () => {
+      const id = await linked();
+      const box = await linkBox(id);
+      await page.click(box.x, box.y);
+
+      assert.deepEqual(await opened(), [['https://example.test/a', '_blank', 'noopener,noreferrer']]);
+    });
+
+    test('and selects the object, as any other click on it does', async () => {
+      const id = await linked();
+      const box = await linkBox(id);
+      await page.click(box.x, box.y);
+      assert.deepEqual(await selected(), [id]);
+    });
+
+    /** Dragging an object that happens to hold a link is a drag. */
+    test('dragging from a link moves the object and opens nothing', async () => {
+      const id = await linked();
+      const box = await linkBox(id);
+      await page.drag({ x: box.x, y: box.y }, { x: box.x + 120, y: box.y + 60 });
+
+      assert.deepEqual(await opened(), []);
+      assert.equal((await pos(id)).x, 220, 'the card did not move');
+    });
+
+    /** Adding to a selection is not a request for a browser tab. */
+    test('shift-clicking a link selects instead of opening', async () => {
+      const other = await add('card', { x: 600, y: 600 });
+      const id = await linked();
+      await page.eval(`app.selection.set(["${other}"])`);
+
+      const box = await linkBox(id);
+      await page.click(box.x, box.y, { modifiers: SHIFT });
+
+      assert.deepEqual(await opened(), []);
+      assert.deepEqual((await selected()).sort(), [id, other].sort());
+    });
+
+    /**
+     * Inside the field being edited, a click belongs to the caret — the same
+     * rule that lets you put the cursor anywhere in a card you are writing.
+     */
+    test('a click inside a link while editing places the caret and opens nothing', async () => {
+      const id = await linked();
+      const box = await linkBox(id);
+
+      await page.dblclick(box.x, box.y);
+      await page.waitFor(`app.input.editingId === "${id}"`, { label: 'the card to be in edit mode' });
+      await watchOpen();
+      await page.click(box.x, box.y);
+
+      assert.deepEqual(await opened(), []);
+      assert.equal(await page.eval(`app.input.editingId === "${id}"`), true, 'still editing');
+      await blur();
+    });
+
+    /**
+     * The view will not write to a focused field, so a URL becomes a link when
+     * the person stops typing — which is a redraw nothing else would ask for,
+     * since leaving a field records history without applying an op.
+     */
+    test('a URL typed into a card becomes a link when the field is left', async () => {
+      const id = await add('card', { x: 100, y: 100, w: 300, h: 120, text: '' });
+      await page.dblclick(150, 130);
+      await page.waitFor(`app.input.editingId === "${id}"`, { label: 'the card to be in edit mode' });
+
+      await page.type('read https://typed.test/x');
+      assert.equal(
+        await page.eval(`document.querySelectorAll('[data-id="${id}"] a[data-link]').length`),
+        0,
+        'not while it is being typed',
+      );
+
+      await blur();
+      await page.waitFor(`document.querySelectorAll('[data-id="${id}"] a[data-link]').length === 1`, {
+        label: 'the link to appear on blur',
+      });
+      assert.equal(await page.eval(`app.store.get("${id}").text`), 'read https://typed.test/x');
+    });
+
+    /**
+     * The anchor's own activation is cancelled, so this app is the only thing
+     * that opens a board's links.
+     *
+     * Chrome happens not to activate a link inside a `contenteditable` on a
+     * plain click, so nothing was visibly wrong — but that is the browser's
+     * habit, and the anchor carries `target="_blank"`, so an engine or a gesture
+     * that does activate it would open a second tab beside ours.
+     */
+    test('the click default is cancelled, so nothing else opens the link', async () => {
+      const id = await linked();
+      await page.eval(`
+        window.__prevented = null;
+        document.addEventListener('click', (e) => {
+          if (e.target.closest?.('[data-link]')) window.__prevented = e.defaultPrevented;
+        });
+      `);
+
+      const box = await linkBox(id);
+      await page.click(box.x, box.y);
+      assert.equal(await page.eval('window.__prevented'), true);
+    });
+
+    test('and not cancelled while the card is being edited, where it is the caret’s', async () => {
+      const id = await linked();
+      const box = await linkBox(id);
+      await page.dblclick(box.x, box.y);
+      await page.waitFor(`app.input.editingId === "${id}"`, { label: 'the card to be in edit mode' });
+
+      await page.eval(`
+        window.__prevented = null;
+        document.addEventListener('click', (e) => {
+          if (e.target.closest?.('[data-link]')) window.__prevented = e.defaultPrevented;
+        });
+      `);
+      await page.click(box.x, box.y);
+
+      assert.equal(await page.eval('window.__prevented'), false);
+      await blur();
+    });
+
+    /**
+     * The second look, which is the only reason it exists. The view builds every
+     * anchor through `hrefFor`, so an href like this cannot arrive by any route
+     * the app has — but the cost of checking again is one `new URL` against
+     * something running in this origin with this session.
+     */
+    test('an href tampered with in the DOM is still not opened', async () => {
+      const id = await linked();
+      await page.eval(`
+        document.querySelector('[data-id="${id}"] a[data-link]')
+          .setAttribute('href', 'javascript:window.__ran = 1');
+      `);
+
+      const box = await linkBox(id);
+      await page.click(box.x, box.y);
+
+      assert.deepEqual(await opened(), [], 'it was handed to window.open');
+      assert.equal(await page.eval('window.__ran ?? null'), null);
+    });
+
+    test('a javascript: URL in a card is never a link and never opened', async () => {
+      const id = await linked('try javascript:alert(1) please');
+      assert.equal(await linkBox(id), null, 'it was rendered as a link');
+
+      // And a click where it sits does nothing but select.
+      await page.click(150, 130);
+      assert.deepEqual(await opened(), []);
+    });
+  });
+
   describe('text editing', () => {
     test('double-click focuses the field and typing reaches the store', async () => {
       const id = await add('card', { x: 200, y: 200, text: '' });

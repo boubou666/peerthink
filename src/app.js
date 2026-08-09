@@ -15,6 +15,7 @@ import { createRenderer } from './platform/renderer.js';
 import { createInput } from './platform/input.js';
 import { createClipboard } from './platform/clipboard.js';
 import { createImageImport } from './platform/images.js';
+import { createLinks } from './platform/links.js';
 import { createCursors } from './platform/cursors.js';
 import { createFlushOnHide } from './platform/lifecycle.js';
 import { createPngExporter } from './platform/export-png.js';
@@ -50,6 +51,13 @@ export function createApp({
   namespace,
   now,
   seed = seedBoard,
+  /**
+   * What is at a link, asked of something that can actually fetch it — see
+   * `platform/links.js` for why that cannot be this browser. Absent, a hovered
+   * link says it cannot be checked from here, which is the honest state of a
+   * board running with no project.
+   */
+  fetchPreview,
   /**
    * Something the user did that produced nothing, by a code the shell turns
    * into a sentence — a pasted file that was not a picture this can hold, so
@@ -199,8 +207,22 @@ export function createApp({
   const exporter = createPngExporter({ document, window });
   const views = createViews({ document });
   const renderer = createRenderer({ document, elements: dom, store, viewport, selection, views, scheduler: clock, ResizeObserver });
-  const input = createInput({ document, window, elements: dom, store, selection, viewport, board, commands });
+  const input = createInput({
+    document,
+    window,
+    elements: dom,
+    store,
+    selection,
+    viewport,
+    board,
+    commands,
+    // Leaving a field applies no op, so nothing else would redraw it — and the
+    // view will not touch a field while it is focused. This is what turns a URL
+    // just typed into a link.
+    relink: (id) => renderer.sync(new Set([id])),
+  });
   const images = createImageImport({ document, window });
+  const links = createLinks({ document, elements: dom, viewport, scheduler: clock, fetchPreview });
   const clipboard = createClipboard({ document, elements: dom, selection, viewport, board, images, onProblem });
 
   let autosave = null;
@@ -407,6 +429,7 @@ export function createApp({
     commands,
     renderer,
     input,
+    links,
     clipboard,
     images,
     exporter,
@@ -427,6 +450,7 @@ export function createApp({
       // anything else: an image still being decoded would otherwise land in a
       // store nothing is drawing.
       clipboard.destroy();
+      links.destroy();
       renderer.destroy();
     },
   };

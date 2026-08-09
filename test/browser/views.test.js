@@ -121,6 +121,102 @@ describe('views', () => {
     });
   });
 
+  describe('links in text', () => {
+    /** Every anchor in a field, as what it says and where it points. */
+    const anchors = (id, sel = '[data-field="text"]') => page.eval(`
+      [...document.querySelectorAll('[data-id="${id}"] ${sel} a')].map((a) => ({
+        text: a.textContent,
+        href: a.getAttribute('href'),
+        link: 'link' in a.dataset,
+        target: a.target,
+        rel: a.rel,
+      }))`);
+
+    test('a URL in a card becomes an anchor, and the prose around it does not', async () => {
+      const id = await add('card', { x: 0, y: 0, text: 'see https://example.test/a for more' });
+
+      assert.deepEqual(await anchors(id), [{
+        text: 'https://example.test/a',
+        href: 'https://example.test/a',
+        link: true,
+        target: '_blank',
+        // What stops a page opened from a board reaching back through opener.
+        rel: 'noopener noreferrer',
+      }]);
+      assert.equal(await html(id, '[data-field="text"]'), 'see https://example.test/a for more');
+    });
+
+    test('the text stays exactly what was typed, href normalised separately', async () => {
+      const id = await add('card', { x: 0, y: 0, text: 'www.Example.test/Path' });
+      const [link] = await anchors(id);
+      assert.equal(link.text, 'www.Example.test/Path');
+      assert.equal(link.href, 'https://www.example.test/Path');
+    });
+
+    test('envelope titles and list rows get them too', async () => {
+      const envelope = await add('envelope', { x: 0, y: 0, title: 'plan https://a.test' });
+      assert.equal((await anchors(envelope, '[data-field="title"]')).length, 1);
+
+      const list = await add('list', { x: 0, y: 400, title: 'links https://b.test' });
+      await page.eval(`app.store.apply([{t:'set', id:"${list}", patch:{items:[
+        {id:'L1', text:'row https://c.test', done:false}
+      ]}}], false)`);
+      assert.equal((await anchors(list, '[data-field="title"]')).length, 1);
+      assert.equal((await anchors(list, '[data-item-id="L1"]')).length, 1);
+    });
+
+    /**
+     * The security boundary, at the render side. A `javascript:` href in a card
+     * would run in this origin with this session, so it never becomes one.
+     */
+    test('a scheme that is not http or https is left as characters', async () => {
+      const text = 'try javascript:alert(1) or data:text/html;base64,PHN2Zz4=';
+      const id = await add('card', { x: 0, y: 0, text });
+
+      assert.deepEqual(await anchors(id), []);
+      assert.equal(await html(id, '[data-field="text"]'), text);
+    });
+
+    /**
+     * The other half of it: text is built out of nodes, never out of markup, so
+     * a card cannot write the page. A board's text arrives from anyone
+     * authorised to edit it.
+     */
+    test('text that looks like markup is text', async () => {
+      const text = '<img src=x onerror="window.__pwned = 1"><b>bold?</b>';
+      const id = await add('card', { x: 0, y: 0, text });
+
+      assert.equal(await html(id, '[data-field="text"]'), text, 'shown as the characters it is');
+      assert.equal(await page.eval(`document.querySelectorAll('[data-id="${id}"] img, [data-id="${id}"] b').length`), 0);
+      assert.equal(await page.eval('window.__pwned ?? null'), null);
+    });
+
+    test('a link that stops being one goes back to text', async () => {
+      const id = await add('card', { x: 0, y: 0, text: 'https://a.test' });
+      assert.equal((await anchors(id)).length, 1);
+
+      await page.eval(`app.store.apply([{t:'set', id:"${id}", patch:{text:'no link now'}}], false)`);
+      assert.deepEqual(await anchors(id), []);
+      assert.equal(await html(id, '[data-field="text"]'), 'no link now');
+    });
+
+    /**
+     * `update` runs for every op that touches an object — every frame of a drag
+     * — and rebuilding a field means rebuilding its anchors. Unchanged text is
+     * left alone, which is what the `WeakMap` in the view is for.
+     */
+    test('unchanged text is not rebuilt', async () => {
+      const id = await add('card', { x: 0, y: 0, text: 'see https://a.test' });
+      const same = await page.eval(`(() => {
+        const before = document.querySelector('[data-id="${id}"] a');
+        app.store.apply([{ t: 'set', id: "${id}", patch: { x: 40 } }], false);
+        app.store.apply([{ t: 'set', id: "${id}", patch: { x: 80 } }], false);
+        return document.querySelector('[data-id="${id}"] a') === before;
+      })()`);
+      assert.ok(same, 'moving the card rebuilt its text');
+    });
+  });
+
   describe('envelope', () => {
     test('renders its title', async () => {
       const id = await add('envelope', { x: 0, y: 0, title: 'Ideas' });

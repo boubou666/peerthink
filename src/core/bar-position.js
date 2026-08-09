@@ -1,9 +1,10 @@
 /**
- * Where a floating bar sits above a selection, in viewport coordinates.
+ * Where floating chrome sits, in viewport coordinates.
  *
  * Pure arithmetic, and in core/ so it can be tested without a browser — the
- * clamping is the fiddly part of the format bar and the part most worth
- * pinning, and a component in a .jsx file cannot be imported by `node --test`.
+ * clamping is the fiddly part of both the format bar and the link popover, and
+ * the part most worth pinning. A component in a .jsx file cannot be imported by
+ * `node --test`, and neither can anything that reaches for a DOM rectangle.
  */
 
 const GAP = 14;
@@ -56,3 +57,38 @@ export function barPosition(objects, viewport, stage, width = 0) {
   };
 }
 
+/**
+ * Where a popover sits relative to the thing it is about.
+ *
+ * Below it, which is where a tooltip goes and where the pointer already is not —
+ * a panel over the word being hovered hides the word and then the pointer is
+ * inside it. Above only when below will not fit, measured against the whole
+ * popover rather than its top edge, since the reason to flip is that the bottom
+ * would be off screen.
+ *
+ * `x` is the popover's **left edge**, not its centre: it is anchored to the
+ * start of the link rather than centred on it, because a link can be a whole
+ * line wide and a panel centred on a long one drifts away from where the
+ * pointer is. Clamped so it stays on screen, and centred instead when it is
+ * wider than the stage, which is the same "clip evenly rather than pin one
+ * edge" answer `barPosition` gives.
+ *
+ * `rect` is the link's box in viewport coordinates — what
+ * `getBoundingClientRect` returns. `size` is 0 on the first paint, when the
+ * clamp simply does less.
+ */
+export function popoverPosition(rect, stage, size = { width: 0, height: 0 }) {
+  const room = stage.height - (rect.y + rect.h) - GAP - MIN_MARGIN;
+  const below = room >= size.height;
+
+  const lowest = MIN_MARGIN;
+  const highest = stage.width - MIN_MARGIN - size.width;
+
+  return {
+    x: highest < lowest
+      ? Math.round((stage.width - size.width) / 2)
+      : Math.min(Math.max(rect.x, lowest), highest),
+    y: below ? rect.y + rect.h + GAP : rect.y - GAP,
+    below,
+  };
+}

@@ -1,4 +1,5 @@
 import { bbox, rectFromPoints } from '../core/geometry.js';
+import { hrefFor } from '../core/links.js';
 
 import { isTyping } from './typing.js';
 
@@ -24,13 +25,33 @@ const RESIZE_DIRS = {
  * what z-order means — is delegated to Board. What is left here is genuinely
  * about input.
  */
-export function createInput({ document, window, elements, store, selection, viewport, board, commands }) {
+export function createInput({
+  document,
+  window,
+  elements,
+  store,
+  selection,
+  viewport,
+  board,
+  commands,
+  /**
+   * Draw an object again, now that nobody is typing in it.
+   *
+   * A link becomes a link on blur rather than as it is typed: the view refuses
+   * to write to the focused field — rebuilding it under the caret would move it
+   * — so the text somebody has just finished typing is still plain text in the
+   * DOM. Nothing else calls for a redraw, either: leaving a field records
+   * history but applies no op, so the store emits nothing.
+   */
+  relink = () => {},
+} = {}) {
   const { stage, layer, overlay } = elements;
 
   let gesture = null;
   let spaceDown = false;
   let editingId = null;
   let editSnapshot = null;
+  let destroyed = false;
 
   const listeners = [];
   const listen = (target, type, fn, options) => {
@@ -89,14 +110,60 @@ export function createInput({ document, window, elements, store, selection, view
       return;
     }
 
+    /**
+     * A link under the pointer, to be opened if this turns out to be a click
+     * rather than a drag — which is not known yet, and is the drag gesture's to
+     * answer. Held here because this is where the target is.
+     *
+     * Not while shift is down: that is somebody adding an object to a selection,
+     * and a browser tab is not what they asked for. Not while the object is
+     * being edited either — that case returned above, where a pointer inside the
+     * field being edited is left to the caret.
+     */
+    const link = e.shiftKey ? null : e.target.closest('[data-link]');
+
     e.preventDefault(); // suppress default caret placement and text selection
     if (e.shiftKey) selection.toggle(id);
     else if (!selection.has(id)) selection.set([id]);
 
     if (selection.has(id)) {
       board.raise(selection.list());
-      startDrag(e);
+      startDrag(e, link?.getAttribute('href') ?? null);
     }
+  }
+
+  /**
+   * A board's link is opened by this app, and by nothing else.
+   *
+   * Cancelling `pointerdown` does not cancel the `click` that follows it, so the
+   * anchor's own activation is still on the table — and it has `target="_blank"`,
+   * which would mean a second tab beside the one `openLink` opened. Chrome does
+   * not activate a link inside a `contenteditable` on a plain click, which is why
+   * this has not been visible; that is the browser's habit rather than our
+   * decision, and it is not the same in every engine or for every gesture.
+   *
+   * Not while the object is being edited: there a click belongs to the caret, and
+   * so does its default.
+   */
+  function onClick(e) {
+    const link = e.target.closest?.('[data-link]');
+    if (!link) return;
+    if (link.closest('[data-id]')?.dataset.id === editingId) return;
+    e.preventDefault();
+  }
+
+  /**
+   * Open a link from a board, in a new tab.
+   *
+   * Parsed again rather than trusted. The anchor was built by the view from
+   * `hrefFor`, so this should be a formality — and it costs one `new URL`
+   * against the one thing it is guarding, which is `javascript:` running in this
+   * origin with this session. `noopener` is what stops the page reached from
+   * reaching back.
+   */
+  function openLink(href) {
+    if (!hrefFor(href)) return;
+    window.open(href, '_blank', 'noopener,noreferrer');
   }
 
   function onPointerUp(e) {
@@ -138,7 +205,7 @@ export function createInput({ document, window, elements, store, selection, view
 
   // ---------- drag ----------
 
-  function startDrag(e) {
+  function startDrag(e, href = null) {
     const ids = board.withEnvelopeChildren(selection.list());
     const start = worldPoint(e);
     const from = { x: e.clientX, y: e.clientY };
@@ -178,7 +245,13 @@ export function createInput({ document, window, elements, store, selection, view
       },
       end() {
         drawGuides([]);
-        if (!moved) return;
+        if (!moved) {
+          // A press and a release in the same place, on a link. Dragging an
+          // object that happens to have a link in it is a drag, and opens
+          // nothing.
+          if (href) openLink(href);
+          return;
+        }
         const forward = [];
         const inverse = [];
         for (const id of ids) {
@@ -314,9 +387,34 @@ export function createInput({ document, window, elements, store, selection, view
   }
 
   function onFocusOut(e) {
-    e.target.closest('[data-id]')?.classList.remove('editing');
+    const objEl = e.target.closest('[data-id]');
+    objEl?.classList.remove('editing');
     commitEdit();
     editingId = null;
+    if (objEl) relinkSoon(objEl.dataset.id);
+  }
+
+  /**
+   * Redraw an object once the field it holds is nobody's, so a URL just typed
+   * becomes a link. Nothing else asks for this: leaving a field records history
+   * without applying an op, so the store emits nothing.
+   *
+   * On the next frame rather than now, because this blur is not always the
+   * user's. Removing a focused element fires `focusout` synchronously, and the
+   * renderer removes elements — an object deleted by somebody else on the board,
+   * or a list rebuilding its rows — so redrawing here would re-enter the
+   * reconcile that is already running, halfway through the removal that started
+   * it.
+   *
+   * By then the object may be gone, or the board may be, and neither is a reason
+   * to draw: `store.has` answers the first and `destroyed` the second, which
+   * would otherwise put elements back into a torn-down board.
+   */
+  function relinkSoon(id) {
+    window.requestAnimationFrame(() => {
+      if (destroyed || !store.has(id)) return;
+      relink(id);
+    });
   }
 
   /** Collapse a whole editing session into one undo entry. */
@@ -477,6 +575,7 @@ export function createInput({ document, window, elements, store, selection, view
   listen(stage, 'dblclick', onDoubleClick);
   listen(stage, 'contextmenu', (e) => e.preventDefault());
 
+  listen(layer, 'click', onClick);
   listen(layer, 'focusin', onFocusIn);
   listen(layer, 'focusout', onFocusOut);
   listen(layer, 'input', onInput);
@@ -494,6 +593,7 @@ export function createInput({ document, window, elements, store, selection, view
       return editingId;
     },
     destroy() {
+      destroyed = true;
       for (const off of listeners) off();
       listeners.length = 0;
     },

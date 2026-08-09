@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { createApp } from '../app.js';
 import { isTyping } from '../platform/typing.js';
+import { linkPreview } from '../shell/link-preview.js';
 import { repository } from '../shell/storage.js';
 import { createSync } from '../shell/sync.js';
 import { FormatBar } from './FormatBar.jsx';
@@ -44,6 +45,7 @@ export function BoardCanvas({ boardId, onReady, onSaveStatus, onProblem }) {
       boardId,
       repository,
       createSync,
+      fetchPreview: linkPreview,
       onProblem,
       elements: {
         stage: stage.current,

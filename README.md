@@ -25,6 +25,7 @@ npm start        # serve the built site
 | **Corners** | Cards, envelopes, lists and images are rounded or square, per object |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
 | **Clipboard** | Copy and paste the selection — between sheets, between boards, between windows |
+| **Links** | A URL in any text is clickable; hover it for a second and a panel says what is there, or that it could not be reached |
 | **Saving** | The bar says whether your work is stored — a refused write retries itself, and closing the tab flushes what the debounce is still holding |
 | **Export** | The board as a PNG — the selection if there is one, everything otherwise |
 | **Together** | With a project configured: share a board by link, live edits, and other people's cursors |
@@ -40,6 +41,7 @@ npm start        # serve the built site
 | Create | `C` / `E` / `L`, the toolbar, or double-click empty canvas |
 | Format | Select something; a bar appears above it — for cards, colour pickers for background and text, a no-background toggle, font, size and alignment; for anything, rounded or square corners |
 | Copy / paste | `⌘/Ctrl+C`, `⌘/Ctrl+V` — and `⌘/Ctrl+V` for an image on the clipboard, which lands as an object |
+| Links | Click one to open it in a new tab; hover one second for a preview. While a card is being edited, a click is the caret's |
 | Snapping | On by default; hold `Alt` to disable |
 | Undo / redo | `⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z` |
 | Fit / reset zoom | `Shift+1` / `Shift+0` |
@@ -71,13 +73,16 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
               │   ├── corners.js     rounded or square, for every type
               │   ├── clipboard.js   what copied objects look like as text
               │   ├── image.js       what a picture may be, and how big
-              │   ├── bar-position.js where the format bar sits
+              │   ├── links.js       finding a URL in prose, and which to follow
+              │   ├── bar-position.js where the format bar and the popover sit
               │   └── seed.js        the starter board
               └── platform/   the browser. Adapters, nothing else.
                   ├── renderer.js    reconciles the store into the DOM
                   ├── input.js       pointer and keyboard gestures
                   ├── clipboard.js   copy and paste, on the system clipboard
                   ├── images.js      a pasted file, made into something storable
+                  ├── links.js       the hover popover, drawn in the overlay
+                  ├── link-preview.js  asking the server what is at a link
                   ├── views.js       per-type markup
                   ├── export-png.js  the same objects, drawn to a canvas
                   ├── storage.js     BoardRepository over Web Storage
@@ -238,6 +243,113 @@ reach a payload limit. Under it, pasting an image is a live edit like every
 other; over it, the send fails and the picture reaches the other people on the
 board on their next load instead. The failure is soft, which is exactly why it is
 worth spending some quality to stay under it.
+
+### Links, and why the preview cannot happen here
+
+A URL in any of a board's text is clickable, and hovering one for a second opens
+a panel with the page's title, its description, a thumbnail and the host it
+actually came from. A page that answered anything but a 2xx reads as unreachable
+— and the panel says which status it answered, because a 404 and a silence are
+different things to the person deciding what to do next.
+
+The document stores plain text and the *view* does the recognising: the store
+holds a string, which is what a paste is forced into and what `innerText` reads
+back, so nothing marks a link up, a link is whatever *looks* like one, and
+`core/links.js` is a recogniser rather than a parser. It runs on the way
+out, in the view; the document keeps the characters the person typed. An explicit
+scheme or a `www.` counts, and a bare domain deliberately does not — `readme.md`,
+`e.g.something` and `3.14` would all turn blue, and a link nobody asked for is
+worse than one they have to type six characters for.
+
+**The preview is fetched by an edge function, because a browser is not allowed to
+know the answer.** A cross-origin `fetch` in `cors` mode only succeeds when the
+target sends an `Access-Control-Allow-Origin` naming the caller — which an
+arbitrary page has no reason to do, so the promise rejects and the real status
+never arrives. `no-cors` mode resolves instead, with an opaque response whose
+status is `0` and whose body cannot be read, identically for a 200 and a 404.
+"Did it answer 2xx, and what is on it" is not a thing one origin may learn about
+another, so `supabase/functions/link-preview` does the fetch and the client asks
+it. That
+makes previews part of the same load-time decision as sharing, live edits and
+cursors: with no project configured there is nobody to ask, and a hovered link
+says so rather than sitting on "loading" or blaming the page.
+
+The function is invoked through the Supabase client, so the request carries the
+user's session and `verify_jwt` checks it — this is a preview for people signed
+in to this app, not an open proxy for anybody who finds the URL. It is written in
+plain JavaScript, like everything else here, which is what lets its two halves
+that hold all the judgement — `guard.js` and `extract.js` — be imported directly
+by `node --test`. The Deno entrypoint is the only part a test cannot reach.
+
+#### Nothing that comes back is executed
+
+Five separate rules, each with a test:
+
+- **The panel is built from nodes, never markup.** A page's `<title>` is
+  somebody else's text and the popover is our document, so `textContent` puts it
+  in. A title of `<img src=x onerror=…>` is drawn as those characters.
+- **The scheme is allow-listed to http and https**, when the anchor is built and
+  again when it is opened. `javascript:` in a card would run in this origin with
+  this session, so it never becomes a link — and an href tampered with in the DOM
+  is still not opened, which is the only reason the second check exists.
+- **The target page is never rendered.** No iframe and no headless browser: what
+  crosses the wire is extracted text and one bitmap. A thumbnail is inlined by the
+  function as a data URL and checked by `isImageSource`, the same guard a pasted
+  image goes through — which is also what stops the browser making a request of
+  its own to the site being previewed.
+- **The function evaluates nothing it fetched.** No parser, no `eval`, no
+  `new Function`, no dynamic import. The head is matched for meta tags with string
+  work, and the worst case is a panel with no title in it.
+- **Anchors carry `rel="noopener noreferrer"`**, so a page opened from a board
+  cannot reach back through `window.opener`.
+
+#### What the function is allowed to fetch
+
+A function that fetches a URL from a card makes requests from inside the
+provider's network on someone else's behalf, which is the whole of server-side
+request forgery. "It is only our own users" is not a defence — it is the
+description of the attack. So `guard.js` refuses:
+
+- **every scheme but http and https**, and any URL carrying credentials
+  (`https://docs.example.com@evil.test/` reads as the first host and is the
+  second);
+- **every address that is not on the internet** — loopback, the private ranges,
+  carrier-grade NAT, link-local (which is where a cloud instance keeps its
+  credentials), multicast and everything reserved above it, in both families and
+  through IPv4-mapped and NAT64 spellings. The URL parser normalises
+  `http://2130706433/` to `127.0.0.1` before any of this, which is load-bearing
+  and invisible, so a test pins it;
+- **names only a private network resolves** — `localhost`, `.local`,
+  `.internal`, `.home.arpa`, and any single-label name, since public hostnames
+  have a dot;
+- **anything a name resolves to that the above would have refused**, which is the
+  form the attack actually takes: `internal.example.com` as an A record for
+  `10.0.0.5`;
+- **and each redirect separately.** Following them by hand is the point —
+  `redirect: 'follow'` would let a public URL hop into the private network with
+  nothing looking at it.
+
+A refusal answers exactly what a silence answers: `{ ok: false, status: 0 }`. Any
+difference between "not allowed" and "did not reply" would make this a scanner
+for the network it runs inside, reporting which internal addresses exist a few
+hundred times a second. The reason goes to the log and nowhere else.
+
+Requests are capped at six seconds, 256KB of page and 120KB of thumbnail, and
+three redirects.
+
+#### The popover is drawn in the overlay
+
+Imperatively, with the cursors and the guides, rather than as a React component.
+That is the line this app already draws: React renders chrome that *shows state*
+— the toolbar, the format bar — and transient pointer-driven chrome lives in the
+overlay. A panel that follows a pointer around a canvas is the second kind, and
+being outside React is also what lets the whole thing be driven in tests with a
+scheduler run by hand and a stubbed fetcher.
+
+Answers are cached per href, so re-hovering costs nothing and one link asked
+about twice is one invocation. A failure of *ours* — the function down, the
+network gone — is not cached and says "no preview" rather than "unreachable",
+because blaming the page for our own outage is a lie the person cannot act on.
 
 ### Corners
 
@@ -759,6 +871,32 @@ to a team appears on your next load, not under your cursor — and with paging,
 "your next load" means page one, so a board that arrives while you are three
 pages down is not inserted where it belongs. Live lists would mean a
 subscription per scope on top of the per-board channel that already exists.
+
+A link is drawn as plain text in an exported PNG — no colour, no underline. The
+export is a second renderer with its own text layout, and per-run styling means
+splitting the wrapping across styled runs inside the one function in this codebase
+that is genuinely fiddly. A link in a picture is not clickable anyway, so what is
+lost is that it looks like one.
+
+The preview's residual risk is **DNS rebinding**. The function resolves a name,
+checks every address it gets, and then hands the name to `fetch`, which resolves
+it again — a server that answers with a public address once and a private one a
+moment later gets through. Closing it means connecting to an address that has
+been checked while carrying the original `Host`, which `fetch` gives no way to
+express.
+
+The resolution check itself is confirmed live, which was worth checking rather
+than assuming: `Deno.resolveDns` is guarded because a runtime without it would
+otherwise throw, and a runtime without it would also lose the check silently.
+Verified on the deployed function 2026-08-09 — `http://10.0.0.1.nip.io/` and
+`http://localtest.me/` are public names that resolve into private space, both
+answered `{ ok: false, status: 0 }`, and both logged `refused: resolves-private`,
+so nothing was fetched. A name that resolves nowhere logs no refusal and reaches
+the same answer through the fetch failing, which is the intended difference.
+
+Nothing rate-limits previews beyond the one-second hover and the client's cache.
+A person who wants to spend the project's function invocations can hover a card
+of links for a while.
 
 There is no cut. Copy and paste are here because they were asked for; ⌘X is a
 third gesture with its own question — whether the objects go when the copy is
