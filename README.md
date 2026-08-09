@@ -883,8 +883,16 @@ checks every address it gets, and then hands the name to `fetch`, which resolves
 it again — a server that answers with a public address once and a private one a
 moment later gets through. Closing it means connecting to an address that has
 been checked while carrying the original `Host`, which `fetch` gives no way to
-express. Also, `Deno.resolveDns` is used when it exists: where it does not, the
-literal and name checks still apply but the resolution check silently does not.
+express.
+
+The resolution check itself is confirmed live, which was worth checking rather
+than assuming: `Deno.resolveDns` is guarded because a runtime without it would
+otherwise throw, and a runtime without it would also lose the check silently.
+Verified on the deployed function 2026-08-09 — `http://10.0.0.1.nip.io/` and
+`http://localtest.me/` are public names that resolve into private space, both
+answered `{ ok: false, status: 0 }`, and both logged `refused: resolves-private`,
+so nothing was fetched. A name that resolves nowhere logs no refusal and reaches
+the same answer through the fetch failing, which is the intended difference.
 
 Nothing rate-limits previews beyond the one-second hover and the client's cache.
 A person who wants to spend the project's function invocations can hover a card
