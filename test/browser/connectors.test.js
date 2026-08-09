@@ -234,6 +234,142 @@ describe('connectors', () => {
     assert.equal(over.type, 'card', `the card is on top of the line, not under it: ${JSON.stringify(over)}`);
   });
 
+  describe('labels', () => {
+    const LABEL = '[data-label] .connector-text';
+
+    const label = () => page.eval(`(() => {
+      const el = document.querySelector('${LABEL}');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { text: el.textContent, w: r.width, h: r.height, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
+    })()`);
+
+    const joinTwo = async () => {
+      await twoCards();
+      await offered();
+      await clickControl();
+      await page.waitFor(`document.querySelector('.connectors [data-id]') !== null`, { label: 'the arrow' });
+      const [made] = await connectors();
+      return made.id;
+    };
+
+    test('a double-click on the line writes on it', async () => {
+      const id = await joinTwo();
+      const line = await drawn();
+
+      await page.dblclick(line.cx, line.cy);
+      await page.type('blocks');
+      await page.waitFor(`app.store.get('${id}').text === 'blocks'`, {
+        label: 'the label to reach the document',
+        context: `JSON.stringify(app.store.get('${id}'))`,
+      });
+
+      await page.eval('document.activeElement.blur()');
+      assert.equal((await label()).text, 'blocks', 'and it is drawn on the arrow');
+    });
+
+    /**
+     * An arrow with nothing written on it still has a field — focusing one is
+     * how a label is started — and that field must not stand between the
+     * pointer and the line it sits on.
+     */
+    test('an empty one is invisible and takes no press', async () => {
+      const id = await joinTwo();
+      const line = await drawn();
+
+      assert.equal((await label()).text, '', 'the field is there');
+      assert.equal(
+        await page.eval(`getComputedStyle(document.querySelector('${LABEL}')).pointerEvents`),
+        'none',
+      );
+
+      await page.click(line.cx, line.cy);
+      assert.deepEqual(await page.eval('app.selection.list()'), [id], 'the press reached the line');
+    });
+
+    test('the bar offers one for a selected arrow, and puts the caret in it', async () => {
+      const id = await joinTwo();
+      await page.eval(`app.selection.set(['${id}'])`);
+
+      await page.waitFor(`document.querySelector('[data-action="label"]')?.textContent === 'Add label'`, {
+        label: 'the label control',
+        context: 'document.querySelector("[data-format-bar]")?.innerText ?? "no bar"',
+      });
+      await page.eval(`document.querySelector('[data-action="label"]').click()`);
+
+      await page.waitFor(`document.activeElement?.classList.contains('connector-text')`, {
+        label: 'the caret in the label',
+      });
+
+      await page.type('why');
+      await page.waitFor(`app.store.get('${id}').text === 'why'`, { label: 'what was typed' });
+      await page.waitFor(`document.querySelector('[data-action="label"]')?.textContent === 'Edit label'`, {
+        label: 'the control to change its offer',
+      });
+    });
+
+    test('and it follows the line it is written on', async () => {
+      const id = await joinTwo();
+      await page.eval(`app.store.apply([{ t: 'set', id: '${id}', patch: { text: 'blocks' } }])`);
+
+      const before = await label();
+      await page.eval(`(() => {
+        const [a] = app.store.all();
+        app.store.apply([{ t: 'set', id: a.id, patch: { y: a.y - 400 } }]);
+      })()`);
+
+      assert.ok(Math.abs((await label()).cy - before.cy) > 50, 'the words moved with the arrow');
+    });
+
+    test('a URL in one is a link, as it is anywhere else on a board', async () => {
+      const id = await joinTwo();
+      await page.eval(`app.store.apply([{ t: 'set', id: '${id}', patch: { text: 'see https://example.test/a' } }])`);
+
+      assert.equal(
+        await page.eval(`document.querySelector('${LABEL} a[data-link]')?.getAttribute('href')`),
+        'https://example.test/a',
+      );
+    });
+
+    test('and the words go when the arrow does', async () => {
+      const id = await joinTwo();
+      await page.eval(`app.store.apply([{ t: 'set', id: '${id}', patch: { text: 'blocks' } }])`);
+      assert.ok(await label());
+
+      await page.eval(`app.store.apply([{ t: 'del', id: '${id}' }])`);
+      assert.equal(await label(), null);
+    });
+  });
+
+  /**
+   * Somebody else deleting a card takes its arrows with it, but the two facts
+   * arrive as ops and there is a moment between them — with the arrow selected,
+   * the format bar is asking a connector with one end for somewhere to sit.
+   */
+  test('an arrow whose end goes while it is selected takes nothing down with it', async () => {
+    const [a] = await twoCards();
+    await offered();
+    await clickControl();
+    const [made] = await connectors();
+
+    await page.eval(`app.selection.set(['${made.id}'])`);
+    await page.waitFor(`document.querySelector('[data-action="label"]') !== null`, { label: 'the bar' });
+
+    // The `del` alone, without the cascade `deleteSelected` performs — which is
+    // exactly the shape of the op another client sends.
+    await page.eval(`app.store.apply([{ t: 'del', id: '${a}' }])`);
+
+    // A real condition rather than a couple of frames: the bar has nowhere to
+    // sit above an arrow with one end, so it goes.
+    await page.waitFor(`document.querySelector('[data-format-bar]') === null`, {
+      label: 'the bar to close',
+      context: 'document.querySelector("[data-format-bar]")?.innerText ?? "no bar"',
+    });
+
+    assert.deepEqual(page.errors, [], 'the render survived a connector with one end');
+    assert.equal(await page.eval(`Boolean(window.app?.store)`), true, 'and the board is still there');
+  });
+
   test('the map leaves them out', async () => {
     await twoCards();
     await offered();

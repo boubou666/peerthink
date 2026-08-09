@@ -79,10 +79,19 @@ export function borderPoint(rect, point) {
  * arrow drawn across a card would say something about the board that is not
  * true. The connector is still there, and reappears as soon as they are apart.
  *
+ * An end that is *missing* answers the same way, and the answer belongs here
+ * rather than in front of each caller. A connector outlives its ends by as long
+ * as it takes an op to arrive: somebody else deleting a card takes its arrows
+ * with it, but between those two facts reaching this client there is a moment
+ * where one end is gone — and every place that draws, measures or positions
+ * anything from a connector would otherwise have to remember that moment.
+ *
  * The head is a triangle rather than a stroke that happens to look like one, so
  * it fills at any zoom and the export can draw the same three points.
  */
 export function connectorGeometry(from, to, { gap = GAP, head = HEAD, spread = SPREAD } = {}) {
+  if (!from || !to) return null;
+
   const here = centreOf(from);
   const there = centreOf(to);
 
@@ -125,6 +134,19 @@ export function connectorGeometry(from, to, { gap = GAP, head = HEAD, spread = S
   };
 }
 
+/**
+ * Where a connector's label sits: the middle of the line it is about.
+ *
+ * The middle of the *line* rather than of the two objects, so a label stays on
+ * its arrow when one end is a wide envelope and the other a small card — and so
+ * the two renderers, the screen and the picture, put it in the same place
+ * without either restating the arithmetic.
+ */
+export const labelPoint = (drawn) => ({
+  x: (drawn.line.x1 + drawn.line.x2) / 2,
+  y: (drawn.line.y1 + drawn.line.y2) / 2,
+});
+
 /** The connectors in `objects` that touch any of `ids`. */
 export const connectorsTouching = (objects, ids) => {
   const wanted = new Set(ids);
@@ -141,12 +163,6 @@ export const connectorsTouching = (objects, ids) => {
 export const connectorBetween = (objects, a, b) =>
   objects.find((obj) => isConnector(obj)
     && ((obj.from === a && obj.to === b) || (obj.from === b && obj.to === a))) ?? null;
-
-/**
- * Whether a connector has both its ends: an object can be deleted by somebody
- * else on the board while this one is drawing.
- */
-export const isHanging = (connector, has) => !has(connector.from) || !has(connector.to);
 
 /**
  * The box a connector covers, for the things that need one anyway — the format

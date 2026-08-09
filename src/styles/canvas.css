@@ -1092,6 +1092,75 @@ body:has(.board-page) { overflow: hidden; }
 .connectors .selected .connector-line { stroke: var(--accent); }
 .connectors .selected .connector-head { fill: var(--accent); }
 
+/*
+ * The words on an arrow.
+ *
+ * HTML rather than SVG, because a label is edited and editing is a caret, an
+ * IME and a selection — all of which the browser gives a `contenteditable` and
+ * none of which it gives an SVG `<text>`. Positioned in world coordinates over
+ * the middle of the line, behind the objects like the line itself, and painted
+ * over the line because it is appended after the SVG.
+ */
+.connector-labels {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.connector-label {
+  position: absolute;
+  /* Centred on the point the layer puts it at. */
+  transform: translate(-50%, -50%);
+  display: flex;
+  justify-content: center;
+}
+
+.connector-text {
+  pointer-events: auto;
+  /* The world layer has no width of its own, so a box that shrank to fit its
+     containing block would shrink to nothing and wrap one letter per line. */
+  width: max-content;
+  max-width: 220px;
+  padding: 1px 7px;
+  border-radius: 7px;
+  /* The line runs under the words; the board's own background is what stops it
+     striking through them. */
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: center;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  outline: none;
+  cursor: text;
+}
+
+/*
+ * An arrow with nothing written on it still has a field, because focusing one
+ * is how a label is started and nothing can be focused that was never
+ * rendered. It takes no press and shows nothing until it does.
+ */
+.connector-text:empty {
+  padding: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.connector-text:focus {
+  min-width: 20px;
+  padding: 1px 7px;
+  opacity: 1;
+  pointer-events: auto;
+  box-shadow: 0 0 0 calc(1px / var(--z)) var(--accent);
+}
+
+.connector-label.selected .connector-text:not(:empty) { color: var(--accent); }
+
 /* The format bar's control for them. Words, like "Link": it acts on what is
    selected and has no state of its own to show as a shape. */
 .fmt-connect {

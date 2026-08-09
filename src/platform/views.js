@@ -130,6 +130,13 @@ export function createViews({ document }) {
 
   return {
     showSource,
+    /**
+     * Text into a field, links and all — for the one piece of text that is not
+     * an object's: a connector's label, which the layer that draws the arrows
+     * owns. Shared rather than repeated, so a URL written on an arrow is a link
+     * exactly as one written on a card is.
+     */
+    setText,
 
     card: {
       create: () => element(`<div class="obj card">

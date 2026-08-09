@@ -98,7 +98,11 @@ export function createApp({
 
   const stageSize = () => [dom.stage.clientWidth, dom.stage.clientHeight];
 
-  /** Focus a freshly created object so the user can just start typing. */
+  /**
+   * Focus an object's text so the user can just start typing — a card that has
+   * only this moment been made, or the label on a connector, which is the same
+   * question asked of a different element.
+   */
   const focusNew = (id) => clock.nextFrame(() => {
     dom.layer.querySelector(`[data-id="${id}"] [contenteditable]`)?.focus();
   });
@@ -161,6 +165,12 @@ export function createApp({
       return commands.addAt(type, viewport.center(...stageSize()));
     },
     duplicate: () => board.duplicate(),
+    /**
+     * Put the caret in an object's text. The format bar's way of starting a
+     * connector's label, which has no double-click of its own until there are
+     * words to double-click.
+     */
+    editText: (id) => focusNew(id),
 
     /**
      * The board as a PNG — the selection when there is one, everything
@@ -221,7 +231,7 @@ export function createApp({
    * renderer because it is a piece of the browser like the views are, and the
    * renderer is what tells it that the document changed.
    */
-  const connectors = createConnectorLayer({ document, elements: dom, store, selection });
+  const connectors = createConnectorLayer({ document, elements: dom, store, selection, views });
   const renderer = createRenderer({
     document,
     elements: dom,

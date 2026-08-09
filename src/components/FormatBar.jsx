@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 
 import { barPosition } from '../core/bar-position.js';
-import { connectorBetween, isPlaced } from '../core/connectors.js';
+import { connectorBetween, connectorBox, isConnector, isPlaced } from '../core/connectors.js';
 import { linkFrom } from '../core/links.js';
 
 import {
@@ -52,7 +52,7 @@ const FONT_LABELS = { sans: 'Sans', serif: 'Serif', mono: 'Mono' };
 const CORNER_LABELS = { round: 'Rounded corners', square: 'Square corners' };
 
 export function FormatBar({ app, stage: stageEl, onProblem }) {
-  const { board, store, selection, viewport } = app;
+  const { board, commands, store, selection, viewport } = app;
 
   /**
    * What the palette shows, asked of the stylesheet that decides.
@@ -161,6 +161,13 @@ export function FormatBar({ app, stage: stageEl, onProblem }) {
   const joined = pair ? connectorBetween(store.all(), pair[0].id, pair[1].id) : null;
 
   /**
+   * One connector on its own, which has a control of its own: a label. Only
+   * one, because "write on these three arrows" is not a thing a single field
+   * can mean.
+   */
+  const arrow = objects.length === 1 && isConnector(objects[0]) ? objects[0] : null;
+
+  /**
    * Ask where the selected words should point, and make them point there.
    *
    * What is selected is taken *first*: the dialog's field takes the focus, and
@@ -216,8 +223,20 @@ export function FormatBar({ app, stage: stageEl, onProblem }) {
    * A type this build has no control for contributes nothing to where the bar
    * goes — and a selection of nothing but those gets no bar, which is the same
    * answer as a selection of nothing.
+   *
+   * A connector counts now that it has a control, and the box it contributes is
+   * worked out from its two ends: it has none of its own, and one whose ends
+   * overlap has nothing on screen to be above, which is what a null box says.
    */
-  const at = barPosition(cornered, viewport, { width: measured.stage }, measured.bar);
+  const boxes = [
+    ...cornered,
+    ...objects
+      .filter(isConnector)
+      .map((obj) => connectorBox(store.get(obj.from), store.get(obj.to)))
+      .filter(Boolean),
+  ];
+
+  const at = barPosition(boxes, viewport, { width: measured.stage }, measured.bar);
   // The question goes with the bar: unmounting it while one is open refuses it,
   // which is the right answer for a selection that is no longer there.
   if (!at) return null;
@@ -383,13 +402,17 @@ export function FormatBar({ app, stage: stageEl, onProblem }) {
       )}
 
       {/*
-        Corners, for everything selected that has any.
+        Corners, for everything selected that has any — and for nothing else.
+        The bar can now be here for a selection with no corners in it at all
+        (an arrow, which has a label instead), and two buttons that write to
+        nothing are worse than two that are not there.
 
         Two buttons rather than one toggle: a selection where some objects are
         rounded and some are not has no true answer for a pressed state, and a
         toggle would have to invent one. This way neither is current, which is
         what the alignment group already does and says the same thing.
       */}
+      {cornered.length > 0 && (
       <div className="fmt-group" role="group" aria-label="Corners">
         {CORNERS.map((corners) => (
           <button
@@ -409,6 +432,27 @@ export function FormatBar({ app, stage: stageEl, onProblem }) {
           </button>
         ))}
       </div>
+      )}
+
+      {/*
+        An arrow on its own: the one thing to say about it is what it says.
+        The button starts a label rather than opening a field of its own —
+        the words are edited where they are drawn, like every other piece of
+        text on this board.
+      */}
+      {arrow && (
+        <button
+          type="button"
+          className="fmt-connect"
+          data-action="label"
+          aria-label={arrow.text ? 'Edit the label' : 'Add a label'}
+          title={arrow.text ? 'Edit the label' : 'Add a label'}
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={() => commands.editText(arrow.id)}
+        >
+          {arrow.text ? 'Edit label' : 'Add label'}
+        </button>
+      )}
 
       {/*
         Two objects, and the arrow between them. The same control both ways
