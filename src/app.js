@@ -10,6 +10,7 @@ import { UNLOADED, createSaveStatus } from './core/save-status.js';
 import { createScheduler } from './core/scheduler.js';
 import { seedBoard } from './core/seed.js';
 import { exportFrame, fileName } from './core/export.js';
+import { search } from './core/search.js';
 
 import { createConnectorLayer } from './platform/connectors.js';
 import { createViews } from './platform/views.js';
@@ -216,13 +217,16 @@ export function createApp({
     },
 
     /**
-     * Every sheet of this board with what is on it, for a search to read.
+     * Where words are on this board: every sheet, in reading order.
      *
-     * Here rather than in the component, because "the board" is several
-     * documents and only one of them is the store — which is exactly the fact
-     * `sheets` exists to keep from spreading.
+     * The *answer* rather than the documents it was worked out from. Here
+     * because "the board" is several documents and only one of them is the
+     * store — which is the fact `sheets` exists to keep from spreading — and
+     * because handing a component the objects themselves would put a live
+     * document, editable behind the store's back, in the hands of anything that
+     * asked. What comes back is a small list of ids and positions.
      */
-    contents: () => sheets.contents(),
+    search: (query) => search(sheets.contents(), query),
 
     /**
      * Show a match: the sheet it is on, then the object, in the middle of the

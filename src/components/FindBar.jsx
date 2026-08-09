@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 
-import { search, step } from '../core/search.js';
+import { step } from '../core/search.js';
 
 /**
  * Find words on the board.
@@ -13,7 +13,9 @@ import { search, step } from '../core/search.js';
  * React chrome, because it is state and changes when that state does: a query,
  * a position in a list, and whether it is open at all. What it acts on is the
  * canvas, through two commands and a set of ids the renderer draws — nothing
- * here reaches into the board's DOM.
+ * here reaches into the board's DOM, and nothing here holds the board's
+ * objects: `commands.search` answers with ids and positions, which is all a
+ * list of matches needs and all this can be trusted with.
  *
  * The shortcut is listened for here rather than in the input layer, the way
  * BoardCanvas listens for the two view keys, and for the same reason: it
@@ -58,7 +60,7 @@ export function FindBar({ app }) {
   }, []);
 
   const matches = useMemo(
-    () => (open ? search(commands.contents(), query) : []),
+    () => (open ? commands.search(query) : []),
     // `revision` is not read, and is a dependency on purpose: the answer is
     // about a board that changes underneath it.
     [open, query, commands, revision],

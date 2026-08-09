@@ -1092,9 +1092,9 @@ drag-to-connect gesture — joining two things means selecting both and pressing
 button, because handles on an object's edge would land exactly where the resize
 handles already are.
 
-Find matches whole words in the plain sense — a substring, case-insensitively.
-No regular expressions, no whole-word toggle, no replace, and nothing is
-highlighted *inside* a card: the object holding the words is ringed, and which
+Find matches a **substring**, case-insensitively: `map` turns up "roadmap" as
+well as "map". No regular expressions, no whole-word option, no replace, and
+nothing is highlighted *inside* a card: the object holding the words is ringed, and which
 line of it matched is left to the reader. Replace is the interesting one to
 leave out, because it would be the first thing in this app that edits text
 nobody is looking at.

@@ -344,10 +344,16 @@ export function createSheets({ store, newId }) {
      * search that read it would answer about the sheet as it was when it was
      * last left.
      *
-     * **To be read, not written.** Not `stateOf`, which takes a checkpoint and
-     * would clone the undo stacks with it, and not cloned either: this is asked
-     * on every keystroke of a search, and a board holding a pasted photograph
-     * carries its bytes in an object.
+     * **To be read, not written, and read inside the composition root only.**
+     * Its one caller is `commands.search`, which answers with ids and
+     * positions — the objects themselves never leave `app.js`, because a live
+     * document in a component's hands is one that can be edited behind the
+     * store's back, with no op, no undo entry, no notification and no save.
+     *
+     * Not cloned, which is why that matters: this is asked on every keystroke
+     * of a search, and a board holding a pasted photograph carries its bytes in
+     * an object. Not `stateOf` either, which takes a checkpoint and would copy
+     * the undo stacks with it.
      */
     contents: () => entries.map((entry) => ({
       id: entry.id,
