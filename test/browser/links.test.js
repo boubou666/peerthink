@@ -301,17 +301,31 @@ describe('link popover', () => {
      * is waiting on: an unhandled rejection, and a panel stuck on "loading" for
      * ever. It reads as our failure, because it is one.
      */
-    test('an answer that is not an answer is our failure, not the page’s', async () => {
-      await build({ answer: null });
-      const { box } = await linkAt();
+    for (const [what, answer] of [
+      ['nothing', null],
+      ['an object with no verdict in it', {}],
+      ['a verdict that is not one', { ok: 'yes', status: 200 }],
+    ]) {
+      test(`an answer that is ${what} is our failure, not the page’s`, async () => {
+        await build({ answer });
+        const { box } = await linkAt();
 
-      await hover(box);
-      await waitOut();
-      await page.waitFor(`document.querySelector('[data-link-popover]')?.dataset.linkPopover === 'unavailable'`, {
-        label: 'the verdict',
+        await hover(box);
+        await waitOut();
+        await page.waitFor(`document.querySelector('[data-link-popover]')?.dataset.linkPopover === 'unavailable'`, {
+          label: 'the verdict',
+        });
+        assert.match((await popover()).title, /no preview/i);
+
+        // And not remembered: a fetcher that answers nonsense once should be
+        // asked again rather than having its nonsense drawn for the session.
+        await page.mouse('mouseMoved', box.x, box.y + 300);
+        await page.sleep(40);
+        await hover(box);
+        await waitOut();
+        await page.waitFor('window.asked.length === 2', { label: 'the second question' });
       });
-      assert.match((await popover()).title, /no preview/i);
-    });
+    }
 
     test('a thumbnail is drawn when the answer carries one', async () => {
       const image = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==';

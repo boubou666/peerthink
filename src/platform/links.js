@@ -223,7 +223,10 @@ export function createLinks({
      * promise nobody is waiting on, leaving the panel on "loading" for ever and
      * an unhandled rejection in the console.
      */
-    if (!answer || typeof answer !== 'object') {
+    // `ok` has to be a boolean, not merely present: `{}` is an object, and
+    // taking it at its word would cache it and draw "unreachable" — blaming the
+    // page for a fetcher that answered nonsense.
+    if (!answer || typeof answer !== 'object' || typeof answer.ok !== 'boolean') {
       render('unavailable', href);
       return;
     }
