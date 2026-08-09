@@ -955,3 +955,85 @@ body:has(.board-page) { overflow: hidden; }
 
 /* The hint keeps the middle; on a narrow window it is already hidden. */
 @media (max-width: 700px) { .sheet-tabs { max-width: calc(100vw - 28px); } }
+
+/* ---------------------------------------------------------------------------
+ * The map
+ *
+ * Bottom right, opposite the sheet strip, and out of the way of the hint in
+ * the middle. Fixed like every other piece of chrome over the stage, because
+ * the stage is fixed at inset 0 and this is screen space rather than the
+ * board's.
+ *
+ * The canvas has its size *here* and not in the markup: the drawing reads it
+ * back to size its own backing store, so the stylesheet stays the one place
+ * that decides how big the map is.
+ * ------------------------------------------------------------------------ */
+
+.minimap {
+  position: fixed;
+  right: 14px;
+  bottom: 12px;
+  z-index: 4;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  box-shadow: var(--shadow);
+}
+
+.minimap-canvas {
+  display: block;
+  width: 184px;
+  height: 116px;
+  border-radius: 7px;
+  /* A field to read the marks against, so the map is a place rather than a
+     handful of rectangles floating on the panel. */
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  /* A press anywhere on it is a place to go, so it is a target rather than a
+     picture — and a drag across it is a pan, which the browser must not read
+     as a drag of the image. */
+  cursor: pointer;
+  touch-action: none;
+}
+
+/*
+ * Over the map's own corner rather than beside it, so the panel is the map
+ * plus its frame — and static once there is no map, when the button is the
+ * whole panel.
+ */
+.minimap-toggle {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.minimap-toggle { background: color-mix(in srgb, var(--panel) 78%, transparent); }
+.minimap-toggle:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); }
+
+/* The shape a minimize is, rather than a glyph no font agrees on. */
+.minimap-bar {
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--ink);
+}
+
+/* Minimized: the panel is the button, and nothing else is drawn or subscribed. */
+.minimap[data-minimap="closed"] { padding: 3px; }
+.minimap[data-minimap="closed"] .minimap-toggle { position: static; background: none; }
+
+@media (max-width: 700px) {
+  .minimap-canvas { width: 120px; height: 80px; }
+}
