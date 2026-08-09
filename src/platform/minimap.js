@@ -22,7 +22,7 @@
 
 import { cardStyle, namedColour, TRANSPARENT } from '../core/card-style.js';
 import { isPlaced } from '../core/connectors.js';
-import { centredOn, mapFit, toMap, toWorld } from '../core/minimap.js';
+import { mapFit, toMap, toWorld } from '../core/minimap.js';
 
 /**
  * The smallest an object is drawn, in map pixels.
@@ -182,8 +182,8 @@ export function createMinimap({
 
     const box = canvas.getBoundingClientRect();
     const world = toWorld({ x: event.clientX - box.left, y: event.clientY - box.top }, fit);
-    const at = centredOn(world, view());
-    viewport.moveTo(at.x, at.y);
+    // The camera's own move, which a search wants too — see `Viewport#centreOn`.
+    viewport.centreOn(world, stage.clientWidth, stage.clientHeight);
   };
 
   function onPointerDown(event) {

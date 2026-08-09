@@ -25,6 +25,7 @@ npm start        # serve the built site
 | **Connectors** | Select two objects and an arrow joins them, with a label if you want one — it follows them about, and goes when they do |
 | **Corners** | Cards, envelopes, lists and images are rounded or square, per object |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
+| **Find** | `⌘/Ctrl+F` searches every sheet of the board and takes you to what it turns up |
 | **Map** | The whole sheet in the corner, with a rectangle for what you are looking at — press it to go there, or fold it away |
 | **Clipboard** | Copy and paste the selection — between sheets, between boards, between windows |
 | **Links** | A URL in any text is clickable; select words while editing and "Link" points them at an address you give; hover one for a second and a panel says what is there, or that it could not be reached |
@@ -49,6 +50,7 @@ npm start        # serve the built site
 | Connect | Select exactly two objects; "Connect" on the bar joins them, and says "Disconnect" once they are. Click the line to select it |
 | Label an arrow | Double-click the line, or select it and press "Add label" — the words are written where they are drawn |
 | Snapping | On by default; hold `Alt` to disable |
+| Find | `⌘/Ctrl+F`; `Enter` and `Shift+Enter` step through the matches, `Escape` closes |
 | Undo / redo | `⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z` |
 | Fit / reset zoom | `Shift+1` / `Shift+0` |
 
@@ -485,6 +487,37 @@ The element is moved and sized to hold what it draws, with a `viewBox` that
 keeps the coordinates inside it world coordinates. The obvious shape — an
 element of no size with `overflow: visible` — is what this started as, and
 Chrome lays that out, hit-tests it, and paints none of it.
+
+### Find
+
+`⌘F` searches **the board**, not the sheet on screen and not the document: the
+renderer culls objects that are off screen, so the browser's own find is looking
+at the handful of cards in view. This reads every sheet, says how many matches
+there are and how many are on other canvases, rings them where you can see them,
+and steps you through — switching sheets when the next one is somewhere else.
+
+The stored text is what is searched, so a labelled link is found both by what it
+says and by where it goes: somebody looking for `plan.test` wants the address and
+somebody looking for "roadmap" wants the words, and the characters the document
+holds are the only string with both in it.
+
+Matches come back in **reading order** — sheet by sheet in tab order, then down
+the page and across it. Not the z-order the document keeps: stepping through
+matches is a walk over a picture, and which card happens to be on top of which
+says nothing anybody can see. A connector is ordered by where it is drawn,
+halfway between the two objects it joins, since it has no box of its own.
+
+Stepping *selects* the match and centres the camera on it at the zoom already in
+use. Selecting, because "this one" is what a step means and the selection is how
+this board says that — and because whatever is done next, from formatting to
+Delete, is then about the thing that was found. At the zoom already in use,
+because how far in somebody is looking is theirs; `Viewport#centreOn` is that
+move, and the map's presses are the same one.
+
+What the search turned up is a second set of ids — `Selection` again, since that
+is exactly what it is — kept apart from the selection proper because the two mean
+different things to every key on the keyboard. Nobody searching for a word means
+to delete every card holding it.
 
 ### Corners
 
@@ -1058,6 +1091,13 @@ two arrows crossing put their labels in the same place. There is also no
 drag-to-connect gesture — joining two things means selecting both and pressing a
 button, because handles on an object's edge would land exactly where the resize
 handles already are.
+
+Find matches whole words in the plain sense — a substring, case-insensitively.
+No regular expressions, no whole-word toggle, no replace, and nothing is
+highlighted *inside* a card: the object holding the words is ringed, and which
+line of it matched is left to the reader. Replace is the interesting one to
+leave out, because it would be the first thing in this app that edits text
+nobody is looking at.
 
 Adding a link is a pointer gesture only. `⌘K` is the shortcut everybody expects,
 and the keys pressed inside a field are that field's — deliberately, since that

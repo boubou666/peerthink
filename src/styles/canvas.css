@@ -1177,3 +1177,77 @@ body:has(.board-page) { overflow: hidden; }
 }
 .fmt-connect:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .fmt-connect[aria-pressed="true"] { color: var(--accent); }
+
+/* ---------------------------------------------------------------------------
+ * Find
+ *
+ * Top centre, between the toolbar and the board bar, because it is about the
+ * whole board rather than about a corner of it — and because that is where a
+ * browser puts its own find, which is the thing everybody's hands expect.
+ * ------------------------------------------------------------------------ */
+
+.find-bar {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  box-shadow: var(--shadow);
+}
+
+.find-field {
+  width: 200px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.find-field:focus { border-color: var(--accent); }
+
+.find-count {
+  min-width: 60px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.find-step {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.find-step:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.find-step:disabled { color: var(--muted); cursor: default; }
+
+/*
+ * What the search turned up, on the board itself.
+ *
+ * A ring rather than a fill: a card's colour is the user's, and painting over
+ * it to say "this one" would be the app taking a decision back. Counter-scaled
+ * like every other affordance, so it is the same weight at any zoom.
+ */
+.obj.found { box-shadow: var(--shadow), 0 0 0 calc(2px / var(--z)) var(--accent-soft, #f0a132); }
+.obj.found.selected { box-shadow: var(--shadow), 0 0 0 calc(2px / var(--z)) var(--accent); }
+.connector-label.found .connector-text {
+  box-shadow: 0 0 0 calc(1px / var(--z)) var(--accent-soft, #f0a132);
+}
