@@ -21,6 +21,7 @@
  */
 
 import { cardStyle, namedColour, TRANSPARENT } from '../core/card-style.js';
+import { isPlaced } from '../core/connectors.js';
 import { centredOn, mapFit, toMap, toWorld } from '../core/minimap.js';
 
 /**
@@ -131,6 +132,13 @@ export function createMinimap({
 
     ctx.lineWidth = 1;
     for (const obj of store.all()) {
+      /**
+       * Objects only. A connector has no box to draw, and drawing the line
+       * anyway would fill a map the size of a postage stamp with threads
+       * between marks two pixels wide — what is out there and where you are,
+       * which is what this answers, is a question about the things.
+       */
+      if (!isPlaced(obj)) continue;
       const at = toMap(obj, fit);
       const w = Math.max(at.w, MIN_MARK);
       const h = Math.max(at.h, MIN_MARK);

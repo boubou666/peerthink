@@ -315,6 +315,64 @@ describe('export', () => {
     });
   });
 
+  /**
+   * The picture is a second renderer, so an arrow drawn on screen and not in
+   * the file is exactly the drift that file's comment warns about.
+   */
+  describe('connectors', () => {
+    const PAIR = [
+      { id: 'a', type: 'card', x: 0, y: 0, w: 100, h: 100, fill: 'yellow' },
+      { id: 'b', type: 'card', x: 300, y: 0, w: 100, h: 100, fill: 'yellow' },
+      { id: 'c', type: 'connector', from: 'a', to: 'b' },
+    ];
+
+    test('an arrow is drawn between the two objects it joins', async () => {
+      const result = await painted(
+        PAIR,
+        `({ at, swatch, palette }) => ({
+          // Halfway between the two cards, on the line between their middles.
+          middle: at(200, 50),
+          expected: swatch(palette.connectorStroke),
+          // And a little above it, which is background.
+          above: at(200, 20),
+          background: swatch(palette.bg),
+        })`,
+      );
+
+      assert.deepEqual(result.middle, result.expected, 'the line is the colour the stylesheet gives it');
+      assert.deepEqual(result.above, result.background, 'and it is a line rather than a smear');
+    });
+
+    test('the head is filled, at the end it points to', async () => {
+      const result = await painted(
+        PAIR,
+        `({ at, swatch, palette }) => ({
+          // Inside the triangle: back from the second card's border, off the
+          // centre line, where a stroke alone would leave background.
+          head: at(285, 48),
+          expected: swatch(palette.connectorStroke),
+        })`,
+      );
+
+      assert.deepEqual(result.head, result.expected);
+    });
+
+    test('one whose other end was left out is not drawn', async () => {
+      const result = await painted(
+        [PAIR[0], PAIR[2]],
+        `({ at, swatch, palette }) => ({
+          // The padding round the one card that came, where an arrow drawn
+          // from it to nowhere would have to cross.
+          beyond: at(10, 10),
+          background: swatch(palette.bg),
+        })`,
+        { padding: 40 },
+      );
+
+      assert.deepEqual(result.beyond, result.background);
+    });
+  });
+
   describe('an image', () => {
     /** A flat pink PNG, made by the browser, as an object on the board. */
     const picture = (props = {}) => `(() => {

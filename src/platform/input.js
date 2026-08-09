@@ -1,3 +1,4 @@
+import { isConnector } from '../core/connectors.js';
 import { bbox, rectFromPoints } from '../core/geometry.js';
 import { hrefFor } from '../core/links.js';
 
@@ -95,6 +96,20 @@ export function createInput({
 
     // inside the object being edited, let the caret do its job
     if (id && id === editingId && e.target.isContentEditable) return;
+
+    /**
+     * A connector: selectable, and nothing else.
+     *
+     * There is no box to drag, no handle to resize and no depth to raise — an
+     * arrow is wherever its two ends are, so the only thing a press on one can
+     * mean is "this one", and the only thing that follows is Delete.
+     */
+    if (isConnector(store.get(id))) {
+      e.preventDefault();
+      if (e.shiftKey) selection.toggle(id);
+      else selection.set([id]);
+      return;
+    }
 
     if (!objEl) {
       if (!e.shiftKey) selection.clear();
@@ -216,7 +231,9 @@ export function createInput({
   // ---------- drag ----------
 
   function startDrag(e, href = null) {
-    const ids = board.withEnvelopeChildren(selection.list());
+    // `movable`, because a selection can hold an arrow and an arrow has no
+    // coordinates to move — it follows the objects being dragged on its own.
+    const ids = board.movable(board.withEnvelopeChildren(selection.list()));
     const start = worldPoint(e);
     const from = { x: e.clientX, y: e.clientY };
     const origins = new Map(ids.map((id) => {

@@ -1037,3 +1037,66 @@ body:has(.board-page) { overflow: hidden; }
 @media (max-width: 700px) {
   .minimap-canvas { width: 120px; height: 80px; }
 }
+
+/* ---------------------------------------------------------------------------
+ * Connectors
+ *
+ * One SVG inside the world layer, drawn in world coordinates. It has no size
+ * of its own and must not clip: the board is unbounded and its coordinates go
+ * negative, so `overflow: visible` is what lets a line be drawn anywhere.
+ *
+ * Widths are in world units, so a connector scales with the board like a
+ * card's text and unlike a selection ring — it is content, not an affordance.
+ * ------------------------------------------------------------------------ */
+
+.connectors {
+  position: absolute;
+  /* Placed and sized by the layer, from the lines it is drawing: a board is
+     unbounded and its coordinates go negative, and an element of no size is
+     one Chrome lays out, hit-tests and does not paint. */
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.connector-line {
+  stroke: var(--muted);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  fill: none;
+}
+.connector-head { fill: var(--muted); }
+
+/*
+ * The only part that can be pointed at, and it is not drawn: the line it
+ * stands for is two and a half units thick, which is a target nobody can hit.
+ * `pointer-events: stroke` is what makes a stroke with no colour a target —
+ * and what lets the SVG above it stay out of the way of the board.
+ */
+.connector-hit {
+  stroke: transparent;
+  stroke-width: 16;
+  fill: none;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.connectors .selected .connector-line { stroke: var(--accent); }
+.connectors .selected .connector-head { fill: var(--accent); }
+
+/* The format bar's control for them. Words, like "Link": it acts on what is
+   selected and has no state of its own to show as a shape. */
+.fmt-connect {
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.fmt-connect:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.fmt-connect[aria-pressed="true"] { color: var(--accent); }

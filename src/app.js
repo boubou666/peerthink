@@ -10,6 +10,7 @@ import { createScheduler } from './core/scheduler.js';
 import { seedBoard } from './core/seed.js';
 import { exportFrame, fileName } from './core/export.js';
 
+import { createConnectorLayer } from './platform/connectors.js';
 import { createViews } from './platform/views.js';
 import { createRenderer } from './platform/renderer.js';
 import { createInput } from './platform/input.js';
@@ -173,8 +174,16 @@ export function createApp({
      * nothing is indistinguishable from a broken one.
      */
     async exportPng() {
+      /**
+       * The selection, plus the arrows *between* what is in it — the rule
+       * copying follows, and for the same reason: a picture of two joined cards
+       * that leaves out what joins them is a picture of something else.
+       */
+      const picked = new Set(selection.list());
+      for (const obj of board.connectorsWithin(picked)) picked.add(obj.id);
+
       const chosen = selection.size
-        ? selection.list().map((id) => store.get(id)).filter(Boolean)
+        ? store.all().filter((obj) => picked.has(obj.id))
         : store.all();
 
       const frame = exportFrame(chosen);
@@ -207,7 +216,23 @@ export function createApp({
 
   const exporter = createPngExporter({ document, window });
   const views = createViews({ document });
-  const renderer = createRenderer({ document, elements: dom, store, viewport, selection, views, scheduler: clock, ResizeObserver });
+  /**
+   * The arrows, in one SVG behind everything. Built here rather than inside the
+   * renderer because it is a piece of the browser like the views are, and the
+   * renderer is what tells it that the document changed.
+   */
+  const connectors = createConnectorLayer({ document, elements: dom, store, selection });
+  const renderer = createRenderer({
+    document,
+    elements: dom,
+    store,
+    viewport,
+    selection,
+    views,
+    connectors,
+    scheduler: clock,
+    ResizeObserver,
+  });
   const input = createInput({
     document,
     window,

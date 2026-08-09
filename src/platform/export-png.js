@@ -33,6 +33,7 @@ import {
   cardStyle,
   namedColour,
 } from '../core/card-style.js';
+import { connectorGeometry, isConnector } from '../core/connectors.js';
 import { cornersOf } from '../core/corners.js';
 import { isImageSource } from '../core/image.js';
 import { displayText } from '../core/links.js';
@@ -140,6 +141,23 @@ export function createPngExporter({ document, window }) {
     const cardInk = styleOf('ink', CARD_INKS, (read) => read.color);
     const cardFamily = styleOf('font', CARD_FONTS, (read) => read.family);
     const cardSize = styleOf('size', CARD_SIZES, (read) => read.size);
+    /**
+     * A connector's colour and thickness, probed like everything else — it is
+     * an SVG stroke on screen, so the probe has to be an SVG one. Restating
+     * either here would be the copy this whole function exists to avoid.
+     */
+    const connector = (() => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('class', 'connector-line');
+      svg.appendChild(line);
+      host.appendChild(svg);
+      const style = window.getComputedStyle(line);
+      const read = { stroke: style.stroke, width: parseFloat(style.strokeWidth) };
+      svg.remove();
+      return read;
+    })();
+
     const envelope = probe('obj envelope');
     // What shows through a picture with transparency in it, and what an image
     // whose source did not decode is drawn as. A `color-mix` again, so it is
@@ -160,6 +178,8 @@ export function createPngExporter({ document, window }) {
       cardInk,
       cardFamily,
       cardSize,
+      connectorStroke: connector.stroke,
+      connectorWidth: Number.isFinite(connector.width) ? connector.width : 2,
       envelopeBg: envelope.background,
       envelopeBorder: envelope.border,
       imageBg: image.background,
@@ -464,6 +484,39 @@ export function createPngExporter({ document, window }) {
     ctx.restore();
   };
 
+  /**
+   * An arrow between two objects, drawn from the same geometry the screen uses.
+   *
+   * Both ends have to be in the picture. Exporting a selection takes the
+   * connectors *between* what was selected — the rule copying follows — so an
+   * arrow whose other end was left out is one nobody asked for and there is
+   * nothing sensible to draw for it.
+   */
+  const drawConnector = (ctx, obj, palette, boxes) => {
+    const from = boxes.get(obj.from);
+    const to = boxes.get(obj.to);
+    if (!from || !to) return;
+
+    const drawn = connectorGeometry(from, to);
+    if (!drawn) return;
+
+    ctx.strokeStyle = palette.connectorStroke;
+    ctx.fillStyle = palette.connectorStroke;
+    ctx.lineWidth = palette.connectorWidth;
+    ctx.lineCap = 'round';
+
+    ctx.beginPath();
+    ctx.moveTo(drawn.line.x1, drawn.line.y1);
+    ctx.lineTo(drawn.line.x2, drawn.line.y2);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(...drawn.head[0]);
+    for (const [x, y] of drawn.head.slice(1)) ctx.lineTo(x, y);
+    ctx.closePath();
+    ctx.fill();
+  };
+
   const drawers = { card: drawCard, envelope: drawEnvelope, list: drawList, image: drawImage };
 
   /**
@@ -511,6 +564,16 @@ export function createPngExporter({ document, window }) {
 
     ctx.scale(frame.scale, frame.scale);
     ctx.translate(-frame.rect.x, -frame.rect.y);
+
+    /**
+     * The arrows first, so every object is painted over them — which is the
+     * order the screen draws them in, and the reason for it is the same: a line
+     * across the text it joins is a diagram nobody can read.
+     */
+    const boxes = new Map(objects.filter(Boolean).map((obj) => [obj.id, obj]));
+    for (const obj of objects) {
+      if (isConnector(obj)) drawConnector(ctx, obj, palette, boxes);
+    }
 
     for (const obj of objects) {
       // An object of a type this file has never heard of is skipped rather

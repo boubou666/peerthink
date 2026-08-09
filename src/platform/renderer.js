@@ -1,3 +1,4 @@
+import { isPlaced } from '../core/connectors.js';
 import { cornersOf, hasCorners } from '../core/corners.js';
 import { rectsIntersect } from '../core/geometry.js';
 
@@ -12,7 +13,23 @@ const GRID = 20; // background dot spacing, world units
  * (cheap to keep, expensive to rebuild) but are hidden, which drops them from
  * layout and paint.
  */
-export function createRenderer({ document, elements, store, viewport, selection, views, scheduler, ResizeObserver }) {
+export function createRenderer({
+  document,
+  elements,
+  store,
+  viewport,
+  selection,
+  views,
+  /**
+   * The arrows, which are drawn somewhere else entirely — one SVG element
+   * rather than one element each, and behind everything rather than in the
+   * z-order. They are still objects in the store, so this is what tells them
+   * that it changed.
+   */
+  connectors,
+  scheduler,
+  ResizeObserver,
+}) {
   const { stage, bg, layer } = elements;
   const els = new Map();
   const unsubscribe = [];
@@ -66,6 +83,7 @@ export function createRenderer({ document, elements, store, viewport, selection,
       el.classList.toggle('selected', on);
       el.classList.toggle('handles-on', on && single);
     }
+    connectors?.applySelection();
   }
 
   function applyTransform() {
@@ -92,6 +110,9 @@ export function createRenderer({ document, elements, store, viewport, selection,
     let previous = null;
     for (const id of store.order) {
       const obj = store.get(id);
+      // A connector has no element of its own here and no place in the z-order:
+      // it is a line under everything, drawn by the layer below.
+      if (!isPlaced(obj)) continue;
       let el = els.get(id);
       if (!el) {
         el = createElement(obj);
@@ -105,6 +126,13 @@ export function createRenderer({ document, elements, store, viewport, selection,
       previous = el;
       if (!ids || ids.has(id)) updateElement(el, obj);
     }
+
+    /**
+     * After the objects, and on every change rather than only when a connector
+     * itself changed: an arrow is drawn from where its ends are, and they move
+     * without it being touched.
+     */
+    connectors?.sync();
 
     applySelection();
     cull();
@@ -128,6 +156,7 @@ export function createRenderer({ document, elements, store, viewport, selection,
     destroy() {
       observer.disconnect();
       for (const off of unsubscribe) off();
+      connectors?.destroy();
       for (const el of els.values()) el.remove();
       els.clear();
     },
