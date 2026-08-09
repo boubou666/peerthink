@@ -1251,3 +1251,80 @@ body:has(.board-page) { overflow: hidden; }
 .connector-label.found .connector-text {
   box-shadow: 0 0 0 calc(1px / var(--z)) var(--accent-soft, #f0a132);
 }
+
+/* ---------------------------------------------------------------------------
+ * Lining up and spacing out
+ *
+ * The control is the shape it makes: two bars against the line they will land
+ * on, or three bars with equal air between them. Drawn rather than lettered,
+ * for the reason the text alignment and the corners are — no font ships a
+ * glyph for "line these up on their middles", and six controls that differ by
+ * one word are six nobody reads.
+ * ------------------------------------------------------------------------ */
+
+.fmt-arrange {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+.fmt-arrange:hover:not(:disabled) { border-color: var(--line); }
+.fmt-arrange:disabled { opacity: .35; cursor: default; }
+
+/* The line the bars are landing on. */
+.fmt-arrange::before {
+  content: '';
+  position: absolute;
+  background: var(--accent);
+}
+
+/* Bars across the button, stacked down it — the horizontal alignments. */
+.fmt-arrange[data-axis="x"] { flex-direction: column; }
+.fmt-arrange[data-axis="x"] .fmt-bar { height: 3px; }
+.fmt-arrange[data-axis="x"] .fmt-bar:nth-child(1) { width: 12px; }
+.fmt-arrange[data-axis="x"] .fmt-bar:nth-child(2) { width: 7px; }
+
+/* And down it, side by side — the vertical ones. */
+.fmt-arrange[data-axis="y"] { flex-direction: row; }
+.fmt-arrange[data-axis="y"] .fmt-bar { width: 3px; }
+.fmt-arrange[data-axis="y"] .fmt-bar:nth-child(1) { height: 12px; }
+.fmt-arrange[data-axis="y"] .fmt-bar:nth-child(2) { height: 7px; }
+
+.fmt-arrange[data-value="left"], .fmt-arrange[data-value="top"] { align-items: flex-start; }
+.fmt-arrange[data-value="center"], .fmt-arrange[data-value="middle"] { align-items: center; }
+.fmt-arrange[data-value="right"], .fmt-arrange[data-value="bottom"] { align-items: flex-end; }
+
+.fmt-arrange[data-value="left"]::before   { left: 3px; top: 3px; bottom: 3px; width: 1px; }
+.fmt-arrange[data-value="center"]::before { left: 50%; top: 3px; bottom: 3px; width: 1px; }
+.fmt-arrange[data-value="right"]::before  { right: 3px; top: 3px; bottom: 3px; width: 1px; }
+.fmt-arrange[data-value="top"]::before    { top: 3px; left: 3px; right: 3px; height: 1px; }
+.fmt-arrange[data-value="middle"]::before { top: 50%; left: 3px; right: 3px; height: 1px; }
+.fmt-arrange[data-value="bottom"]::before { bottom: 3px; left: 3px; right: 3px; height: 1px; }
+
+/* A little air before the pair that does something else. */
+.fmt-arrange[data-value="horizontal"] { margin-left: 5px; }
+
+/*
+ * Spacing has no line to land on: it is three bars and the air between them,
+ * running the way the objects will. The direction is set here rather than
+ * inherited, because these two carry no `data-axis` — they are not about an
+ * edge, and the rules above are.
+ */
+.fmt-arrange[data-value="horizontal"],
+.fmt-arrange[data-value="vertical"] {
+  align-items: center;
+  justify-content: space-between;
+}
+.fmt-arrange[data-value="horizontal"] { flex-direction: row; }
+.fmt-arrange[data-value="vertical"] { flex-direction: column; }
+.fmt-arrange[data-value="horizontal"]::before,
+.fmt-arrange[data-value="vertical"]::before { content: none; }
+.fmt-arrange[data-value="horizontal"] .fmt-bar { width: 3px; height: 12px; }
+.fmt-arrange[data-value="vertical"] .fmt-bar { width: 12px; height: 3px; }

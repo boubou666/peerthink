@@ -1,3 +1,4 @@
+import { alignment, spacing } from './arrange.js';
 import {
   CONNECTOR,
   connectorBetween,
@@ -297,6 +298,59 @@ export class Board {
       }),
       record,
     );
+  }
+
+  /**
+   * Line the selection up on an edge, or space it evenly.
+   *
+   * The connectors in a selection are left out: they have no box to line up and
+   * follow their ends anyway. What is left has to be two objects (three, to
+   * space) or there is nothing to arrange them *against*, and the control that
+   * asked is answered with a no rather than with a move nobody can explain.
+   */
+  alignSelection(edge) {
+    return this.moveEachBy(alignment(this.arrangeable(), edge));
+  }
+
+  spaceSelection(direction) {
+    return this.moveEachBy(spacing(this.arrangeable(), direction));
+  }
+
+  /** The selected objects that have a box, in the order they were selected. */
+  arrangeable() {
+    return this.selection.list().map((id) => this.store.get(id)).filter(isPlaced);
+  }
+
+  /**
+   * Move several objects, each by its own delta, in one recorded change.
+   *
+   * An envelope carries what it holds, which is the rule dragging and nudging
+   * already follow — an envelope lined up without its contents is an envelope
+   * that has left them behind. An object with a delta of its own keeps it: it
+   * was selected, so what it was asked to do is more specific than what the
+   * envelope round it was asked to do.
+   */
+  moveEachBy(deltas) {
+    const moves = new Map();
+    for (const move of deltas) moves.set(move.id, move);
+
+    for (const move of deltas) {
+      if (this.store.get(move.id)?.type !== 'envelope') continue;
+      for (const id of this.withEnvelopeChildren([move.id])) {
+        if (!moves.has(id)) moves.set(id, { ...move, id });
+      }
+    }
+
+    const ops = [...moves.values()]
+      .filter((move) => move.dx || move.dy)
+      .map((move) => {
+        const obj = this.store.get(move.id);
+        return { t: 'set', id: move.id, patch: { x: obj.x + move.dx, y: obj.y + move.dy } };
+      });
+
+    if (!ops.length) return false;
+    this.store.apply(ops);
+    return true;
   }
 
   /** Nudge the selection, carrying whatever its envelopes contain. */

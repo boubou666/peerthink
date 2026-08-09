@@ -23,6 +23,7 @@ npm start        # serve the built site
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
 | **Images** | Paste a picture from anywhere and it becomes an object on the sheet, carried by the document itself |
 | **Connectors** | Select two objects and an arrow joins them, with a label if you want one — it follows them about, and goes when they do |
+| **Arrange** | Line a selection up on any edge or middle, and space three or more of them evenly |
 | **Corners** | Cards, envelopes, lists and images are rounded or square, per object |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
 | **Find** | `⌘/Ctrl+F` searches every sheet of the board and takes you to what it turns up |
@@ -47,6 +48,7 @@ npm start        # serve the built site
 | Links | Click one to open it in a new tab; hover one second for a preview. While a card is being edited, a click is the caret's |
 | Add a link | While editing, select some words — double-click one, or drag across them — and press "Link" on the bar above |
 | Map | Press anywhere on it to look there; drag across it to pan; the button in its corner folds it away |
+| Arrange | Select two or more; the bar's six alignment controls line them up, and the last two space three or more evenly |
 | Connect | Select exactly two objects; "Connect" on the bar joins them, and says "Disconnect" once they are. Click the line to select it |
 | Label an arrow | Double-click the line, or select it and press "Add label" — the words are written where they are drawn |
 | Snapping | On by default; hold `Alt` to disable |
@@ -77,6 +79,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
               │   ├── scheduler.js   timing, behind an interface
               │   ├── geometry.js    rectangle maths
               │   ├── ids.js         id generation
+              │   ├── arrange.js     lining objects up, and spacing them out
               │   ├── card-style.js  how a card looks, as tokens
               │   ├── corners.js     rounded or square, for every type
               │   ├── clipboard.js   what copied objects look like as text
@@ -518,6 +521,33 @@ What the search turned up is a second set of ids — `Selection` again, since th
 is exactly what it is — kept apart from the selection proper because the two mean
 different things to every key on the keyboard. Nobody searching for a word means
 to delete every card holding it.
+
+### Lining up and spacing out
+
+Snapping aligns a card to *one* other card as it moves, which is the right
+answer while dragging and no answer at all for six cards dropped roughly in a
+row. Select two or more and the bar offers the six alignments; select three and
+it offers the two spacings.
+
+**Aligned against the bounding box of the selection**, not against one chosen
+object. "Align left" is then the left edge of everything selected — which is the
+left edge of whichever object is furthest left — so the one that does not move is
+the one already in the right place, and nobody has to be told which object was
+the reference.
+
+**Spaced by equal gaps, not equal centres.** The objects on a board are not the
+same size, and three cards and a wide envelope spaced by their centres look wrong
+in exactly the way somebody reaching for this is trying to fix. The two on the
+ends stay where they are, because spacing is about what is between them. Two
+objects have one gap and one gap is already even, so those controls are there and
+refuse rather than appearing and disappearing as a third object is selected.
+
+`core/arrange.js` answers in **deltas** rather than positions, which is what lets
+the board apply the rule it already has for moving things: an envelope carries
+what it holds. An object with a delta of its own keeps it — it was selected, so
+what it was asked to do is more specific than what the envelope round it was
+asked to do. Connectors are left out, having no box to line up and following
+their ends anyway.
 
 ### Corners
 
@@ -1091,6 +1121,11 @@ two arrows crossing put their labels in the same place. There is also no
 drag-to-connect gesture — joining two things means selecting both and pressing a
 button, because handles on an object's edge would land exactly where the resize
 handles already are.
+
+Arranging has no shortcuts and no rulers: the eight controls are pointer-only,
+there is no "make these the same size", and nothing is arranged *relative to*
+one object you nominate — the bounding box is always the reference. Nudging with
+the arrow keys is the nearest thing to a keyboard route.
 
 Find matches a **substring**, case-insensitively: `map` turns up "roadmap" as
 well as "map". No regular expressions, no whole-word option, no replace, and

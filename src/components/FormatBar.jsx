@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 
+import { AXES, EDGES } from '../core/arrange.js';
 import { barPosition } from '../core/bar-position.js';
 import { connectorBetween, connectorBox, isConnector, isPlaced } from '../core/connectors.js';
 import { linkFrom } from '../core/links.js';
@@ -50,6 +51,36 @@ import { ColourPicker, resolveColour } from './ColourPicker.jsx';
 const SIZE_LABELS = { sm: 'S', md: 'M', lg: 'L', xl: 'XL' };
 const FONT_LABELS = { sans: 'Sans', serif: 'Serif', mono: 'Mono' };
 const CORNER_LABELS = { round: 'Rounded corners', square: 'Square corners' };
+
+/**
+ * What each arranging control says, and which way its icon runs.
+ *
+ * The icon is the shape it makes — two bars against the line they will land on
+ * — for the reason the alignment and corner controls are drawn rather than
+ * lettered: no font ships a glyph for "line these up on their middles", and
+ * six that differ by one word are six nobody reads.
+ */
+const ARRANGE_LABELS = {
+  left: 'Align left edges',
+  center: 'Align centres',
+  right: 'Align right edges',
+  top: 'Align top edges',
+  middle: 'Align middles',
+  bottom: 'Align bottom edges',
+  horizontal: 'Space evenly across',
+  vertical: 'Space evenly down',
+};
+
+/**
+ * Which way an *alignment* control's bars are drawn: `x` across the button, `y`
+ * down it. The two spacing controls are a different shape — three bars and the
+ * air between them, with no line to land on — and carry no axis, so none of
+ * those rules reach them.
+ */
+const ARRANGE_AXIS = {
+  left: 'x', center: 'x', right: 'x',
+  top: 'y', middle: 'y', bottom: 'y',
+};
 
 export function FormatBar({ app, stage: stageEl, onProblem }) {
   const { board, commands, store, selection, viewport } = app;
@@ -166,6 +197,13 @@ export function FormatBar({ app, stage: stageEl, onProblem }) {
    * can mean.
    */
   const arrow = objects.length === 1 && isConnector(objects[0]) ? objects[0] : null;
+
+  /**
+   * What can be lined up: everything selected that has a box. Two to align
+   * against each other, three before there is a gap to make equal — with two
+   * there is one gap, and one gap is already even.
+   */
+  const arrangeable = objects.filter(isPlaced);
 
   /**
    * Ask where the selected words should point, and make them point there.
@@ -432,6 +470,53 @@ export function FormatBar({ app, stage: stageEl, onProblem }) {
           </button>
         ))}
       </div>
+      )}
+
+      {/*
+        Lining up, and spacing out — the two things a pointer is worst at.
+        Offered for anything with a box, cards or not, because "these three
+        edges in a line" is a fact about rectangles.
+      */}
+      {arrangeable.length >= 2 && (
+        <>
+          <div className="fmt-group" role="group" aria-label="Arrange">
+            {EDGES.map((edge) => (
+              <button
+                key={edge}
+                type="button"
+                className="fmt-arrange"
+                data-value={edge}
+                data-axis={ARRANGE_AXIS[edge]}
+                aria-label={ARRANGE_LABELS[edge]}
+                title={ARRANGE_LABELS[edge]}
+                onClick={() => board.alignSelection(edge)}
+              >
+                <span className="fmt-bar" />
+                <span className="fmt-bar" />
+              </button>
+            ))}
+
+            {AXES.map((axis) => (
+              <button
+                key={axis}
+                type="button"
+                className="fmt-arrange"
+                data-value={axis}
+                aria-label={ARRANGE_LABELS[axis]}
+                title={ARRANGE_LABELS[axis]}
+                // Three objects before a gap can be made equal to another gap.
+                disabled={arrangeable.length < 3}
+                onClick={() => board.spaceSelection(axis)}
+              >
+                <span className="fmt-bar" />
+                <span className="fmt-bar" />
+                <span className="fmt-bar" />
+              </button>
+            ))}
+          </div>
+
+          <span className="fmt-sep" />
+        </>
       )}
 
       {/*
