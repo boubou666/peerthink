@@ -1,9 +1,9 @@
-// Where the format bar sits. The clamping is the fiddly part.
+// Where floating chrome sits. The clamping is the fiddly part.
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { barPosition } from '../../src/core/bar-position.js';
+import { barPosition, popoverPosition } from '../../src/core/bar-position.js';
 
 /** A camera at 1:1 with no pan, so world and screen are the same numbers. */
 const viewport = { toScreen: (x, y) => ({ x, y }) };
@@ -79,5 +79,58 @@ describe('the format bar position', () => {
       assert.equal(at.below, false);
       assert.ok(at.y < 300);
     });
+  });
+});
+
+describe('the link popover position', () => {
+  const screen = { width: 1000, height: 800 };
+  const link = (x, y, w = 160, h = 18) => ({ x, y, w, h });
+  const size = { width: 300, height: 200 };
+
+  /** Under the word, where the pointer is not, which is what a tooltip does. */
+  test('sits below the link, left-aligned with it', () => {
+    const at = popoverPosition(link(200, 300), screen, size);
+    assert.equal(at.x, 200, 'not aligned with the start of the link');
+    assert.equal(at.below, true);
+    assert.ok(at.y > 318, 'not below the link');
+  });
+
+  /**
+   * Measured against the whole popover, not its top edge: the reason to flip is
+   * that the bottom would be off screen.
+   */
+  test('flips above when the whole panel will not fit below', () => {
+    const at = popoverPosition(link(200, 700), screen, size);
+    assert.equal(at.below, false);
+    assert.ok(at.y < 700, 'not above the link');
+  });
+
+  test('a short panel still fits where a tall one does not', () => {
+    assert.equal(popoverPosition(link(200, 700), screen, { width: 300, height: 40 }).below, true);
+    assert.equal(popoverPosition(link(200, 700), screen, { width: 300, height: 400 }).below, false);
+  });
+
+  describe('keeping it on screen', () => {
+    test('a link near the right edge pulls the panel back', () => {
+      const at = popoverPosition(link(900, 300), screen, size);
+      assert.equal(at.x + size.width, screen.width - 8, 'the right edge is off screen');
+    });
+
+    test('a link off the left edge pushes it in', () => {
+      const at = popoverPosition(link(-40, 300), screen, size);
+      assert.equal(at.x, 8);
+    });
+
+    /** The same answer barPosition gives: clip evenly rather than pin one edge. */
+    test('a panel wider than the stage is centred instead', () => {
+      const at = popoverPosition(link(400, 300), screen, { width: 1200, height: 100 });
+      assert.equal(at.x, -100);
+    });
+  });
+
+  test('the first paint has no size to allow for, and simply does less', () => {
+    const at = popoverPosition(link(900, 300), screen);
+    assert.equal(at.x, 900);
+    assert.equal(at.below, true);
   });
 });

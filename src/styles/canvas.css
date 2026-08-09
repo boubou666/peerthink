@@ -111,9 +111,39 @@ body:has(.board-page) { overflow: hidden; }
 .obj.editing { cursor: text; user-select: text; }
 .obj.editing [contenteditable] { user-select: text; }
 
+/*
+ * A link in a board's text.
+ *
+ * Underlined as well as coloured, because colour alone is the one signal that
+ * can go wrong here: a card's ink and paper are the user's to choose, and a link
+ * on a card they have made dark blue on dark blue would be invisible. The
+ * underline holds whatever they pick.
+ *
+ * The colour is per context rather than one token. A card is paper — light in
+ * both themes, with its text colour fixed for that reason — so its link is a
+ * dark blue that reads on paper. An envelope or a list follows the theme, and
+ * there `--accent` is the colour that means "you can act on this" everywhere
+ * else in the app.
+ *
+ * While the object is being edited the pointer is a caret again: a click inside
+ * the field being edited belongs to the caret, which is also what the input
+ * layer does with it.
+ */
+.link {
+  color: var(--link, var(--accent));
+  text-decoration: underline;
+  text-decoration-thickness: max(1px, .06em);
+  text-underline-offset: .12em;
+  cursor: pointer;
+}
+.obj.editing .link { cursor: text; }
+
 /* card */
 
 .card {
+  /* Paper, in both themes — hence a link colour that reads on paper. */
+  --link: #1a4fb4;
+
   background: var(--card-bg, #fff2b0);
   color: #1c1b19;
   box-shadow: var(--shadow);
@@ -308,6 +338,78 @@ body:has(.board-page) { overflow: hidden; }
 }
 .guide.v { width: 1px; top: 0; bottom: 0; }
 .guide.h { height: 1px; left: 0; right: 0; }
+
+/* ---------------------------------------------------------------------------
+ * The link popover
+ *
+ * In the overlay, which is screen space — so it stays a readable size at any
+ * zoom, like the cursors and the resize handles. The overlay takes no pointer
+ * events, which is what this wants too: a panel that could be hovered would
+ * steal the hover from the link it is about and flicker.
+ *
+ * Sized by its content up to a limit, because the content is somebody else's
+ * page title. A description is clamped to three lines rather than allowed to
+ * become an essay in the corner of a board.
+ * ------------------------------------------------------------------------ */
+
+.link-popover {
+  position: absolute;
+  z-index: 6;
+  width: max-content;
+  max-width: 320px;
+  overflow: hidden;
+  padding: 9px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* Placed by its top edge below the link, and by its bottom edge above it. */
+.link-popover[data-above] { transform: translateY(-100%); }
+
+/* Full width of the panel, and its own corners follow the panel's. */
+.link-popover-image {
+  width: calc(100% + 22px);
+  margin: -9px -11px 6px;
+  max-height: 160px;
+  object-fit: cover;
+  display: block;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+.link-popover-title {
+  font-weight: 600;
+  color: var(--ink);
+  /* One line: a title that wraps three times is the panel's whole height. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.link-popover-text {
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+
+.link-popover-host {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A page that did not answer reads as a problem, in the red used everywhere. */
+.link-popover[data-link-popover="unreachable"] .link-popover-title { color: #d83a52; }
 
 /* ---------- toolbar ---------- */
 

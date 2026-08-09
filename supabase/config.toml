@@ -410,6 +410,22 @@ authorization_url_path = "/oauth/consent"
 # Allow dynamic client registration
 allow_dynamic_registration = false
 
+# Asking what is at a link, for the popover a hovered link opens.
+#
+# `verify_jwt` stays on: this function fetches a URL somebody typed onto a
+# board, so it is a request made from inside the provider's network on a
+# caller's behalf, and that is not something to offer anonymously to anybody who
+# finds the URL. Every caller of this app is signed in — a guest is an anonymous
+# *account*, which is a session and passes this.
+#
+# `entrypoint` because it is JavaScript. The CLI defaults to index.ts, and there
+# is no TypeScript anywhere else in this repository — writing it in JS is what
+# lets the guard and the extraction be imported by `node --test`.
+[functions.link-preview]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/link-preview/index.js"
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

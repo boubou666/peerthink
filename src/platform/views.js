@@ -11,6 +11,7 @@
 
 import { CARD_STYLE_FIELDS, cardStyle, namedColour } from '../core/card-style.js';
 import { isImageSource } from '../core/image.js';
+import { linkRuns } from '../core/links.js';
 
 export function createViews({ document }) {
   const element = (html) => {
@@ -22,8 +23,57 @@ export function createViews({ document }) {
   /** The property each colour field would have set, had it been a named one. */
   const CUSTOM_PROPERTY = { fill: '--card-bg', ink: '--card-ink' };
 
+  /**
+   * What each field was last given, so an unchanged one is not rebuilt.
+   *
+   * This used to compare `el.innerText`, which was free and honest while a
+   * field held nothing but text. It cannot survive links: what goes in is a
+   * string and what comes back out is a string read off elements, and the two
+   * agree in every case but are not the same object to compare. A rebuild on
+   * every `update` would mean rebuilding on every frame of a drag.
+   *
+   * A `WeakMap` rather than a data attribute, because the whole text would then
+   * be in the document twice, and this entry should go when the element does.
+   */
+  const rendered = new WeakMap();
+
+  /**
+   * Put text in a field, with any links in it as links.
+   *
+   * Built out of nodes, never out of markup. The text is a person's — pasted
+   * from anywhere, and arriving over the board's channel from anyone authorised
+   * to edit it — so `innerHTML` here would be a card that can write the page.
+   * `createTextNode` and `textContent` cannot: whatever the string holds is
+   * shown as the characters it is.
+   *
+   * `href` comes from `hrefFor`, which is what refuses every scheme but http and
+   * https. The anchor also carries `noopener noreferrer`, so a page opened from
+   * a board cannot reach back through `window.opener`.
+   *
+   * The rule the whole view layer follows still holds: never write to the field
+   * the user is focused on. That is also why a link typed just now becomes a
+   * link on blur rather than mid-word — `input.js` asks for the re-render.
+   */
   const setText = (el, value) => {
-    if (document.activeElement !== el && el.innerText !== value) el.innerText = value ?? '';
+    const text = value ?? '';
+    if (document.activeElement === el) return;
+    if (rendered.get(el) === text) return;
+    rendered.set(el, text);
+
+    el.replaceChildren(...linkRuns(text).map((run) => {
+      if (!run.href) return document.createTextNode(run.text);
+
+      const link = document.createElement('a');
+      link.className = 'link';
+      link.href = run.href;
+      // What the input layer and the hover popover look for. The `href` alone
+      // would match an anchor from anywhere; this one is the board's.
+      link.dataset.link = '';
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = run.text;
+      return link;
+    }));
   };
 
   const itemRow = (item) => {
@@ -33,7 +83,9 @@ export function createViews({ document }) {
     </div>`);
     row.dataset.itemId = item.id;
     row.classList.toggle('done', !!item.done);
-    row.querySelector('[data-field="item"]').innerText = item.text ?? '';
+    // Through `setText`, so a row has its links from the first frame rather
+    // than from the first update after it.
+    setText(row.querySelector('[data-field="item"]'), item.text);
     return row;
   };
 
