@@ -81,7 +81,11 @@ const USER_AGENT = 'PeerThink link preview (+https://boubou666.github.io/peerthi
  * than papered over.
  */
 async function resolvesSomewhereBlocked(hostname) {
-  if (typeof Deno?.resolveDns !== 'function') return false;
+  // `typeof Deno` first, and not `Deno?.resolveDns`: optional chaining still
+  // evaluates the identifier, and an identifier that was never declared is a
+  // ReferenceError rather than undefined. Outside the edge runtime — which is
+  // where the suite drives this — there is no `Deno` at all.
+  if (typeof Deno === 'undefined' || typeof Deno.resolveDns !== 'function') return false;
 
   const records = await Promise.all(['A', 'AAAA'].map((type) =>
     Deno.resolveDns(hostname, type).catch(() => [])));
@@ -130,7 +134,7 @@ async function readCapped(response, limit) {
  * on a hop nothing looked at, which is the standard way around a guard that only
  * checks what it was given.
  */
-async function fetchGuarded(target, { accept }) {
+async function fetchGuarded(target, { accept, fetchImpl }) {
   let url = target;
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -140,7 +144,7 @@ async function fetchGuarded(target, { accept }) {
 
     let response;
     try {
-      response = await fetch(checked.url, {
+      response = await fetchImpl(checked.url, {
         redirect: 'manual',
         signal: AbortSignal.timeout(TIMEOUT_MS),
         headers: { accept, 'user-agent': USER_AGENT, 'accept-language': 'en' },
@@ -170,8 +174,9 @@ async function fetchGuarded(target, { accept }) {
 }
 
 /** A thumbnail as a data URL, or null. Every way this can fail ends in null. */
-async function inlineImage(source) {
-  const found = await fetchGuarded(source, { accept: 'image/*' });
+async function inlineImage(source, fetchImpl) {
+  if (!source) return null;
+  const found = await fetchGuarded(source, { accept: 'image/*', fetchImpl });
   if (found.refused || !found.response) return null;
   if (found.status < 200 || found.status >= 300) {
     await found.response.body?.cancel().catch(() => {});
@@ -211,8 +216,17 @@ const readableSize = (bytes) => {
   return `${(bytes / KILOBYTE / KILOBYTE).toFixed(1)} MB`;
 };
 
-async function preview(raw) {
-  const found = await fetchGuarded(raw, { accept: 'text/html,*/*' });
+/**
+ * The whole answer for one URL.
+ *
+ * `fetchImpl` is an argument for the reason everything in `src/` takes its
+ * environment as one: it is the only way the suite can drive redirect following,
+ * the byte caps, the thumbnail and the not-a-page branch without a network or a
+ * runtime. The default is the real `fetch`, and the guard runs on every URL
+ * either way — this seam decides who answers, never what is allowed.
+ */
+export async function preview(raw, { fetchImpl = fetch } = {}) {
+  const found = await fetchGuarded(raw, { accept: 'text/html,*/*', fetchImpl });
 
   // Both answer the same thing on purpose — see NO_ANSWER.
   if (found.refused) {
@@ -258,11 +272,11 @@ async function preview(raw) {
     host,
     title: meta.title,
     description: meta.description,
-    image: await inlineImage(absoluteUrl(url.href, meta.image)),
+    image: await inlineImage(absoluteUrl(url.href, meta.image), fetchImpl),
   };
 }
 
-Deno.serve(async (request) => {
+export async function handle(request) {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: JSON_HEADERS });
   if (request.method !== 'POST') return answer({ error: 'POST a { url }' }, 405);
 
@@ -283,4 +297,13 @@ Deno.serve(async (request) => {
     console.error('link-preview failed', error);
     return answer({ error: 'the preview could not be made' }, 500);
   }
-});
+}
+
+/**
+ * Served only where there is a Deno to serve it.
+ *
+ * Everything above is a module the repository's own suite imports, and importing
+ * a module that starts a server is how a test run ends up holding a port. In the
+ * edge runtime this line is the whole entrypoint.
+ */
+if (typeof Deno !== 'undefined') Deno.serve(handle);
