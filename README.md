@@ -22,7 +22,7 @@ npm start        # serve the built site
 | **Envelopes** | Grouping containers — dragging one carries everything fully inside it, transitively |
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
 | **Images** | Paste a picture from anywhere and it becomes an object on the sheet, carried by the document itself |
-| **Connectors** | Select two objects and an arrow joins them, with a label if you want one — it follows them about, and goes when they do |
+| **Connectors** | Drag from an object's edge to another, or select two — an arrow joins them, with a label if you want one, and follows them about |
 | **Arrange** | Line a selection up on any edge or middle, and space three or more of them evenly |
 | **Corners** | Cards, envelopes, lists and images are rounded or square, per object |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
@@ -49,7 +49,7 @@ npm start        # serve the built site
 | Add a link | While editing, select some words — double-click one, or drag across them — and press "Link" on the bar above |
 | Map | Press anywhere on it to look there; drag across it to pan; the button in its corner folds it away |
 | Arrange | Select two or more; the bar's six alignment controls line them up, and the last two space three or more evenly |
-| Connect | Select exactly two objects; "Connect" on the bar joins them, and says "Disconnect" once they are. Click the line to select it |
+| Connect | Hover an object and drag from one of its four edge handles onto another — or select exactly two and press "Connect", which says "Disconnect" once they are. Click a line to select it |
 | Label an arrow | Double-click the line, or select it and press "Add label" — the words are written where they are drawn |
 | Snapping | On by default; hold `Alt` to disable |
 | Find | `⌘/Ctrl+F`; `Enter` and `Shift+Enter` step through the matches, `Escape` closes |
@@ -450,6 +450,35 @@ Measuring that takes the distance *along* the direction the two lie in rather
 than between their borders, because overlapping boxes have their far borders in
 the wrong order, and the distance between those two points says nothing about
 whether there is room.
+
+#### Dragging one out of an object
+
+Hover an object and four handles appear on its edges; press one and a line
+follows the pointer; release it over another object and the arrow exists. Over
+open board it is a dashed line with no head, because it is a question rather
+than an answer, and releasing there makes nothing — a connector to nowhere is
+not a thing this document can hold, and inventing an object to end it on would
+be a second feature answering for this one. `Escape` gives up on the arrow
+rather than on the selection.
+
+**On hover rather than on selection**, which is what keeps them out of the
+resize handles' way: those appear for a single *selected* object at the eight
+compass points, so the two sets are never under the pointer at the same moment.
+The four edges are also what an arrow means — it leaves an object through a
+side — and the corners stay resizing's. They are hidden while any gesture is
+under way, since the card being dragged around is hovered by definition, and
+while text is being edited, where the pointer belongs to the caret.
+
+The preview is drawn in the connectors' own SVG rather than in the overlay with
+the marquee and the guides. It is the thing being made rather than a mark about
+the gesture: world coordinates, the same geometry the real one will have, and
+inside the box that element sizes to itself — drawn anywhere else it would be
+clipped out of its own preview.
+
+What is under the pointer is asked of `elementFromPoint` rather than of the
+board's own geometry, because that answers with what a person can *see* there:
+the card on top rather than the envelope behind it, which is the one they are
+pointing at.
 
 #### A label is written where it is drawn
 
@@ -1117,10 +1146,9 @@ Connectors are straight lines, drawn between the middles of two objects and cut
 at their borders. No routing round what is in the way, no elbows, and no
 choosing which side an arrow leaves by. A label sits at the middle of the line
 and cannot be moved along it or off it, which is the next thing this will want:
-two arrows crossing put their labels in the same place. There is also no
-drag-to-connect gesture — joining two things means selecting both and pressing a
-button, because handles on an object's edge would land exactly where the resize
-handles already are.
+two arrows crossing put their labels in the same place. An arrow dragged onto open board is
+dropped rather than making a card to land on, which is the thing most tools do
+next and a decision of its own.
 
 Arranging has no shortcuts and no rulers: the eight controls are pointer-only,
 there is no "make these the same size", and nothing is arranged *relative to*

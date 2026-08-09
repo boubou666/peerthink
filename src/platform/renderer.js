@@ -3,6 +3,15 @@ import { cornersOf, hasCorners } from '../core/corners.js';
 import { rectsIntersect } from '../core/geometry.js';
 
 const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+
+/**
+ * Where a connector can be dragged from: the four edges, and only those.
+ *
+ * The corners belong to resizing, and a handle for each of eight directions
+ * would be eight targets four pixels apart at any sensible zoom. Four is also
+ * what an arrow means — it leaves an object through a side.
+ */
+const CONNECT_HANDLES = ['n', 'e', 's', 'w'];
 const GRID = 20; // background dot spacing, world units
 
 /**
@@ -63,6 +72,22 @@ export function createRenderer({
       handles.appendChild(handle);
     }
     el.appendChild(handles);
+
+    /**
+     * And the four an arrow is dragged from, shown on hover rather than on
+     * selection — the stylesheet's business — so they and the resize handles
+     * are never both under the pointer.
+     */
+    const connectors = document.createElement('div');
+    connectors.className = 'connect-handles';
+    for (const dir of CONNECT_HANDLES) {
+      const handle = document.createElement('div');
+      handle.className = 'connect-handle';
+      handle.dataset.connect = dir;
+      connectors.appendChild(handle);
+    }
+    el.appendChild(connectors);
+
     return el;
   }
 

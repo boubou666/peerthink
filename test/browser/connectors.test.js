@@ -234,6 +234,205 @@ describe('connectors', () => {
     assert.equal(over.type, 'card', `the card is on top of the line, not under it: ${JSON.stringify(over)}`);
   });
 
+  describe('dragging one out of an object', () => {
+    const handleOf = (id, dir = 'e') => page.eval(`(() => {
+      const el = document.querySelector('[data-id="${id}"] .connect-handle[data-connect="${dir}"]');
+      const r = el.getBoundingClientRect();
+      return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+    })()`);
+
+    const shown = (id) => page.eval(
+      `getComputedStyle(document.querySelector('[data-id="${id}"] .connect-handles')).display`,
+    );
+
+    const PREVIEW = `document.querySelector('.connector-preview').style.display`;
+
+    /** Put the pointer on an object and wait for what that offers to appear. */
+    const hover = async (id, at) => {
+      await page.mouse('mouseMoved', at.x, at.y);
+      await page.waitFor(`getComputedStyle(document.querySelector('[data-id="${id}"] .connect-handles')).display === 'block'`, {
+        label: 'the handles to be offered',
+      });
+    };
+
+    const hoverOn = async (id) => {
+      const box = await page.rect(id);
+      await hover(id, { x: box.cx, y: box.cy });
+    };
+
+    /**
+     * Press a handle, move through the points given, and release at the last.
+     *
+     * Waited on twice, at the two moments that mean something. After the first
+     * move, for the arrow to be *being drawn*: the preview is hidden before a
+     * press as well as after one, so a test that only waited for it to be gone
+     * would pass whether or not the gesture ever started — and every assertion
+     * about what a drag did would be about a drag that did not happen. Then
+     * after the release, for it to be gone again, which is true whether an
+     * arrow was made or not.
+     *
+     * The moves in between are not waited on: CDP dispatches them in order and
+     * the release is processed after them.
+     */
+    const dragFrom = async (at, [first, ...rest]) => {
+      await page.mouse('mousePressed', at.x, at.y);
+
+      await page.mouse('mouseMoved', first.x, first.y, { buttons: 1 });
+      await page.waitFor(`${PREVIEW} !== 'none'`, { label: 'the arrow being drawn' });
+
+      for (const point of rest) await page.mouse('mouseMoved', point.x, point.y, { buttons: 1 });
+
+      const last = rest[rest.length - 1] ?? first;
+      await page.mouse('mouseReleased', last.x, last.y);
+      await page.waitFor(`${PREVIEW} === 'none'`, { label: 'the gesture to end' });
+    };
+
+    test('the handles are there on hover, and not before it', async () => {
+      const [a] = await twoCards();
+      await page.eval('app.selection.clear()');
+
+      await page.mouse('mouseMoved', 5, 400);
+      await page.waitFor(`getComputedStyle(document.querySelector('[data-id="${a}"] .connect-handles')).display === 'none'`, {
+        label: 'nothing offered until the pointer is on it',
+      });
+
+      await hoverOn(a);
+      assert.equal(await shown(a), 'block');
+    });
+
+    test('and not while its text is being edited, where the pointer is a caret', async () => {
+      const [a] = await twoCards();
+      await page.eval(`document.querySelector('[data-id="${a}"] [contenteditable]').focus()`);
+
+      const box = await page.rect(a);
+      await page.mouse('mouseMoved', box.cx, box.cy);
+      await page.waitFor(`getComputedStyle(document.querySelector('[data-id="${a}"] .connect-handles')).display === 'none'`, {
+        label: 'the handles to stay away',
+      });
+    });
+
+    test('a drag from one object to another joins them, in that order', async () => {
+      const [a, b] = await twoCards();
+      await page.eval('app.selection.clear()');
+
+      const target = await page.rect(b);
+      await hoverOn(a);
+      await dragFrom(await handleOf(a), [{ x: target.cx, y: target.cy }]);
+
+      const made = await connectors();
+      assert.equal(made.length, 1);
+      assert.deepEqual([made[0].from, made[0].to], [a, b]);
+    });
+
+    /**
+     * The press belongs to the arrow being drawn, not to the card it started
+     * on: it must not select it, raise it, or take it for a drag.
+     */
+    test('and leaves the object it started from alone', async () => {
+      const [a, b] = await twoCards();
+      await page.eval('app.selection.clear()');
+      const before = await page.eval(`app.store.get('${a}').x`);
+
+      const target = await page.rect(b);
+      await hoverOn(a);
+      await dragFrom(await handleOf(a), [{ x: target.cx, y: target.cy }]);
+
+      assert.equal(await page.eval(`app.store.get('${a}').x`), before, 'it did not move');
+      assert.deepEqual(await page.eval('app.selection.list()'), [], 'and it was not selected');
+    });
+
+    test('a drag that lands on nothing makes nothing', async () => {
+      const [a] = await twoCards();
+      await page.eval('app.selection.clear()');
+
+      await hoverOn(a);
+      await dragFrom(await handleOf(a), [{ x: 700, y: 600 }]);
+
+      assert.deepEqual(await connectors(), []);
+      assert.equal(await page.eval(PREVIEW), 'none', 'and the line it was drawing is gone');
+    });
+
+    test('nor does one that lands back on the object it came from', async () => {
+      const [a] = await twoCards();
+      await page.eval('app.selection.clear()');
+
+      const box = await page.rect(a);
+      await hoverOn(a);
+      // Out over open board and back, so the arrow is genuinely being drawn
+      // before it is dropped where it started — a press and release without
+      // the journey would prove nothing about the landing.
+      await dragFrom(await handleOf(a), [{ x: box.cx + 240, y: box.cy }, { x: box.cx, y: box.cy }]);
+
+      assert.deepEqual(await connectors(), []);
+    });
+
+    test('Escape gives up on the arrow rather than on the selection', async () => {
+      const [a, b] = await twoCards();
+      await page.eval(`app.selection.set(['${a}'])`);
+
+      const target = await page.rect(b);
+      await hoverOn(a);
+
+      const handle = await handleOf(a);
+      await page.mouse('mousePressed', handle.x, handle.y);
+      await page.mouse('mouseMoved', target.cx, target.cy, { buttons: 1 });
+      await page.waitFor(`${PREVIEW} !== 'none'`, { label: 'the arrow being drawn' });
+
+      await page.key('Escape', { code: 'Escape', vk: 27 });
+      await page.waitFor(`${PREVIEW} === 'none'`, { label: 'the arrow to be given up on' });
+      await page.mouse('mouseReleased', target.cx, target.cy);
+
+      assert.deepEqual(await connectors(), [], 'no arrow was made');
+      assert.deepEqual(await page.eval('app.selection.list()'), [a], 'and the selection is where it was');
+    });
+
+    /**
+     * A selected object that is also hovered shows both sets. They are drawn on
+     * the same four edges, so what matters is that neither is standing on the
+     * other: the resize handles reach from five pixels outside the border to
+     * four inside it, and these start twenty out.
+     */
+    test('a selected object offers both sets, and each one still does its own job', async () => {
+      const [a, b] = await twoCards();
+      await page.eval(`app.selection.set(['${a}'])`);
+      await hoverOn(a);
+
+      const resize = await page.eval(`(() => {
+        const el = document.querySelector('[data-id="${a}"] .handle[data-handle="e"]');
+        const r = el.getBoundingClientRect();
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), left: r.left };
+      })()`);
+      const connect = await handleOf(a);
+
+      assert.ok(connect.x > resize.left, 'the connector handle is the further out of the two');
+
+      // The resize handle still resizes.
+      const before = await page.eval(`app.store.get('${a}').w`);
+      await page.drag({ x: resize.x, y: resize.y }, { x: resize.x + 60, y: resize.y });
+      assert.ok(await page.eval(`app.store.get('${a}').w`) > before, 'the edge handle resized it');
+
+      // And the connector handle still connects.
+      await hoverOn(a);
+      const target = await page.rect(b);
+      await dragFrom(await handleOf(a), [{ x: target.cx, y: target.cy }]);
+      assert.equal((await connectors()).length, 1);
+    });
+
+    test('a second drag between the same pair adds nothing', async () => {
+      const [a, b] = await twoCards();
+      await page.eval('app.selection.clear()');
+
+      const target = await page.rect(b);
+
+      for (let go = 0; go < 2; go++) {
+        await hoverOn(a);
+        await dragFrom(await handleOf(a), [{ x: target.cx, y: target.cy }]);
+      }
+
+      assert.equal((await connectors()).length, 1);
+    });
+  });
+
   describe('labels', () => {
     const LABEL = '[data-label] .connector-text';
 

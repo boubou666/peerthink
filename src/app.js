@@ -308,6 +308,9 @@ export function createApp({
     // label, and what is about to be edited has to be the string the store
     // holds.
     showSource: (el) => views.showSource(el),
+    // For the one gesture that draws before it writes: an arrow being dragged
+    // from one object towards another.
+    connectors,
   });
   const images = createImageImport({ document, window });
   const links = createLinks({ document, elements: dom, viewport, scheduler: clock, fetchPreview });
