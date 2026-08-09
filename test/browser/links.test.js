@@ -79,6 +79,19 @@ describe('link popover', () => {
   };
   const waitOut = () => page.eval('window.clock.flushTimers()');
 
+  /**
+   * Take the pointer off the link, and wait for the panel to be gone rather than
+   * for a moment to pass. Under load the next hover could otherwise start while
+   * the last panel is still up, and the assertion after it would be about the
+   * wrong one.
+   */
+  const leave = async (box) => {
+    await page.mouse('mouseMoved', box.x, box.y + 300);
+    await page.waitFor(`document.querySelector('[data-link-popover]') === null`, {
+      label: 'the panel to close',
+    });
+  };
+
   const popover = () => page.eval(`(() => {
     const el = document.querySelector('[data-link-popover]');
     if (!el) return null;
@@ -166,8 +179,7 @@ describe('link popover', () => {
       const { box } = await linkAt();
 
       await hover(box);
-      await page.mouse('mouseMoved', box.x, box.y + 300);
-      await page.sleep(40);
+      await leave(box);
       await waitOut();
       await page.sleep(60);
 
@@ -198,8 +210,7 @@ describe('link popover', () => {
       await waitOut();
       await page.waitFor(`document.querySelector('[data-link-popover]') !== null`, { label: 'the panel' });
 
-      await page.mouse('mouseMoved', box.x, box.y + 300);
-      await page.sleep(40);
+      await leave(box);
       await page.eval(`window.settle(${JSON.stringify(READY)})`);
       await page.sleep(80);
 
@@ -216,8 +227,7 @@ describe('link popover', () => {
         label: 'the preview',
       });
 
-      await page.mouse('mouseMoved', box.x, box.y + 300);
-      await page.sleep(40);
+      await leave(box);
       await hover(box);
       await waitOut();
       await page.waitFor(`document.querySelector('[data-link-popover]')?.dataset.linkPopover === 'ready'`, {
@@ -287,8 +297,7 @@ describe('link popover', () => {
         label: 'the verdict',
       });
 
-      await page.mouse('mouseMoved', box.x, box.y + 300);
-      await page.sleep(40);
+      await leave(box);
       await hover(box);
       await waitOut();
 
@@ -319,8 +328,7 @@ describe('link popover', () => {
 
         // And not remembered: a fetcher that answers nonsense once should be
         // asked again rather than having its nonsense drawn for the session.
-        await page.mouse('mouseMoved', box.x, box.y + 300);
-        await page.sleep(40);
+        await leave(box);
         await hover(box);
         await waitOut();
         await page.waitFor('window.asked.length === 2', { label: 'the second question' });
