@@ -72,8 +72,47 @@ export function createViews({ document }) {
       link.target = '_blank';
       link.rel = 'noopener noreferrer';
       link.textContent = run.text;
+      // Only a labelled link has one, and it is what `showSource` puts back —
+      // the characters the document holds, which this anchor is showing as
+      // words. A link that is its own address needs nothing here, and the text
+      // is not written into the DOM twice for it.
+      if (run.source) link.dataset.source = run.source;
       return link;
     }));
+  };
+
+  /**
+   * A field's own characters, back in it, for the person about to edit them.
+   *
+   * A labelled link is the one place where what is on screen is not what the
+   * store holds, and every edit reads a field back through `innerText` — so a
+   * single keystroke anywhere in a card would otherwise write the labels down
+   * and lose every address in it. Editing therefore shows the source, and blur
+   * puts the links back through `relink`.
+   *
+   * Only the labelled ones. A link that is its own address reads back as itself,
+   * so leaving it alone costs nothing and keeps a URL blue while it is being
+   * edited, which is what it has always done.
+   *
+   * The rendered record has to go with it: it says what this element is showing,
+   * and after this it is showing something else — without that, the redraw on
+   * blur would decide there was nothing to do.
+   */
+  const showSource = (el) => {
+    const labelled = el.querySelectorAll('[data-link][data-source]');
+    if (!labelled.length) return;
+
+    /**
+     * Replaced, and the text either side deliberately left unmerged. A
+     * `normalize()` here would tidy three adjacent text nodes into one — and
+     * remove two of them, which are exactly the nodes the caret is about to be
+     * placed into: the input layer works out where the pointer was *before*
+     * focusing, because revealing a source moves everything after it along the
+     * line. Nothing depends on the shape, and the next redraw builds the field
+     * from scratch anyway.
+     */
+    for (const link of labelled) link.replaceWith(document.createTextNode(link.dataset.source));
+    rendered.delete(el);
   };
 
   const itemRow = (item) => {
@@ -90,6 +129,8 @@ export function createViews({ document }) {
   };
 
   return {
+    showSource,
+
     card: {
       create: () => element(`<div class="obj card">
         <div class="card-text" contenteditable="true" data-field="text"></div>

@@ -35,6 +35,7 @@ import {
 } from '../core/card-style.js';
 import { cornersOf } from '../core/corners.js';
 import { isImageSource } from '../core/image.js';
+import { displayText } from '../core/links.js';
 
 /**
  * How long the object URL is kept alive as a backstop, in ms. Long enough that
@@ -185,10 +186,17 @@ export function createPngExporter({ document, window }) {
     return pieces;
   };
 
-  /** `white-space: pre-wrap` — newlines are kept, the rest is greedy wrap. */
+  /**
+   * `white-space: pre-wrap` — newlines are kept, the rest is greedy wrap.
+   *
+   * Through `displayText`, so a link with a label draws as its label. A picture
+   * of a board has no links in it either way — that is written down as a known
+   * limit — but drawing `[our roadmap](https://…)` would put characters in the
+   * picture that are not on the screen it is a picture of.
+   */
   const wrap = (ctx, text, maxWidth) => {
     const out = [];
-    for (const paragraph of String(text ?? '').split('\n')) {
+    for (const paragraph of displayText(text).split('\n')) {
       const words = paragraph
         .split(' ')
         .flatMap((w) => (ctx.measureText(w).width <= maxWidth ? [w] : breakWord(ctx, w, maxWidth)));

@@ -25,7 +25,7 @@ npm start        # serve the built site
 | **Corners** | Cards, envelopes, lists and images are rounded or square, per object |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
 | **Clipboard** | Copy and paste the selection — between sheets, between boards, between windows |
-| **Links** | A URL in any text is clickable; hover it for a second and a panel says what is there, or that it could not be reached |
+| **Links** | A URL in any text is clickable; select words while editing and "Link" points them at an address you give; hover one for a second and a panel says what is there, or that it could not be reached |
 | **Saving** | The bar says whether your work is stored — a refused write retries itself, and closing the tab flushes what the debounce is still holding |
 | **Export** | The board as a PNG — the selection if there is one, everything otherwise |
 | **Together** | With a project configured: share a board by link, live edits, and other people's cursors |
@@ -42,6 +42,7 @@ npm start        # serve the built site
 | Format | Select something; a bar appears above it — for cards, colour pickers for background and text, a no-background toggle, font, size and alignment; for anything, rounded or square corners |
 | Copy / paste | `⌘/Ctrl+C`, `⌘/Ctrl+V` — and `⌘/Ctrl+V` for an image on the clipboard, which lands as an object |
 | Links | Click one to open it in a new tab; hover one second for a preview. While a card is being edited, a click is the caret's |
+| Add a link | While editing, select some words — double-click one, or drag across them — and press "Link" on the bar above |
 | Snapping | On by default; hold `Alt` to disable |
 | Undo / redo | `⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z` |
 | Fit / reset zoom | `Shift+1` / `Shift+0` |
@@ -73,7 +74,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
               │   ├── corners.js     rounded or square, for every type
               │   ├── clipboard.js   what copied objects look like as text
               │   ├── image.js       what a picture may be, and how big
-              │   ├── links.js       finding a URL in prose, and which to follow
+              │   ├── links.js       finding a URL in prose, which to follow, and how one is written
               │   ├── bar-position.js where the format bar and the popover sit
               │   └── seed.js        the starter board
               └── platform/   the browser. Adapters, nothing else.
@@ -82,6 +83,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
                   ├── clipboard.js   copy and paste, on the system clipboard
                   ├── images.js      a pasted file, made into something storable
                   ├── links.js       the hover popover, drawn in the overlay
+                  ├── text-link.js   where a selection is in the string behind it
                   ├── link-preview.js  asking the server what is at a link
                   ├── views.js       per-type markup
                   ├── export-png.js  the same objects, drawn to a canvas
@@ -260,6 +262,48 @@ out, in the view; the document keeps the characters the person typed. An explici
 scheme or a `www.` counts, and a bare domain deliberately does not — `readme.md`,
 `e.g.something` and `3.14` would all turn blue, and a link nobody asked for is
 worse than one they have to type six characters for.
+
+#### A link with a label, and the one rule it costs
+
+Selecting words while editing and pressing **Link** points them at an address the
+page then asks for. A label and an address are two things, and the field they
+live in is one string — so the string holds `[our roadmap](https://…)`, in
+markdown's spelling because that is the one people already know and already type.
+The store is unchanged: still a plain string, still no markup, still a recogniser
+on the way out. `core/links.js` simply knows one more shape of link.
+
+That buys a card that reads as a sentence, and it costs the one rule everything
+else here has followed for free: **what is on screen is no longer what is in the
+document**. Every edit reads a field back through `innerText`, and `innerText`
+over a labelled link is its label — so one keystroke anywhere in a card would
+write the labels down and throw away every address in it. Hence: focusing a field
+puts its own characters back in it, and leaving it draws the links again. Editing
+shows the source, reading shows the words, and the round trip that everything
+depends on is exact at every moment.
+
+The caret is placed *before* the focus lands, for the same reason. Revealing a
+source moves every character after it along the line, so a position taken
+afterwards is a position in a line nobody saw — which is how a double-click after
+a link ends up putting the caret in the middle of its address.
+
+**Where the selection is in the string is measured with the browser's own
+answer.** `platform/text-link.js` puts a marker at each end of the selection,
+reads `innerText` once with them in, and takes them out again. The alternative is
+a DOM walk that re-implements `innerText` — a second opinion about the same
+string, which would disagree with the first one the day somebody pressed Enter.
+What comes back is two offsets into exactly the string the store holds, so the
+change itself is arithmetic in `core/`, applied as one recorded `set`: undo,
+autosave and the other people on the board all follow from that and none of them
+had to be arranged.
+
+The control is on the format bar rather than in a bar of its own — that bar is
+already the thing that appears above what you are working on. It is offered for a
+selection that is not already a link, since the answer to "make this a link" is
+that it is one. An address is asked for in the page's own dialog, where a bare
+`example.com` counts: the same six characters in prose are as likely to be a file
+or a sentence, but answering "where should this go" they are an address and
+nothing else. One that cannot be opened is asked again, keeping what was typed —
+the usual reason is a typo in the scheme.
 
 **The preview is fetched by an edge function, because a browser is not allowed to
 know the answer.** A cross-origin `fetch` in `cors` mode only succeeds when the
@@ -876,7 +920,21 @@ A link is drawn as plain text in an exported PNG — no colour, no underline. Th
 export is a second renderer with its own text layout, and per-run styling means
 splitting the wrapping across styled runs inside the one function in this codebase
 that is genuinely fiddly. A link in a picture is not clickable anyway, so what is
-lost is that it looks like one.
+lost is that it looks like one. It does say what the screen says: the export
+wraps through `displayText`, so a labelled link draws as its label rather than as
+the brackets behind it.
+
+Adding a link is a pointer gesture only. `⌘K` is the shortcut everybody expects,
+and the keys pressed inside a field are that field's — deliberately, since that
+is what lets a board be named "My board" — so wiring one means a listener on the
+editing layer and a route from there to the question, which is the format bar's
+to ask. Worth doing; not done here.
+
+A selection holding a `]` is not offered a link. That character is where a label
+ends — which is what lets a label hold anything else without an escape nobody
+would know to type — so those words cannot be written down as a label at all, and
+a control that produced literal brackets instead of a link would be worse than
+one that is not there. Selecting round it works.
 
 The preview's residual risk is **DNS rebinding**. The function resolves a name,
 checks every address it gets, and then hands the name to `fetch`, which resolves

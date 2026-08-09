@@ -44,6 +44,16 @@ export function createInput({
    * history but applies no op, so the store emits nothing.
    */
   relink = () => {},
+  /**
+   * Show a field the characters it actually holds, now that somebody is about
+   * to change them.
+   *
+   * The mirror of `relink`, and for a reason with teeth: a labelled link is
+   * drawn as its label, every edit reads the field back through `innerText`,
+   * and `innerText` over a label is the label. Without this, one keystroke in a
+   * card would write down what the links say and throw away where they go.
+   */
+  showSource = () => {},
 } = {}) {
   const { stage, layer, overlay } = elements;
 
@@ -358,29 +368,60 @@ export function createInput({
       return;
     }
     const field = e.target.closest('[contenteditable]') ?? objEl.querySelector('[contenteditable]');
-    if (field) focusEditable(field, e.clientX, e.clientY);
+    if (!field) return;
+
+    /**
+     * A second double-click, inside the field already being edited, is the
+     * browser selecting the word under the pointer — and putting the caret
+     * where the pointer is would collapse the very selection it just made. So
+     * that one is left alone, which is how a word gets selected on a card at
+     * all, and is what the "Link" control is offered for.
+     */
+    if (objEl.dataset.id === editingId && field.contains(e.target)) return;
+
+    focusEditable(field, e.clientX, e.clientY);
   }
 
+  /**
+   * Put the caret where the pointer is, and *then* focus.
+   *
+   * The order is the whole point. Focusing is what reveals the source of any
+   * labelled link in the field, and `[our roadmap](https://…)` is a great many
+   * more characters than "our roadmap" — so a position taken afterwards is a
+   * position in a line the person never saw, which is how a double-click after
+   * a link puts the caret in the middle of its address.
+   *
+   * A range is live, and `showSource` leaves the text either side of a revealed
+   * link unmerged, so the node this names is still the node it named. The one
+   * position that does not survive is one inside the link itself, and there the
+   * caret is left wherever focus put it — a press on a link opens the link, so
+   * that is not a way anyone arrives here.
+   */
   function focusEditable(el, clientX, clientY) {
+    const range = caretRangeAt(clientX, clientY);
     el.focus();
-    let range = null;
-    const position = document.caretPositionFromPoint?.(clientX, clientY);
-    if (position) {
-      range = document.createRange();
-      range.setStart(position.offsetNode, position.offset);
-      range.collapse(true);
-    } else {
-      range = document.caretRangeFromPoint?.(clientX, clientY) ?? null;
-    }
-    if (!range) return;
+    if (!range?.startContainer.isConnected) return;
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
   }
 
+  function caretRangeAt(clientX, clientY) {
+    const position = document.caretPositionFromPoint?.(clientX, clientY);
+    if (!position) return document.caretRangeFromPoint?.(clientX, clientY) ?? null;
+
+    const range = document.createRange();
+    range.setStart(position.offsetNode, position.offset);
+    range.collapse(true);
+    return range;
+  }
+
   function onFocusIn(e) {
     const objEl = e.target.closest('[data-id]');
     if (!objEl || !e.target.isContentEditable) return;
+    // Before the snapshot and before anything is typed: from here on the field
+    // reads back as the string the store holds.
+    showSource(e.target);
     editingId = objEl.dataset.id;
     editSnapshot = structuredClone(store.get(editingId));
     objEl.classList.add('editing');

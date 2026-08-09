@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 
 import { barPosition } from '../core/bar-position.js';
+import { linkFrom } from '../core/links.js';
 
 import {
   CARD_ALIGNS,
@@ -14,6 +15,7 @@ import { CORNERS, cornersOf, hasCorners } from '../core/corners.js';
 import { recentColours } from '../shell/colours.js';
 import { cardPalette } from '../shell/palette.js';
 
+import { useAsk } from './AskDialog.jsx';
 import { ColourPicker, resolveColour } from './ColourPicker.jsx';
 
 /**
@@ -35,6 +37,13 @@ import { ColourPicker, resolveColour } from './ColourPicker.jsx';
  * Every change is one `set` op per object, which means it crosses to the other
  * people on the board and enters the undo stack for free — the point of
  * everything being an op.
+ *
+ * One control here is offered for a *selection of text* rather than of objects:
+ * "Link", which appears while words are selected inside the object being edited
+ * and turns them into a link to an address it then asks for. It is on this bar
+ * because this bar is already the thing that appears above what you are working
+ * on, and a second one hovering over the same card would be two answers to the
+ * same question.
  */
 
 const SIZE_LABELS = { sm: 'S', md: 'M', lg: 'L', xl: 'XL' };
@@ -80,6 +89,29 @@ export function FormatBar({ app, stage: stageEl }) {
     return () => stops.forEach((stop) => stop());
   }, [store, selection, viewport, bump]);
 
+  /**
+   * And on the text selection, which is the browser's rather than the board's.
+   *
+   * `selectionchange` is the only event for it, and it says nothing about what
+   * changed — so the answer is re-read below on every render rather than kept
+   * here, and this only says "look again". The focus events are in it because a
+   * field can lose the caret without the selection moving, and a control offered
+   * for a selection nobody is in is a control that does nothing.
+   *
+   * On a microtask, because during `focusout` the focus has left and has not
+   * arrived: `document.activeElement` is the body, and asking then would answer
+   * for a moment that is over by the time anything renders.
+   */
+  useEffect(() => {
+    const later = () => queueMicrotask(bump);
+    const events = ['selectionchange', 'focusin', 'focusout'];
+    for (const type of events) document.addEventListener(type, later);
+    return () => events.forEach((type) => document.removeEventListener(type, later));
+  }, [bump]);
+
+  /** The question this bar asks: which address the selected words point at. */
+  const [dialog, ask] = useAsk();
+
   const objects = selection.list().map((id) => store.get(id)).filter(Boolean);
   const cards = objects.filter((obj) => obj.type === 'card');
   /**
@@ -109,12 +141,64 @@ export function FormatBar({ app, stage: stageEl }) {
   });
 
   /**
+   * The words that could become a link, when there are any — read on every
+   * render, because a caret move is not something the board hears about.
+   */
+  const linkable = app.textLinks.label();
+
+  /**
+   * Ask where the selected words should point, and make them point there.
+   *
+   * What is selected is taken *first*: the dialog's field takes the focus, and
+   * the focus is what the selection belongs to. From then on this is arithmetic
+   * on a string and an op, so an answer that arrives after the caret has gone
+   * still lands in the right place.
+   *
+   * An address that cannot be followed is asked again rather than refused,
+   * keeping what was typed — the usual reason is a typo in the scheme, and
+   * throwing the rest of the address away to say so helps nobody. `linkFrom`
+   * accepts a bare domain here, which prose deliberately does not.
+   */
+  const addLink = async () => {
+    const chosen = app.textLinks.capture();
+    if (!chosen) return;
+
+    const words = chosen.label.replace(/\s+/g, ' ').trim();
+    const named = words.length > 48 ? `${words.slice(0, 48)}…` : words;
+
+    let typed = '';
+    let refused = false;
+    for (;;) {
+      const answer = await ask.prompt({
+        title: 'Add a link',
+        message: refused
+          ? 'That is not an address this can open — links go to http or https pages.'
+          : `“${named}” will point at this address.`,
+        label: 'Address',
+        value: typed,
+        confirmLabel: 'Add link',
+      });
+      if (answer === null) return;
+
+      const href = linkFrom(answer);
+      if (href) {
+        chosen.insert(href);
+        return;
+      }
+      typed = answer;
+      refused = true;
+    }
+  };
+
+  /**
    * Above everything the bar can act on, rather than above everything selected.
    * A type this build has no control for contributes nothing to where the bar
    * goes — and a selection of nothing but those gets no bar, which is the same
    * answer as a selection of nothing.
    */
   const at = barPosition(cornered, viewport, { width: measured.stage }, measured.bar);
+  // The question goes with the bar: unmounting it while one is open refuses it,
+  // which is the right answer for a selection that is no longer there.
   if (!at) return null;
 
   /**
@@ -172,6 +256,8 @@ export function FormatBar({ app, stage: stageEl }) {
   );
 
   return (
+    <>
+    {dialog}
     <div
       ref={ref}
       className="format-bar"
@@ -302,6 +388,39 @@ export function FormatBar({ app, stage: stageEl }) {
           </button>
         ))}
       </div>
+
+      {/*
+        Words selected inside the object being edited, and nothing else — a
+        control that acts on a selection of text has nothing to act on without
+        one, and text that is already a link is not offered the chance to
+        become another.
+      */}
+      {linkable && (
+        <>
+          <span className="fmt-sep" />
+          <button
+            type="button"
+            className="fmt-link"
+            data-action="add-link"
+            aria-label="Add a link"
+            title="Add a link"
+            /*
+              The press must not take the focus. The selection this acts on is
+              the field's, and a button that focuses itself has thrown away
+              what it was about by the time the click arrives — so the default
+              is cancelled here, and the caret stays where the words are.
+            */
+            onPointerDown={(event) => {
+              event.stopPropagation();
+              event.preventDefault();
+            }}
+            onClick={addLink}
+          >
+            Link
+          </button>
+        </>
+      )}
     </div>
+    </>
   );
 }

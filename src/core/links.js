@@ -24,7 +24,31 @@
  * `<`, `>`, quotes and backticks end a match, so `<https://x>` and "https://x"
  * give up the punctuation somebody wrapped them in.
  */
-const LINK = /(?:https?:\/\/|www\.)[^\s<>"'`\\]+/gi;
+const BARE = String.raw`(?:https?:\/\/|www\.)[^\s<>"'\`\\]+`;
+
+/**
+ * A link that reads as words rather than as an address: `[our roadmap](https://…)`.
+ *
+ * This is the one shape of link the document does not simply happen to contain
+ * — it is written by "add a link" over a selection, because a label and an
+ * address are two things and a plain string has room for one. Markdown's
+ * spelling, because it is the one people already know and already type, and
+ * because a card holding these characters says what it means to somebody
+ * reading the text rather than the screen.
+ *
+ * The label stops at the first `]`, so nothing has to be escaped and no reader
+ * has to know an escape. A label *containing* one is therefore not a link: the
+ * characters stay as they are, which is what everything unrecognised does here,
+ * and is why the control that writes these is not offered for such a selection.
+ *
+ * One level of balanced parentheses in the address, for the same Wikipedia URLs
+ * `trimTrailing` exists for — `[Ruby](https://en.wikipedia.org/wiki/Ruby_(gem))`
+ * would otherwise end at the wrong bracket.
+ */
+const LABELLED = String.raw`\[([^\]]+)\]\(((?:[^\s()]|\([^\s()]*\))+)\)`;
+
+/** Both shapes, in one pass. Labelled first: its address is a bare link too. */
+const LINK = new RegExp(`${LABELLED}|${BARE}`, 'gi');
 
 /** Sentence punctuation that is far more likely to be prose than URL. */
 const TRAILING = /[.,;:!?…'"”’»]+$/;
@@ -77,7 +101,19 @@ export function trimTrailing(raw) {
  * reading the card rather than on the browser.
  */
 export function hrefFor(raw) {
-  const text = trimTrailing(String(raw ?? ''));
+  return addressOf(trimTrailing(String(raw ?? '')));
+}
+
+/**
+ * The same judgement, on characters that are already exactly the address.
+ *
+ * Trailing punctuation is a question prose asks. The address inside
+ * `[label](…)` is delimited by the bracket that closes it, and one typed into a
+ * field that asks for an address is all of what was typed — so neither goes
+ * through `trimTrailing`, and a URL ending in a full stop survives being
+ * written down deliberately.
+ */
+function addressOf(text) {
   if (!text) return null;
 
   // `www.` has no scheme to parse. https, not http: a bare `www.` in 2026 means
@@ -106,6 +142,12 @@ export function hrefFor(raw) {
  * through `innerText` as the string the store holds. A run that looks like a
  * link but points nowhere followable comes back as prose, which is what it is.
  *
+ * `source` is the characters the document holds, and is there only when they are
+ * not the characters on screen — which is exactly the labelled links, whose
+ * whole point is that the two differ. So "rebuild the string" is
+ * `run.source ?? run.text`, and everything that reads a field back has to say
+ * that or lose the address: `innerText` over a labelled link reads its label.
+ *
  * Adjacent prose runs are merged for the same reason: fewer text nodes than
  * characters is the difference between a card and a card the browser has to
  * reconcile.
@@ -123,10 +165,21 @@ export function linkRuns(text) {
   };
 
   for (const match of source.matchAll(LINK)) {
-    const raw = trimTrailing(match[0]);
-    const href = hrefFor(raw);
-
+    const [whole, label, address] = match;
     prose(source.slice(at, match.index));
+
+    // A labelled one, which the alternation matched first. Its address is
+    // already exactly an address — see `addressOf`.
+    if (label !== undefined) {
+      const href = addressOf(address);
+      if (href) runs.push({ text: label, href, source: whole });
+      else prose(whole);
+      at = match.index + whole.length;
+      continue;
+    }
+
+    const raw = trimTrailing(whole);
+    const href = hrefFor(raw);
     if (href) runs.push({ text: raw, href });
     else prose(raw);
 
@@ -138,6 +191,75 @@ export function linkRuns(text) {
   prose(source.slice(at));
   return runs;
 }
+
+/**
+ * What text reads as, with every labelled link showing its label.
+ *
+ * The screen gets this from the runs; the PNG export and anything else drawing
+ * a string rather than elements gets it from here, so a picture of a board says
+ * "our roadmap" where the board does rather than the address in brackets.
+ */
+export const displayText = (text) => linkRuns(text).map((run) => run.text).join('');
+
+/** The characters that put `label` in a document as a link to `href`. */
+const linkSource = (label, href) => `[${label}](${href})`;
+
+/**
+ * An address somebody typed into a field that asked for one, as an href.
+ *
+ * A bare domain counts here, and deliberately does not in prose: `example.com`
+ * on a card is as likely to be a file or a sentence, but the same six
+ * characters answering "where should this go" are an address and nothing else.
+ * Everything past that is `addressOf`'s judgement — the scheme allow-list and
+ * the credentials refusal are the same ones, because this href ends up in the
+ * same `href` attribute.
+ */
+export function linkFrom(typed) {
+  const text = String(typed ?? '').trim();
+  if (!text) return null;
+
+  const parsed = addressOf(text);
+  if (parsed) return parsed;
+
+  // Something with a dot in it and no scheme, path or query in front of the
+  // dot: `example.com/x` yes, `javascript:alert(1)` no, `hello there` no.
+  return /^[^\s:/?#]+\.[^\s:/?#]/.test(text) ? addressOf(`https://${text}`) : null;
+}
+
+/**
+ * `text` with the characters in `[start, end)` turned into a link to `href`.
+ *
+ * The offsets are into the string, not into anything a browser knows about —
+ * whoever has a selection is responsible for turning it into two numbers, and
+ * this stays the pure half that can be tested without one. Out-of-range offsets
+ * are clamped rather than refused, because the alternative is a caller that has
+ * to bounds-check the string it just measured.
+ *
+ * An empty range gives the text back: a link with no label is a link nobody can
+ * click, and `[](https://…)` is not recognised as one anyway.
+ */
+export function linkedText(text, start, end, href) {
+  const source = String(text ?? '');
+  const from = Math.min(Math.max(start, 0), source.length);
+  const to = Math.min(Math.max(end, from), source.length);
+  const label = source.slice(from, to);
+  if (!label) return source;
+  return source.slice(0, from) + linkSource(label, href) + source.slice(to);
+}
+
+/**
+ * Whether a run of text can become a link's label.
+ *
+ * Empty, or nothing but spaces: there is nothing to click. Already a link: the
+ * answer to "make this a link" is that it is one, and wrapping it would make an
+ * address that reads as an address point at a different place — which is the
+ * trick `hrefFor` refuses credentials over. A `]` in it: see `LABELLED`, where
+ * the label ends.
+ */
+export const canLabel = (text) => {
+  const label = String(text ?? '');
+  return Boolean(label.trim()) && !label.includes(']') && !hasLink(label);
+};
 
 /** Whether text holds anything worth rendering as a link. Cheap early out. */
 export const hasLink = (text) => linkRuns(text).some((run) => Boolean(run.href));
