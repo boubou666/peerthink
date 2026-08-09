@@ -1,3 +1,4 @@
+import { connectorBox, isPlaced } from './core/connectors.js';
 import { LOCAL, REMOTE, Store } from './core/store.js';
 import { Selection } from './core/selection.js';
 import { Viewport } from './core/viewport.js';
@@ -9,6 +10,7 @@ import { UNLOADED, createSaveStatus } from './core/save-status.js';
 import { createScheduler } from './core/scheduler.js';
 import { seedBoard } from './core/seed.js';
 import { exportFrame, fileName } from './core/export.js';
+import { search } from './core/search.js';
 
 import { createConnectorLayer } from './platform/connectors.js';
 import { createViews } from './platform/views.js';
@@ -82,6 +84,14 @@ export function createApp({
 
   const store = new Store();
   const selection = new Selection();
+  /**
+   * What a search has turned up, which is a set of ids that something draws —
+   * exactly what `Selection` is, so it is one. Separate from the selection
+   * proper because the two mean different things to every key on the keyboard:
+   * Delete takes what is selected, and nobody searching for a word means to
+   * delete every card holding it.
+   */
+  const found = new Selection();
   const viewport = new Viewport();
   const board = new Board({ store, selection, newId });
 
@@ -206,6 +216,42 @@ export function createApp({
       return 'ok';
     },
 
+    /**
+     * Where words are on this board: every sheet, in reading order.
+     *
+     * The *answer* rather than the documents it was worked out from. Here
+     * because "the board" is several documents and only one of them is the
+     * store — which is the fact `sheets` exists to keep from spreading — and
+     * because handing a component the objects themselves would put a live
+     * document, editable behind the store's back, in the hands of anything that
+     * asked. What comes back is a small list of ids and positions.
+     */
+    search: (query) => search(sheets.contents(), query),
+
+    /**
+     * Show a match: the sheet it is on, then the object, in the middle of the
+     * screen at the zoom already in use.
+     *
+     * Selecting it rather than only pointing the camera at it, because "this
+     * one" is what a step through matches means and the selection is how this
+     * board says that — and because whatever is done next, from formatting to
+     * Delete, is then about the thing that was found.
+     */
+    reveal(match) {
+      if (!match) return false;
+      if (match.sheetId && match.sheetId !== sheets.activeId) sheets.select(match.sheetId);
+
+      const obj = store.get(match.id);
+      if (!obj) return false;
+
+      selection.set([obj.id]);
+      const box = isPlaced(obj) ? obj : connectorBox(store.get(obj.from), store.get(obj.to));
+      // An arrow whose ends overlap has nothing on screen to be taken to; it is
+      // still selected, and the camera stays where the person left it.
+      if (box) viewport.centreOn({ x: box.x + box.w / 2, y: box.y + box.h / 2 }, ...stageSize());
+      return true;
+    },
+
     fit: () => viewport.fit(board.bounds(), ...stageSize()),
     resetZoom: () => {
       const [w, h] = stageSize();
@@ -231,7 +277,7 @@ export function createApp({
    * renderer because it is a piece of the browser like the views are, and the
    * renderer is what tells it that the document changed.
    */
-  const connectors = createConnectorLayer({ document, elements: dom, store, selection, views });
+  const connectors = createConnectorLayer({ document, elements: dom, store, selection, found, views });
   const renderer = createRenderer({
     document,
     elements: dom,
@@ -240,6 +286,7 @@ export function createApp({
     selection,
     views,
     connectors,
+    found,
     scheduler: clock,
     ResizeObserver,
   });
@@ -249,6 +296,7 @@ export function createApp({
     elements: dom,
     store,
     selection,
+    found,
     viewport,
     board,
     commands,
@@ -470,6 +518,7 @@ export function createApp({
     store,
     sheets,
     selection,
+    found,
     viewport,
     board,
     commands,

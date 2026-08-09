@@ -30,7 +30,7 @@ import { bbox } from '../core/geometry.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 
-export function createConnectorLayer({ document, elements, store, selection, views }) {
+export function createConnectorLayer({ document, elements, store, selection, found, views }) {
   const { layer } = elements;
 
   const svg = document.createElementNS(SVG, 'svg');
@@ -229,8 +229,12 @@ export function createConnectorLayer({ document, elements, store, selection, vie
   function applySelection() {
     for (const [id, node] of nodes) {
       const on = selection.has(id);
+      const hit = Boolean(found?.has(id));
       node.group.classList.toggle('selected', on);
       node.label.classList.toggle('selected', on);
+      // An arrow a search turned up: the words on it are what matched, so the
+      // ring goes round the words.
+      node.label.classList.toggle('found', hit);
     }
   }
 

@@ -3,7 +3,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { centredOn, covered, mapFit, toMap, toWorld } from '../../src/core/minimap.js';
+import { covered, mapFit, toMap, toWorld } from '../../src/core/minimap.js';
 import { createMinimapState } from '../../src/platform/minimap-state.js';
 
 const VIEW = { x: 0, y: 0, w: 100, h: 100 };
@@ -72,12 +72,6 @@ describe('fitting it in the box', () => {
     assert.equal(mapFit(null, VIEW, { w: 0, h: 0 }), null, 'a box that has not been laid out');
     assert.equal(mapFit(null, VIEW, { w: 8, h: 8 }), null, 'a box smaller than its own padding');
     assert.equal(mapFit({ x: 0, y: 0, w: 0, h: 0 }, null, BOX), null, 'a region with no size');
-  });
-});
-
-describe('going somewhere', () => {
-  test('the point pressed becomes the middle of the screen', () => {
-    assert.deepEqual(centredOn({ x: 500, y: 400 }, { x: 0, y: 0, w: 200, h: 100 }), { x: 400, y: 350 });
   });
 });
 

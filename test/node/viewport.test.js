@@ -97,6 +97,26 @@ describe('Viewport', () => {
     assert.deepEqual(vp.center(800, 600), { x: 210, y: 170 });
   });
 
+  describe('centreOn', () => {
+    test('puts a world point in the middle, without changing the zoom', () => {
+      const viewport = new Viewport();
+      viewport.scale = 2;
+      viewport.centreOn({ x: 500, y: 400 }, 200, 100);
+
+      assert.equal(viewport.scale, 2, 'how far in somebody is looking is theirs');
+      assert.deepEqual(viewport.center(200, 100), { x: 500, y: 400 });
+    });
+
+    test('and notifies, because the camera moved', () => {
+      const viewport = new Viewport();
+      let moves = 0;
+      viewport.on(() => { moves++; });
+      viewport.centreOn({ x: 10, y: 10 }, 100, 100);
+
+      assert.equal(moves, 1);
+    });
+  });
+
   describe('fit', () => {
     test('centres the rect in the stage', () => {
       assert.equal(vp.fit({ x: 0, y: 0, w: 400, h: 200 }, 1000, 600, { padding: 50 }), true);

@@ -335,6 +335,32 @@ export function createSheets({ store, newId }) {
     /** Name and id only: what a tab strip draws, without the documents. */
     list: () => entries.map(({ id, name }) => ({ id, name })),
 
+    /**
+     * Every sheet with its objects: the one place the documents held beside the
+     * store are read from outside, and what searching a whole board needs.
+     *
+     * The active sheet's objects come from the store, because that is where its
+     * content is — the copy in `entries` is null while it is on screen, and a
+     * search that read it would answer about the sheet as it was when it was
+     * last left.
+     *
+     * **To be read, not written, and read inside the composition root only.**
+     * Its one caller is `commands.search`, which answers with ids and
+     * positions — the objects themselves never leave `app.js`, because a live
+     * document in a component's hands is one that can be edited behind the
+     * store's back, with no op, no undo entry, no notification and no save.
+     *
+     * Not cloned, which is why that matters: this is asked on every keystroke
+     * of a search, and a board holding a pasted photograph carries its bytes in
+     * an object. Not `stateOf` either, which takes a checkpoint and would copy
+     * the undo stacks with it.
+     */
+    contents: () => entries.map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      objects: entry.id === activeId ? store.all() : (entry.state?.objects ?? []),
+    })),
+
     get size() {
       return entries.length;
     },

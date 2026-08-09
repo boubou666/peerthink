@@ -27,6 +27,11 @@ export function createRenderer({
    * that it changed.
    */
   connectors,
+  /**
+   * What a search has turned up: a second set of ids, drawn as a ring on
+   * everything holding the words rather than only on the one being looked at.
+   */
+  found,
   scheduler,
   ResizeObserver,
 }) {
@@ -82,6 +87,7 @@ export function createRenderer({
       const on = selection.has(id);
       el.classList.toggle('selected', on);
       el.classList.toggle('handles-on', on && single);
+      el.classList.toggle('found', Boolean(found?.has(id)));
     }
     connectors?.applySelection();
   }
@@ -140,6 +146,7 @@ export function createRenderer({
 
   unsubscribe.push(store.on(sync));
   unsubscribe.push(selection.on(applySelection));
+  if (found) unsubscribe.push(found.on(applySelection));
   unsubscribe.push(viewport.on(applyTransform));
 
   const observer = new ResizeObserver(applyTransform);

@@ -5,6 +5,7 @@ import { isTyping } from '../platform/typing.js';
 import { linkPreview } from '../shell/link-preview.js';
 import { repository } from '../shell/storage.js';
 import { createSync } from '../shell/sync.js';
+import { FindBar } from './FindBar.jsx';
 import { FormatBar } from './FormatBar.jsx';
 import { Minimap } from './Minimap.jsx';
 import { SheetTabs } from './SheetTabs.jsx';
@@ -118,6 +119,7 @@ export function BoardCanvas({ boardId, onReady, onSaveStatus, onProblem }) {
       {app && <FormatBar app={app} stage={stage.current} onProblem={onProblem} />}
       {app && <SheetTabs app={app} />}
       {app && <Minimap app={app} stage={stage.current} />}
+      {app && <FindBar app={app} />}
 
       <div id="hint">
         drag empty space to select · space or middle-drag to pan · ⌘/ctrl+wheel to zoom · double-click to edit

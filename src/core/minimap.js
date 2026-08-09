@@ -74,15 +74,3 @@ export const toWorld = (point, fit) => ({
   x: (point.x - fit.x) / fit.scale,
   y: (point.y - fit.y) / fit.scale,
 });
-
-/**
- * Where the camera goes to put `world` in the middle of a `view`-sized window.
- *
- * The viewport is named by its top-left corner, and a press on a map means
- * "show me this" — which is the centre, not the corner. Answering the corner
- * here keeps `moveTo` the only thing the caller has to know about the camera.
- */
-export const centredOn = (world, view) => ({
-  x: world.x - view.w / 2,
-  y: world.y - view.h / 2,
-});

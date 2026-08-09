@@ -74,6 +74,20 @@ export class Viewport {
     return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
   }
 
+  /**
+   * Put a world point in the middle of a `w` × `h` stage, at the zoom already
+   * in use.
+   *
+   * The counterpart of `center`, and the move two different things want: a
+   * press on the map means "show me this", and so does stepping to the next
+   * thing a search found. Neither is a reason to change how far in somebody is
+   * looking, which is what `fit` would do.
+   */
+  centreOn(point, w, h) {
+    const r = this.visibleRect(w, h);
+    this.moveTo(point.x - r.w / 2, point.y - r.h / 2);
+  }
+
   /** Frame `rect` inside a `w` × `h` stage. */
   fit(rect, w, h, { padding = 80, maxScale = 1.5 } = {}) {
     if (!rect || rect.w <= 0 || rect.h <= 0) return false;
