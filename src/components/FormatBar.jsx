@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 
 import { barPosition } from '../core/bar-position.js';
+import { connectorBetween, isPlaced } from '../core/connectors.js';
 import { linkFrom } from '../core/links.js';
 
 import {
@@ -51,7 +52,7 @@ const FONT_LABELS = { sans: 'Sans', serif: 'Serif', mono: 'Mono' };
 const CORNER_LABELS = { round: 'Rounded corners', square: 'Square corners' };
 
 export function FormatBar({ app, stage: stageEl, onProblem }) {
-  const { store, selection, viewport } = app;
+  const { board, store, selection, viewport } = app;
 
   /**
    * What the palette shows, asked of the stylesheet that decides.
@@ -145,6 +146,19 @@ export function FormatBar({ app, stage: stageEl, onProblem }) {
    * render, because a caret move is not something the board hears about.
    */
   const linkable = app.textLinks.label();
+
+  /**
+   * Exactly two objects, and nothing else: the one selection where "join these"
+   * has a single, obvious meaning. Three would be a question about which pairs,
+   * and answering it by guessing is how a control does something nobody asked
+   * for.
+   *
+   * The arrow points from the first of them to the second, which is the order
+   * they were selected in — so it is chosen rather than arbitrary, and picking
+   * them the other way round draws it the other way round.
+   */
+  const pair = objects.length === 2 && objects.every(isPlaced) ? objects : null;
+  const joined = pair ? connectorBetween(store.all(), pair[0].id, pair[1].id) : null;
 
   /**
    * Ask where the selected words should point, and make them point there.
@@ -395,6 +409,30 @@ export function FormatBar({ app, stage: stageEl, onProblem }) {
           </button>
         ))}
       </div>
+
+      {/*
+        Two objects, and the arrow between them. The same control both ways
+        round: with one already there, the thing anybody wants from a button
+        about it is to take it away.
+      */}
+      {pair && (
+        <>
+          <span className="fmt-sep" />
+          <button
+            type="button"
+            className="fmt-connect"
+            data-action="connect"
+            aria-pressed={Boolean(joined)}
+            aria-label={joined ? 'Remove the connector' : 'Connect these two'}
+            title={joined ? 'Remove the connector' : 'Connect these two'}
+            onClick={() => (joined
+              ? board.disconnect(pair[0].id, pair[1].id)
+              : board.connect(pair[0].id, pair[1].id))}
+          >
+            {joined ? 'Disconnect' : 'Connect'}
+          </button>
+        </>
+      )}
 
       {/*
         Words selected inside the object being edited, and nothing else — a

@@ -22,6 +22,7 @@ npm start        # serve the built site
 | **Envelopes** | Grouping containers — dragging one carries everything fully inside it, transitively |
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
 | **Images** | Paste a picture from anywhere and it becomes an object on the sheet, carried by the document itself |
+| **Connectors** | Select two objects and an arrow joins them — it follows them about, and goes when they do |
 | **Corners** | Cards, envelopes, lists and images are rounded or square, per object |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
 | **Map** | The whole sheet in the corner, with a rectangle for what you are looking at — press it to go there, or fold it away |
@@ -45,6 +46,7 @@ npm start        # serve the built site
 | Links | Click one to open it in a new tab; hover one second for a preview. While a card is being edited, a click is the caret's |
 | Add a link | While editing, select some words — double-click one, or drag across them — and press "Link" on the bar above |
 | Map | Press anywhere on it to look there; drag across it to pan; the button in its corner folds it away |
+| Connect | Select exactly two objects; "Connect" on the bar joins them, and says "Disconnect" once they are. Click the line to select it |
 | Snapping | On by default; hold `Alt` to disable |
 | Undo / redo | `⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z` |
 | Fit / reset zoom | `Shift+1` / `Shift+0` |
@@ -85,6 +87,7 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
                   ├── input.js       pointer and keyboard gestures
                   ├── clipboard.js   copy and paste, on the system clipboard
                   ├── images.js      a pasted file, made into something storable
+                  ├── connectors.js  the arrows, drawn in one SVG
                   ├── minimap.js     the map, drawn and pressed
                   ├── minimap-state.js  whether it is folded away
                   ├── links.js       the hover popover, drawn in the overlay
@@ -409,6 +412,57 @@ Answers are cached per href, so re-hovering costs nothing and one link asked
 about twice is one invocation. A failure of *ours* — the function down, the
 network gone — is not cached and says "no preview" rather than "unreachable",
 because blaming the page for our own outage is a lie the person cannot act on.
+
+### Connectors
+
+Select two objects and press **Connect**: an arrow joins them, pointing from the
+first one selected to the second. The same control says *Disconnect* once they
+are joined, because with one already there that is the only thing anybody wants
+from a button about it. Clicking the line selects the connector; `Delete`
+removes it; deleting either object takes its arrows with it, in the same op so
+one undo puts the whole picture back.
+
+**It is the one object with no box.** A card is a rectangle somebody placed; a
+connector is a relation between two of them, and its geometry is worked out from
+wherever its ends are *now*. That is what makes dragging a card free — the
+arrows follow without a single op being written for them — and it is the
+invariant every part of the app that assumes an `x` had to be taught. `isPlaced`
+is how they ask, and the list is exactly as long as you would expect: bounds,
+snapping, the marquee, nudging, dragging, the frame a PNG covers, and the map.
+Missing one of them writes `NaN` into the document and broadcasts it, which is
+why each has a test.
+
+What copies, copies whole. A connector comes along when both the things it joins
+do — selected or not, the rule an envelope's contents already follow — and is
+left behind when they do not, because an arrow with one end in the payload has
+nothing to point at when it lands. Duplicating, pasting and exporting a
+selection all ask the same question.
+
+Two objects that overlap have no room between their borders, so nothing is
+drawn: the connector is still in the document and reappears when they are apart.
+Measuring that takes the distance *along* the direction the two lie in rather
+than between their borders, because overlapping boxes have their far borders in
+the wrong order, and the distance between those two points says nothing about
+whether there is room.
+
+#### Drawn in one SVG, behind everything
+
+`platform/connectors.js` keeps a single `<svg>` at the back of the world layer,
+with a group per connector. SVG because a line with an arrowhead is what it is
+for, and because a stroke can be made a *target* without being visible — the
+line is two and a half units thick, which nobody can point at, so an invisible
+sixteen-unit stroke under it takes the press.
+
+Everything is in world coordinates inside the transform the layer already
+carries, so panning and zooming cost nothing here — and the thickness is in
+world units too. A connector scales with the board like a card's text, and
+unlike a selection ring, because it is *content* rather than an affordance,
+which is the line the rendering section draws.
+
+The element is moved and sized to hold what it draws, with a `viewBox` that
+keeps the coordinates inside it world coordinates. The obvious shape — an
+element of no size with `overflow: visible` — is what this started as, and
+Chrome lays that out, hit-tests it, and paints none of it.
 
 ### Corners
 
@@ -973,6 +1027,14 @@ that is genuinely fiddly. A link in a picture is not clickable anyway, so what i
 lost is that it looks like one. It does say what the screen says: the export
 wraps through `displayText`, so a labelled link draws as its label rather than as
 the brackets behind it.
+
+Connectors are straight lines, drawn between the middles of two objects and cut
+at their borders. No routing round what is in the way, no elbows, no choosing
+which side an arrow leaves by — and no label on the line, which is the one most
+likely to be missed, since half of what an arrow says on a diagram is written
+along it. There is also no drag-to-connect gesture: joining two things means
+selecting both and pressing a button, because handles on an object's edge would
+land exactly where the resize handles already are.
 
 Adding a link is a pointer gesture only. `⌘K` is the shortcut everybody expects,
 and the keys pressed inside a field are that field's — deliberately, since that

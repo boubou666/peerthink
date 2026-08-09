@@ -8,6 +8,7 @@
  * the same way whether anything ever renders it.
  */
 
+import { isPlaced } from './connectors.js';
 import { bbox } from './geometry.js';
 
 /** World units of air left around the content, so nothing touches the edge. */
@@ -83,7 +84,10 @@ export function exportFrame(objects, {
   maxEdge = MAX_EDGE,
   maxPixels = MAX_PIXELS,
 } = {}) {
-  const content = bbox(objects ?? []);
+  // Only what has a box. A connector is drawn inside the frame its two ends
+  // make, so it adds nothing to the frame — and a selection of nothing but
+  // connectors has no picture in it, which is what null says.
+  const content = bbox((objects ?? []).filter(isPlaced));
   if (!content) return null;
 
   const rect = {
