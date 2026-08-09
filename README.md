@@ -24,6 +24,7 @@ npm start        # serve the built site
 | **Images** | Paste a picture from anywhere and it becomes an object on the sheet, carried by the document itself |
 | **Corners** | Cards, envelopes, lists and images are rounded or square, per object |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
+| **Map** | The whole sheet in the corner, with a rectangle for what you are looking at — press it to go there, or fold it away |
 | **Clipboard** | Copy and paste the selection — between sheets, between boards, between windows |
 | **Links** | A URL in any text is clickable; select words while editing and "Link" points them at an address you give; hover one for a second and a panel says what is there, or that it could not be reached |
 | **Saving** | The bar says whether your work is stored — a refused write retries itself, and closing the tab flushes what the debounce is still holding |
@@ -43,6 +44,7 @@ npm start        # serve the built site
 | Copy / paste | `⌘/Ctrl+C`, `⌘/Ctrl+V` — and `⌘/Ctrl+V` for an image on the clipboard, which lands as an object |
 | Links | Click one to open it in a new tab; hover one second for a preview. While a card is being edited, a click is the caret's |
 | Add a link | While editing, select some words — double-click one, or drag across them — and press "Link" on the bar above |
+| Map | Press anywhere on it to look there; drag across it to pan; the button in its corner folds it away |
 | Snapping | On by default; hold `Alt` to disable |
 | Undo / redo | `⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z` |
 | Fit / reset zoom | `Shift+1` / `Shift+0` |
@@ -76,12 +78,15 @@ src/main.jsx        bootstrap — the only file that knows it is in a browser
               │   ├── image.js       what a picture may be, and how big
               │   ├── links.js       finding a URL in prose, which to follow, and how one is written
               │   ├── bar-position.js where the format bar and the popover sit
+              │   ├── minimap.js     the sheet in a box, and the box on the sheet
               │   └── seed.js        the starter board
               └── platform/   the browser. Adapters, nothing else.
                   ├── renderer.js    reconciles the store into the DOM
                   ├── input.js       pointer and keyboard gestures
                   ├── clipboard.js   copy and paste, on the system clipboard
                   ├── images.js      a pasted file, made into something storable
+                  ├── minimap.js     the map, drawn and pressed
+                  ├── minimap-state.js  whether it is folded away
                   ├── links.js       the hover popover, drawn in the overlay
                   ├── text-link.js   where a selection is in the string behind it
                   ├── link-preview.js  asking the server what is at a link
@@ -478,6 +483,41 @@ work is viewport culling. Geometry inside an object (padding, radius, font) is
 in world units and scales with the canvas, while affordances (selection ring,
 handles, hairlines) are counter-scaled by a `--z` custom property so they stay
 constant on screen at any zoom.
+
+### The map in the corner
+
+The whole sheet, small, bottom right, with a rectangle for the part you are
+looking at. Press anywhere on it and that point becomes the middle of the
+screen; drag and the camera follows; the button in its corner folds it away, and
+that choice is remembered by the browser rather than by the board — see
+`platform/minimap-state.js`, which gives the same reasons `recent-colours.js`
+does for keeping a fact about a person out of a document everyone shares.
+
+**What it covers is the objects *and* the view.** A map of the objects alone
+pushes the view rectangle off its own edge the moment somebody pans away from
+their work, and a rectangle you cannot see cannot say where you are. Covering
+both means the map zooms out to hold them, which is the honest picture: here is
+where your things are, and here is where you are. `core/minimap.js` is that
+arithmetic and its inverse — one transform out for drawing, one back for
+pressing — and it is pure for the same reason `bar-position.js` is.
+
+**A map, not a picture.** Every object is a rectangle: no text, no corners, no
+shadows, no images. The PNG export is already a second renderer and the section
+above says what that costs; a third one would cost the same and buy nothing,
+since nobody reads a card four pixels tall. Cards keep their colour, which is
+the one exception and earns it — a board is navigated by remembering that the
+blue ones are over there — and the colour comes from the probe the format bar's
+swatches already use, so the stylesheet stays the only place a colour is
+decided. An envelope is outlined rather than filled, because it contains the
+things the map is for.
+
+It is drawn on a `<canvas>`, and the split is BoardCanvas's one level down:
+*whether* the map is showing is state and React renders it, what is inside the
+box changes on every frame of a pan and is never reconciled. Minimizing unmounts
+the canvas, so a map nobody is looking at holds no subscriptions. The drawing
+runs straight off the store and viewport events rather than through the
+scheduler — both emit at most once per pointer event, which is already at most
+once per frame.
 
 ### Exporting a picture
 

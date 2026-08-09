@@ -6,6 +6,7 @@ import { linkPreview } from '../shell/link-preview.js';
 import { repository } from '../shell/storage.js';
 import { createSync } from '../shell/sync.js';
 import { FormatBar } from './FormatBar.jsx';
+import { Minimap } from './Minimap.jsx';
 import { SheetTabs } from './SheetTabs.jsx';
 import { Toolbar } from './Toolbar.jsx';
 
@@ -116,6 +117,7 @@ export function BoardCanvas({ boardId, onReady, onSaveStatus, onProblem }) {
           somebody else's edit, and saying so is the shell's job. */}
       {app && <FormatBar app={app} stage={stage.current} onProblem={onProblem} />}
       {app && <SheetTabs app={app} />}
+      {app && <Minimap app={app} stage={stage.current} />}
 
       <div id="hint">
         drag empty space to select · space or middle-drag to pan · ⌘/ctrl+wheel to zoom · double-click to edit
