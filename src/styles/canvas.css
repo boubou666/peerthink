@@ -1340,7 +1340,13 @@ body:has(.board-page) { overflow: hidden; }
  * ------------------------------------------------------------------------ */
 
 .connect-handles { display: none; }
-.obj:hover .connect-handles { display: block; }
+/*
+ * `.near`, not `:hover`. The handles are outside the border, so a pointer on
+ * its way to one has already left the object — and a handle that disappears on
+ * the way to itself is a handle nobody can press. The input layer decides what
+ * is near, because the region is bigger than the element.
+ */
+.obj.near .connect-handles { display: block; }
 #stage.gesturing .connect-handles,
 .obj.editing .connect-handles { display: none; }
 
