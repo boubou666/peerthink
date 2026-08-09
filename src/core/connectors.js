@@ -125,6 +125,19 @@ export function connectorGeometry(from, to, { gap = GAP, head = HEAD, spread = S
   };
 }
 
+/**
+ * Where a connector's label sits: the middle of the line it is about.
+ *
+ * The middle of the *line* rather than of the two objects, so a label stays on
+ * its arrow when one end is a wide envelope and the other a small card — and so
+ * the two renderers, the screen and the picture, put it in the same place
+ * without either restating the arithmetic.
+ */
+export const labelPoint = (drawn) => ({
+  x: (drawn.line.x1 + drawn.line.x2) / 2,
+  y: (drawn.line.y1 + drawn.line.y2) / 2,
+});
+
 /** The connectors in `objects` that touch any of `ids`. */
 export const connectorsTouching = (objects, ids) => {
   const wanted = new Set(ids);

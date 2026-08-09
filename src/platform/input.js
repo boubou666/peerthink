@@ -384,7 +384,15 @@ export function createInput({
       commands.addAt('card', worldPoint(e));
       return;
     }
-    const field = e.target.closest('[contenteditable]') ?? objEl.querySelector('[contenteditable]');
+    /**
+     * A connector's label is not inside the thing that was double-clicked: the
+     * line is SVG and the words are HTML, two elements carrying the same id.
+     * So a double-click anywhere on an arrow goes looking for its label, which
+     * is how one is written on an arrow that has none yet.
+     */
+    const field = e.target.closest('[contenteditable]')
+      ?? objEl.querySelector('[contenteditable]')
+      ?? layer.querySelector(`[data-label][data-id="${objEl.dataset.id}"] [contenteditable]`);
     if (!field) return;
 
     /**
@@ -395,6 +403,17 @@ export function createInput({
      * all, and is what the "Link" control is offered for.
      */
     if (objEl.dataset.id === editingId && field.contains(e.target)) return;
+
+    /**
+     * A field the pointer is not in has no point to place a caret at — the
+     * press was on the line an arrow's label belongs to, or on the padding
+     * round a card's text. The end of what is there is the honest answer, and
+     * it is where somebody about to write more would want to be.
+     */
+    if (!field.contains(e.target)) {
+      focusAtEnd(field);
+      return;
+    }
 
     focusEditable(field, e.clientX, e.clientY);
   }
@@ -418,6 +437,17 @@ export function createInput({
     const range = caretRangeAt(clientX, clientY);
     el.focus();
     if (!range?.startContainer.isConnected) return;
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  /** Focus a field and put the caret after everything in it. */
+  function focusAtEnd(el) {
+    el.focus();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(false);
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);

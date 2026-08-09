@@ -33,7 +33,7 @@ import {
   cardStyle,
   namedColour,
 } from '../core/card-style.js';
-import { connectorGeometry, isConnector } from '../core/connectors.js';
+import { connectorGeometry, isConnector, labelPoint } from '../core/connectors.js';
 import { cornersOf } from '../core/corners.js';
 import { isImageSource } from '../core/image.js';
 import { displayText } from '../core/links.js';
@@ -50,6 +50,13 @@ const RADIUS = 8;
 /** The radius an object is drawn with, which is a property of the object now. */
 const radiusOf = (obj) => (cornersOf(obj) === 'square' ? 0 : RADIUS);
 const CARD = { pad: 12, size: 14, line: 1.4 };
+/**
+ * The line height of a connector's label. The one number here the stylesheet
+ * is not asked for: `line-height` computes to a length rather than the ratio
+ * the drawing needs, and a ratio read back from pixels divided by a font size
+ * is arithmetic pretending to be a probe.
+ */
+const LABEL_LINE = 1.35;
 // The dash is the browser's, not a choice: Chrome draws a dashed border in
 // dashes roughly twice the border width with gaps to match, and a coarser
 // pattern reads as a different kind of line next to the real thing.
@@ -158,6 +165,28 @@ export function createPngExporter({ document, window }) {
       return read;
     })();
 
+    /** And the chip a label is written on, which is ordinary HTML. */
+    const label = (() => {
+      const el = document.createElement('div');
+      el.className = 'connector-text';
+      host.appendChild(el);
+      const style = window.getComputedStyle(el);
+      const read = {
+        background: style.backgroundColor,
+        color: style.color,
+        size: parseFloat(style.fontSize),
+        family: style.fontFamily,
+        // The stylesheet decides how wide a label gets before it wraps, and
+        // how round its corners are, exactly as it decides a card's radius.
+        maxWidth: parseFloat(style.maxWidth),
+        radius: parseFloat(style.borderRadius),
+        padX: parseFloat(style.paddingLeft),
+        padY: parseFloat(style.paddingTop),
+      };
+      el.remove();
+      return read;
+    })();
+
     const envelope = probe('obj envelope');
     // What shows through a picture with transparency in it, and what an image
     // whose source did not decode is drawn as. A `color-mix` again, so it is
@@ -180,6 +209,7 @@ export function createPngExporter({ document, window }) {
       cardSize,
       connectorStroke: connector.stroke,
       connectorWidth: Number.isFinite(connector.width) ? connector.width : 2,
+      connectorLabel: label,
       envelopeBg: envelope.background,
       envelopeBorder: envelope.border,
       imageBg: image.background,
@@ -515,6 +545,46 @@ export function createPngExporter({ document, window }) {
     for (const [x, y] of drawn.head.slice(1)) ctx.lineTo(x, y);
     ctx.closePath();
     ctx.fill();
+
+    drawLabel(ctx, obj, drawn, palette);
+  };
+
+  /**
+   * The words on an arrow, on the chip that keeps the line from striking
+   * through them.
+   *
+   * Centred on the middle of the line, which `labelPoint` answers for both
+   * renderers so neither restates it. Through `displayText`, so a label holding
+   * a link draws as the words rather than as the brackets behind them — the
+   * same rule `wrap` follows for every other piece of text here.
+   */
+  const drawLabel = (ctx, obj, drawn, palette) => {
+    const text = displayText(obj.text);
+    if (!text.trim()) return;
+
+    const style = palette.connectorLabel;
+    const at = labelPoint(drawn);
+
+    ctx.font = `${style.size}px ${style.family}`;
+    const lines = wrap(ctx, text, style.maxWidth);
+    const widest = Math.max(...lines.map((line) => ctx.measureText(line).width));
+
+    const height = lines.length * style.size * LABEL_LINE;
+    const box = {
+      w: widest + style.padX * 2,
+      h: height + style.padY * 2,
+    };
+
+    rounded(ctx, at.x - box.w / 2, at.y - box.h / 2, box.w, box.h, style.radius);
+    ctx.fillStyle = style.background;
+    ctx.fill();
+
+    drawText(
+      ctx,
+      text,
+      { x: at.x - widest / 2, y: at.y - height / 2, w: widest, h: height, line: LABEL_LINE },
+      { size: style.size, color: style.color, family: style.family, align: 'center' },
+    );
   };
 
   const drawers = { card: drawCard, envelope: drawEnvelope, list: drawList, image: drawImage };

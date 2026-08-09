@@ -22,7 +22,7 @@ npm start        # serve the built site
 | **Envelopes** | Grouping containers — dragging one carries everything fully inside it, transitively |
 | **Lists** | Checkable rows; `Enter` splits, `Backspace` on an empty row merges up |
 | **Images** | Paste a picture from anywhere and it becomes an object on the sheet, carried by the document itself |
-| **Connectors** | Select two objects and an arrow joins them — it follows them about, and goes when they do |
+| **Connectors** | Select two objects and an arrow joins them, with a label if you want one — it follows them about, and goes when they do |
 | **Corners** | Cards, envelopes, lists and images are rounded or square, per object |
 | **Canvas** | Infinite pan/zoom, alignment snapping with guides, marquee select, single-step undo for every gesture |
 | **Map** | The whole sheet in the corner, with a rectangle for what you are looking at — press it to go there, or fold it away |
@@ -47,6 +47,7 @@ npm start        # serve the built site
 | Add a link | While editing, select some words — double-click one, or drag across them — and press "Link" on the bar above |
 | Map | Press anywhere on it to look there; drag across it to pan; the button in its corner folds it away |
 | Connect | Select exactly two objects; "Connect" on the bar joins them, and says "Disconnect" once they are. Click the line to select it |
+| Label an arrow | Double-click the line, or select it and press "Add label" — the words are written where they are drawn |
 | Snapping | On by default; hold `Alt` to disable |
 | Undo / redo | `⌘/Ctrl+Z`, `⌘/Ctrl+Shift+Z` |
 | Fit / reset zoom | `Shift+1` / `Shift+0` |
@@ -444,6 +445,27 @@ Measuring that takes the distance *along* the direction the two lie in rather
 than between their borders, because overlapping boxes have their far borders in
 the wrong order, and the distance between those two points says nothing about
 whether there is room.
+
+#### A label is written where it is drawn
+
+An arrow carries `text` like a card does, shown on a chip at the middle of the
+line — the middle of the *line*, so it stays on its arrow when one end is a wide
+envelope and the other a small card, and `labelPoint` answers that for the
+screen and the picture both.
+
+The words are HTML rather than SVG, because a label is *edited*: the caret, the
+IME and the selection are what a `contenteditable` has and an SVG `<text>` does
+not. The element carries `data-id` and `data-field="text"`, the same two
+attributes a card's text carries, so the input layer edits it with the code it
+already had — one op per keystroke, one undo entry per session, paste forced to
+plain text, and a link showing its source while it is being typed in. It goes
+through the views' own `setText`, so a URL written on an arrow is a link exactly
+as one written on a card is.
+
+An arrow with nothing written on it still has a field, because focusing one is
+how a label is started and nothing can be focused that was never rendered. It is
+invisible and takes no press until it has words in it, so the line underneath
+stays the thing the pointer finds.
 
 #### Drawn in one SVG, behind everything
 
@@ -1029,12 +1051,13 @@ wraps through `displayText`, so a labelled link draws as its label rather than a
 the brackets behind it.
 
 Connectors are straight lines, drawn between the middles of two objects and cut
-at their borders. No routing round what is in the way, no elbows, no choosing
-which side an arrow leaves by — and no label on the line, which is the one most
-likely to be missed, since half of what an arrow says on a diagram is written
-along it. There is also no drag-to-connect gesture: joining two things means
-selecting both and pressing a button, because handles on an object's edge would
-land exactly where the resize handles already are.
+at their borders. No routing round what is in the way, no elbows, and no
+choosing which side an arrow leaves by. A label sits at the middle of the line
+and cannot be moved along it or off it, which is the next thing this will want:
+two arrows crossing put their labels in the same place. There is also no
+drag-to-connect gesture — joining two things means selecting both and pressing a
+button, because handles on an object's edge would land exactly where the resize
+handles already are.
 
 Adding a link is a pointer gesture only. `⌘K` is the shortcut everybody expects,
 and the keys pressed inside a field are that field's — deliberately, since that

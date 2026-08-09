@@ -13,6 +13,7 @@ import {
   connectorsTouching,
   isConnector,
   isPlaced,
+  labelPoint,
 } from '../../src/core/connectors.js';
 import { createSequentialIds } from '../../src/core/ids.js';
 import { Selection } from '../../src/core/selection.js';
@@ -68,6 +69,17 @@ describe('the line and the head', () => {
     assert.equal(connectorGeometry(BOX, { x: 20, y: 20, w: 20, h: 20 }), null, 'one inside the other');
     assert.equal(connectorGeometry(BOX, BOX), null, 'the same box twice');
     assert.equal(connectorGeometry(BOX, { x: 101, y: 0, w: 100, h: 100 }), null, 'a hair apart');
+  });
+
+  test('a label sits in the middle of the line, not of the two objects', () => {
+    const wide = { x: 0, y: 0, w: 400, h: 100 };
+    const small = { x: 800, y: 25, w: 50, h: 50 };
+    const drawn = connectorGeometry(wide, small, { gap: 5, head: 15 });
+
+    const at = labelPoint(drawn);
+    assert.equal(at.x, (drawn.line.x1 + drawn.line.x2) / 2);
+    assert.equal(at.y, (drawn.line.y1 + drawn.line.y2) / 2);
+    assert.ok(at.x > 400 && at.x < 800, `between the two of them: ${at.x}`);
   });
 
   test('and the box it covers is the line and the head together', () => {

@@ -25,12 +25,12 @@
  * inside it world coordinates, and the question does not arise.
  */
 
-import { connectorGeometry, isConnector } from '../core/connectors.js';
+import { connectorGeometry, isConnector, labelPoint } from '../core/connectors.js';
 import { bbox } from '../core/geometry.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 
-export function createConnectorLayer({ document, elements, store, selection }) {
+export function createConnectorLayer({ document, elements, store, selection, views }) {
   const { layer } = elements;
 
   const svg = document.createElementNS(SVG, 'svg');
@@ -49,7 +49,20 @@ export function createConnectorLayer({ document, elements, store, selection }) {
    */
   layer.appendChild(svg);
 
-  /** id → the group and the three shapes in it. */
+  /**
+   * And a box for the labels, which cannot be SVG.
+   *
+   * A label is edited, and editing means a `contenteditable` — the caret, IME
+   * and selection the browser gives an HTML element and does not give an SVG
+   * `<text>`. So the words are HTML positioned in world coordinates over the
+   * line, in a container of their own: appended after the SVG, so a label is
+   * painted over the arrow it belongs to rather than under it.
+   */
+  const labels = document.createElement('div');
+  labels.className = 'connector-labels';
+  layer.appendChild(labels);
+
+  /** id → the group, the three shapes in it, and the label over it. */
   const nodes = new Map();
 
   const shape = (name, className) => {
@@ -80,7 +93,33 @@ export function createConnectorLayer({ document, elements, store, selection }) {
     group.append(hit, line, head);
     svg.appendChild(group);
 
-    const node = { group, hit, line, head };
+    /**
+     * The label, made whether or not there is one to show.
+     *
+     * An empty one is invisible and takes no press — see the stylesheet — but
+     * it is in the document, because focusing it is how a label is *started*
+     * and nothing can be focused that was never rendered. Until somebody types
+     * in it, the connector carries no `text` and no op has been written.
+     *
+     * `data-id` and `data-field` are the same two attributes a card's text
+     * carries, so the input layer edits this with the code it already has:
+     * one op per keystroke, one undo entry per session, paste forced to plain
+     * text, and the source of a link shown while it is being edited.
+     */
+    const label = document.createElement('div');
+    label.className = 'connector-label';
+    label.dataset.id = id;
+    label.dataset.type = 'connector';
+    label.dataset.label = '';
+
+    const text = document.createElement('div');
+    text.className = 'connector-text';
+    text.contentEditable = 'true';
+    text.dataset.field = 'text';
+    label.appendChild(text);
+    labels.appendChild(label);
+
+    const node = { group, hit, line, head, label, text };
     nodes.set(id, node);
     return node;
   };
@@ -133,12 +172,23 @@ export function createConnectorLayer({ document, elements, store, selection }) {
        * that end, and the connector is still in the document throughout.
        */
       node.group.style.display = line ? '' : 'none';
-      if (line) place(node, line);
+      node.label.style.display = line ? '' : 'none';
+      if (line) {
+        place(node, line);
+
+        const at = labelPoint(line);
+        node.label.style.left = `${at.x}px`;
+        node.label.style.top = `${at.y}px`;
+        // Through the views' own `setText`, which refuses to touch a field
+        // somebody is typing in and turns a URL into a link on the way out.
+        views.setText(node.text, obj.text ?? '');
+      }
     }
 
     for (const [id, node] of nodes) {
       if (drawn.has(id)) continue;
       node.group.remove();
+      node.label.remove();
       nodes.delete(id);
     }
 
@@ -177,7 +227,11 @@ export function createConnectorLayer({ document, elements, store, selection }) {
   }
 
   function applySelection() {
-    for (const [id, node] of nodes) node.group.classList.toggle('selected', selection.has(id));
+    for (const [id, node] of nodes) {
+      const on = selection.has(id);
+      node.group.classList.toggle('selected', on);
+      node.label.classList.toggle('selected', on);
+    }
   }
 
   sync();
@@ -188,6 +242,7 @@ export function createConnectorLayer({ document, elements, store, selection }) {
     elementFor: (id) => nodes.get(id)?.group,
     destroy() {
       svg.remove();
+      labels.remove();
       nodes.clear();
     },
   };

@@ -357,6 +357,39 @@ describe('export', () => {
       assert.deepEqual(result.head, result.expected);
     });
 
+    test('the label is written on the line, on a chip that keeps it readable', async () => {
+      const result = await painted(
+        [PAIR[0], PAIR[1], { ...PAIR[2], text: 'blocks' }],
+        `({ at, swatch, palette, pixels, frame }) => {
+          const ink = swatch(palette.connectorLabel.color);
+          // Anywhere in the middle band of the picture that is the label's ink,
+          // which is the only thing drawn in that colour out there.
+          let written = 0;
+          for (let y = 30; y < 70; y++) {
+            for (let x = 150; x < 250; x++) {
+              const [r, g, b] = pixels[y * frame.width + x];
+              if (Math.abs(r - ink[0]) < 12 && Math.abs(g - ink[1]) < 12 && Math.abs(b - ink[2]) < 12) written++;
+            }
+          }
+          // And no stroke left along the line where the chip covers it, which
+          // is the whole reason the chip is drawn.
+          const stroke = swatch(palette.connectorStroke);
+          let struck = 0;
+          // Well inside the chip, so the count is about what it covers rather
+          // than about where its rounded corner is antialiased.
+          for (let x = 192; x < 208; x++) {
+            const [r, g, b] = pixels[50 * frame.width + x];
+            if (Math.abs(r - stroke[0]) < 12 && Math.abs(g - stroke[1]) < 12 && Math.abs(b - stroke[2]) < 12) struck++;
+          }
+
+          return { written, struck };
+        }`,
+      );
+
+      assert.ok(result.written > 0, 'the words are in the picture');
+      assert.equal(result.struck, 0, 'and the line does not strike through them');
+    });
+
     test('one whose other end was left out is not drawn', async () => {
       const result = await painted(
         [PAIR[0], PAIR[2]],
