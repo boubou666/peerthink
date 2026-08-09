@@ -133,6 +133,26 @@ export function createInput({
   }
 
   /**
+   * A board's link is opened by this app, and by nothing else.
+   *
+   * Cancelling `pointerdown` does not cancel the `click` that follows it, so the
+   * anchor's own activation is still on the table — and it has `target="_blank"`,
+   * which would mean a second tab beside the one `openLink` opened. Chrome does
+   * not activate a link inside a `contenteditable` on a plain click, which is why
+   * this has not been visible; that is the browser's habit rather than our
+   * decision, and it is not the same in every engine or for every gesture.
+   *
+   * Not while the object is being edited: there a click belongs to the caret, and
+   * so does its default.
+   */
+  function onClick(e) {
+    const link = e.target.closest?.('[data-link]');
+    if (!link) return;
+    if (link.closest('[data-id]')?.dataset.id === editingId) return;
+    e.preventDefault();
+  }
+
+  /**
    * Open a link from a board, in a new tab.
    *
    * Parsed again rather than trusted. The anchor was built by the view from
@@ -555,6 +575,7 @@ export function createInput({
   listen(stage, 'dblclick', onDoubleClick);
   listen(stage, 'contextmenu', (e) => e.preventDefault());
 
+  listen(layer, 'click', onClick);
   listen(layer, 'focusin', onFocusIn);
   listen(layer, 'focusout', onFocusOut);
   listen(layer, 'input', onInput);

@@ -10,12 +10,14 @@ import { hostOf } from '../core/links.js';
  * did not answer with a 2xx, that it could not be reached.
  *
  * **Nothing here can be fetched by this browser.** A cross-origin `fetch` in
- * `cors` mode rejects whatever the server said, and in `no-cors` mode resolves
- * with an opaque response whose status is 0 and whose body cannot be read — a
- * 404 and a 200 are the same object. So "2xx or unreachable" is not a thing a
- * page can find out about another origin, and the fetch happens in an edge
- * function instead. `fetchPreview` is that, injected; absent, previews say so
- * rather than pretending.
+ * `cors` mode needs the page to grant this origin access with
+ * `Access-Control-Allow-Origin`, which an arbitrary page does not — so the
+ * promise rejects and the real status never arrives. In `no-cors` mode it
+ * resolves, with an opaque response whose status is 0 and whose body cannot be
+ * read: a 404 and a 200 are the same object. So "2xx or unreachable" is not a
+ * thing a page can find out about another origin, and the fetch happens in an
+ * edge function instead. `fetchPreview` is that, injected; absent, previews say
+ * so rather than pretending.
  *
  * Drawn imperatively, in the overlay, rather than as a React component. That is
  * the line this app already draws: React renders chrome that *shows state* — the
@@ -204,14 +206,27 @@ export function createLinks({
     try {
       answer = await fetchPreview(href);
     } catch {
-      // Our own side failed — the function is down, or the network went. That
-      // is not the link being unreachable, and saying so would blame the wrong
-      // thing. Not cached either: the next hover should try again.
-      if (!destroyed && shown === href) render('unavailable', href);
-      return;
+      answer = null;
     }
 
     if (destroyed || shown !== href) return;
+
+    /**
+     * Our own side failed — the function is down, the network went, or the
+     * fetcher answered something that is not an answer. That is not the link
+     * being unreachable, and saying so would blame the page for our outage. Not
+     * cached either: the next hover should try again.
+     *
+     * A malformed answer is the same case as a thrown one on purpose. This is
+     * an injected function and the whole point of a boundary is not to trust
+     * what comes through it: reading `.ok` off nothing would throw here, in a
+     * promise nobody is waiting on, leaving the panel on "loading" for ever and
+     * an unhandled rejection in the console.
+     */
+    if (!answer || typeof answer !== 'object') {
+      render('unavailable', href);
+      return;
+    }
 
     remember(href, answer);
     render(answer.ok ? 'ready' : 'unreachable', href, answer);
@@ -226,7 +241,10 @@ export function createLinks({
     if (!href) return;
     cancel = scheduler.after(() => {
       cancel = null;
-      open(href);
+      // Nobody is waiting on this, so anything it throws would be an unhandled
+      // rejection. `open` handles every failure it can name; this is the
+      // backstop for the ones it cannot.
+      open(href).catch(() => {});
     }, delay);
   }
 

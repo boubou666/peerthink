@@ -455,6 +455,47 @@ describe('interaction', () => {
     });
 
     /**
+     * The anchor's own activation is cancelled, so this app is the only thing
+     * that opens a board's links.
+     *
+     * Chrome happens not to activate a link inside a `contenteditable` on a
+     * plain click, so nothing was visibly wrong — but that is the browser's
+     * habit, and the anchor carries `target="_blank"`, so an engine or a gesture
+     * that does activate it would open a second tab beside ours.
+     */
+    test('the click default is cancelled, so nothing else opens the link', async () => {
+      const id = await linked();
+      await page.eval(`
+        window.__prevented = null;
+        document.addEventListener('click', (e) => {
+          if (e.target.closest?.('[data-link]')) window.__prevented = e.defaultPrevented;
+        });
+      `);
+
+      const box = await linkBox(id);
+      await page.click(box.x, box.y);
+      assert.equal(await page.eval('window.__prevented'), true);
+    });
+
+    test('and not cancelled while the card is being edited, where it is the caret’s', async () => {
+      const id = await linked();
+      const box = await linkBox(id);
+      await page.dblclick(box.x, box.y);
+      await page.waitFor(`app.input.editingId === "${id}"`, { label: 'the card to be in edit mode' });
+
+      await page.eval(`
+        window.__prevented = null;
+        document.addEventListener('click', (e) => {
+          if (e.target.closest?.('[data-link]')) window.__prevented = e.defaultPrevented;
+        });
+      `);
+      await page.click(box.x, box.y);
+
+      assert.equal(await page.eval('window.__prevented'), false);
+      await blur();
+    });
+
+    /**
      * The second look, which is the only reason it exists. The view builds every
      * anchor through `hrefFor`, so an href like this cannot arrive by any route
      * the app has — but the cost of checking again is one `new URL` against

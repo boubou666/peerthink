@@ -291,9 +291,26 @@ describe('link popover', () => {
       await page.sleep(40);
       await hover(box);
       await waitOut();
-      await page.sleep(80);
 
-      assert.equal((await page.eval('window.asked')).length, 2);
+      await page.waitFor('window.asked.length === 2', { label: 'the second question to be asked' });
+    });
+
+    /**
+     * The fetcher is injected, and the point of a boundary is not to trust what
+     * comes through it. Reading `.ok` off nothing would throw in a promise nobody
+     * is waiting on: an unhandled rejection, and a panel stuck on "loading" for
+     * ever. It reads as our failure, because it is one.
+     */
+    test('an answer that is not an answer is our failure, not the page’s', async () => {
+      await build({ answer: null });
+      const { box } = await linkAt();
+
+      await hover(box);
+      await waitOut();
+      await page.waitFor(`document.querySelector('[data-link-popover]')?.dataset.linkPopover === 'unavailable'`, {
+        label: 'the verdict',
+      });
+      assert.match((await popover()).title, /no preview/i);
     });
 
     test('a thumbnail is drawn when the answer carries one', async () => {
@@ -401,9 +418,14 @@ describe('link popover', () => {
     test('and above it when there is no room below', async () => {
       await build({ answer: READY });
       const { box } = await linkAt('near the floor https://example.test/a');
-      // The card, and its link, down at the bottom of the window.
+      // The card, and its link, down at the bottom of the window. Waited for
+      // rather than slept past: the box read below has to be the moved one, and
+      // a renderer that had not caught up would hand back the old layout.
       await page.eval(`app.store.apply([{ t: 'set', id: app.store.order[0], patch: { y: 700 } }])`);
-      await page.sleep(40);
+      await page.waitFor(
+        `document.querySelector('a[data-link]').getBoundingClientRect().top > ${box.y + 400}`,
+        { label: 'the link to reach the bottom of the window' },
+      );
 
       const low = await page.eval(`(() => {
         const r = document.querySelector('a[data-link]').getBoundingClientRect();

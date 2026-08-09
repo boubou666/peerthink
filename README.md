@@ -248,23 +248,28 @@ worth spending some quality to stay under it.
 
 A URL in any of a board's text is clickable, and hovering one for a second opens
 a panel with the page's title, its description, a thumbnail and the host it
-actually came from — or, if the page did not answer with a 2xx, that it could not
-be reached.
+actually came from. A page that answered anything but a 2xx reads as unreachable
+— and the panel says which status it answered, because a 404 and a silence are
+different things to the person deciding what to do next.
 
-Nothing marks a link up. The store holds a plain string, which is what a paste is
-forced into and what `innerText` reads back, so a link is whatever *looks* like
-one and `core/links.js` is a recogniser rather than a parser. It runs on the way
+The document stores plain text and the *view* does the recognising: the store
+holds a string, which is what a paste is forced into and what `innerText` reads
+back, so nothing marks a link up, a link is whatever *looks* like one, and
+`core/links.js` is a recogniser rather than a parser. It runs on the way
 out, in the view; the document keeps the characters the person typed. An explicit
 scheme or a `www.` counts, and a bare domain deliberately does not — `readme.md`,
 `e.g.something` and `3.14` would all turn blue, and a link nobody asked for is
 worse than one they have to type six characters for.
 
 **The preview is fetched by an edge function, because a browser is not allowed to
-know the answer.** A cross-origin `fetch` in `cors` mode rejects whatever the
-server said; in `no-cors` mode it resolves with an opaque response whose status
-is `0` and whose body cannot be read, identically for a 200 and a 404. "Did it
-answer 2xx, and what is on it" is not a thing one origin may learn about another,
-so `supabase/functions/link-preview` does the fetch and the client asks it. That
+know the answer.** A cross-origin `fetch` in `cors` mode only succeeds when the
+target sends an `Access-Control-Allow-Origin` naming the caller — which an
+arbitrary page has no reason to do, so the promise rejects and the real status
+never arrives. `no-cors` mode resolves instead, with an opaque response whose
+status is `0` and whose body cannot be read, identically for a 200 and a 404.
+"Did it answer 2xx, and what is on it" is not a thing one origin may learn about
+another, so `supabase/functions/link-preview` does the fetch and the client asks
+it. That
 makes previews part of the same load-time decision as sharing, live edits and
 cursors: with no project configured there is nobody to ask, and a hovered link
 says so rather than sitting on "loading" or blaming the page.

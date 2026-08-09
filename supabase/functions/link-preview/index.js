@@ -11,11 +11,13 @@ import {
 /**
  * What is at a link — fetched here, because a browser is not allowed to know.
  *
- * A page cannot learn the status of a cross-origin response: `cors` mode rejects
- * whatever the server said, and `no-cors` mode hands back an opaque object whose
- * status is 0 and whose body cannot be read, identically for a 200 and a 404. So
- * "did it answer 2xx, and what is it" is a question only something outside the
- * browser can answer, and this is that something.
+ * A page cannot learn the status of a cross-origin response. `cors` mode is
+ * refused unless the target sends an `Access-Control-Allow-Origin` naming the
+ * caller, which an arbitrary page does not, and the promise rejects without ever
+ * carrying the status; `no-cors` mode hands back an opaque object whose status is
+ * 0 and whose body cannot be read, identically for a 200 and a 404. So "did it
+ * answer 2xx, and what is it" is a question only something outside the browser
+ * can answer, and this is that something.
  *
  * It is deliberately the smallest thing that answers it:
  *
@@ -158,10 +160,10 @@ async function fetchGuarded(target, { accept, fetchImpl }) {
     const location = response.headers.get('location');
     if (response.status >= 300 && response.status < 400 && location) {
       const next = absoluteUrl(checked.url.href, location);
+      await response.body?.cancel().catch(() => {});
       // Nothing to follow, so the redirect itself is the answer — and it is not
       // a 2xx, so it reads as unreachable.
       if (!next) return { status: response.status };
-      await response.body?.cancel().catch(() => {});
       url = next;
       continue;
     }

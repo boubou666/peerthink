@@ -5,11 +5,13 @@ import { hostOf } from '../core/links.js';
  * Asking the server what is at a link.
  *
  * This exists because the browser cannot answer the question. A cross-origin
- * `fetch` in `cors` mode rejects whatever the server actually said, and in
- * `no-cors` mode resolves with an opaque response — status 0, body unreadable,
- * a 404 indistinguishable from a 200. "Answered 2xx, and here is its title" is
- * not something one origin is allowed to learn about another, so an edge
- * function does the fetch and this asks it.
+ * `fetch` in `cors` mode is refused unless the page sends an
+ * `Access-Control-Allow-Origin` that names this origin, which an arbitrary page
+ * has no reason to do — the promise rejects and what the server actually said
+ * never arrives. `no-cors` resolves instead, with an opaque response: status 0,
+ * body unreadable, a 404 indistinguishable from a 200. "Answered 2xx, and here
+ * is its title" is not something one origin is allowed to learn about another,
+ * so an edge function does the fetch and this asks it.
  *
  * The function is invoked through the Supabase client, which is what puts the
  * user's access token on the request: the function verifies it, so a preview is
